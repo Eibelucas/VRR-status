@@ -12,8 +12,8 @@ android {
         applicationId = "de.luca.mitfahrt"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
     val releaseStore = System.getenv("MITFAHRT_KEYSTORE")?.takeIf { it.isNotBlank() }
     signingConfigs {
@@ -25,6 +25,18 @@ android {
         }
     }
     buildFeatures { compose = true; buildConfig = true }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.maxHeapSize = "1g"
+            it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
+            val roboHome = layout.buildDirectory.dir("robolectric-home").get().asFile
+            it.systemProperty("user.home", roboHome.absolutePath)
+            it.doFirst { roboHome.mkdirs() }
+            it.systemProperty("maven.repo.local", layout.buildDirectory.dir("robolectric-repository").get().asFile.absolutePath)
+            it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -53,4 +65,5 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.17")
 }

@@ -117,7 +117,8 @@ class RideService : Service(), LocationListener {
             val updated = app.vrr.ride(departure)
             val current = store.state.value.ride
             if (current?.departure?.key == ride.departure.key) {
-                store.setRide(updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex)))
+                store.setRide(updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex),
+                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt))
                 if (departure.cancelled) store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
             }
         } catch (e: CancellationException) { throw e

@@ -9,8 +9,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.Icon
 import android.os.Build
-import android.os.Bundle
-import android.provider.Settings
 import de.luca.mitfahrt.MainActivity
 import de.luca.mitfahrt.R
 import de.luca.mitfahrt.data.*
@@ -51,38 +49,55 @@ class RideNotifications(private val context: Context) {
                 .setStyle(Notification.BigTextStyle().bigText("${state.message ?: "WLAN und Standort werden geprüft."} Mit Beenden stoppst du die Erkennung."))
                 .build()
         }
+        val waiting = !ride.boarded
+        val boardingTime = ride.boardingTime()
         val next = ride.nextStop(now)
-        val remaining = ride.remainingMinutes(now)
+        val remaining = if (waiting) minutesUntil(boardingTime.at, now) else ride.remainingMinutes(now)
         val delay = DelayEvidence.timingFor(ride, ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex))
             ?: DelayEvidence.timingFor(ride, ride.boardingIndex)
         val stale = ride.isStale(now) || state.lastRefreshFailed || !state.running
         val timeSource = when {
             ride.demo -> "Demo"
             stale -> "Veraltet"
+            waiting -> if (boardingTime.live) "Live" else "Fahrplan"
             ride.terminal.estimated != null -> "Live"
             ride.departure.estimated != null -> "Geschätzt"
             else -> "Fahrplan"
         }
+        val headline = if (waiting) {
+            if (ride.departure.cancelled) "Bus fällt aus" else if (!boardingTime.at.isAfter(now)) "Bus wird erwartet"
+            else "${if (boardingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(boardingTime.at, now)}"
+        } else if (next == null) "Endhaltestelle erreicht" else "Nächster Halt: ${shortName(next.name)}"
         builder.setContentTitle("${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.terminal.name)}")
-            .setContentText(listOfNotNull(if (next == null) "Endhaltestelle erreicht" else "Nächster Halt: ${shortName(next.name)}",
+            .setContentText(listOfNotNull(headline,
                 delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }).joinToString(" · "))
-            .setSubText("$timeSource · ${remaining?.let { "$it Min bis Endhalt" } ?: "Ankunft unbekannt"}")
+            .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Endhalt" } ?: "Ankunft unbekannt"}")
+        if (waiting && !ride.departure.cancelled && boardingTime.at.isAfter(now)) {
+            builder.setWhen(boardingTime.at.toEpochMilli()).setShowWhen(true)
+                .setUsesChronometer(true).setChronometerCountDown(true)
+        }
         if (Build.VERSION.SDK_INT >= 36) {
             builder.setStyle(Notification.ProgressStyle()
                 .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(196, 245, 139))))
-                .setProgress((ride.progress(now) * 100).toInt())
+                .setProgress(if (waiting) 0 else (ride.progress(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
-            // Platform extra works on API 36.0 too; Builder#setRequestPromotedOngoing needs 36.1.
-            builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
+            builder.addExtras(NowBarSupport.extras(context))
             builder.setShortCriticalText(remaining?.let { "$it Min" } ?: ride.departure.line)
         } else {
             builder.setStyle(Notification.BigTextStyle().bigText(
-                "${next?.let { "Nächster Halt: ${shortName(it.name)}" } ?: "Endhaltestelle erreicht"}\n" +
-                    "${remaining?.let { "$it Min" } ?: "–"} bis ${shortName(ride.terminal.name)} · $timeSource" +
+                "$headline\n" +
+                    (if (waiting) "${shortName(ride.departure.stopName)} · $timeSource" else "${remaining?.let { "$it Min" } ?: "–"} bis ${shortName(ride.terminal.name)} · $timeSource") +
                     (delay?.let { "\n${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" } ?: "")))
                 .setProgress(100, (ride.progress(now) * 100).toInt(), false)
         }
-        return builder.build()
+        val notification = builder.build()
+        if (Build.VERSION.SDK_INT >= 36 && !notification.hasPromotableCharacteristics()) {
+            // Initial Android 16 required EXTRA_COLORIZED; later releases changed the
+            // promotion contract. Ask the actual framework instead of guessing from SDK.
+            val legacy = builder.setColorized(true).build()
+            if (legacy.hasPromotableCharacteristics()) return legacy
+        }
+        return notification
     }
 
     fun post(state: TrackingState) { manager.notify(ID, build(state)) }
@@ -92,13 +107,7 @@ class RideNotifications(private val context: Context) {
         const val CHANNEL = "ride_status"
 
         fun openSettings(context: Context) {
-            val enabled = context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
-            val intent = if (Build.VERSION.SDK_INT >= 36 && enabled)
-                Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS").putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-            else Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-            runCatching { context.startActivity(intent) }.onFailure {
-                context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-            }
+            NowBarSupport.openSettings(context)
         }
     }
 }

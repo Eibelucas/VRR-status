@@ -42,7 +42,8 @@ data class RideStop(
 
 data class Ride(
     val departure: Departure, val stops: List<RideStop>, val boardingIndex: Int,
-    val fetchedAt: Instant, val demo: Boolean = false, val gpsPassedIndex: Int = -1
+    val fetchedAt: Instant, val demo: Boolean = false, val gpsPassedIndex: Int = -1,
+    val boarded: Boolean = true, val trackingStartedAt: Instant? = null
 ) {
     val offsetSeconds: Long get() = departure.estimated?.let { it.epochSecond - departure.planned.epochSecond } ?: 0
     // A departure delay is only an extrapolation for later stops, never a live ETA.
@@ -61,6 +62,24 @@ data class Ride(
         return ((now.epochSecond - begin.epochSecond).toFloat() /
             (end.epochSecond - begin.epochSecond).coerceAtLeast(1)).coerceIn(0f, 1f)
     }
+}
+
+data class BoardingTime(val at: Instant, val isArrival: Boolean, val live: Boolean)
+
+fun Ride.boardingTime(): BoardingTime {
+    val stop = stops.getOrNull(boardingIndex)
+    return when {
+        stop?.estimatedArrival != null -> BoardingTime(stop.estimatedArrival, true, true)
+        stop?.estimatedDeparture != null -> BoardingTime(stop.estimatedDeparture, false, true)
+        departure.estimated != null -> BoardingTime(departure.estimated, false, true)
+        stop?.arrival != null -> BoardingTime(stop.arrival, true, false)
+        else -> BoardingTime(stop?.departure ?: departure.planned, false, false)
+    }
+}
+
+fun countdownUntil(at: Instant, now: Instant): String {
+    val seconds = (at.epochSecond - now.epochSecond).coerceAtLeast(0)
+    return "%d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
 }
 
 enum class WifiSignal { NONE, NEARBY, CONNECTED, UNAVAILABLE }

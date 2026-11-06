@@ -56,6 +56,7 @@ object RideCodec {
             put("platform", d.platform); put("cancelled", d.cancelled); put("notices", JSONArray(d.notices))
             put("boardingIndex", ride.boardingIndex); put("fetchedAt", ride.fetchedAt.toString())
             put("demo", ride.demo); put("gpsPassedIndex", ride.gpsPassedIndex)
+            put("boarded", ride.boarded); put("trackingStartedAt", ride.trackingStartedAt?.toString())
             put("stops", JSONArray(ride.stops.map { stop -> JSONObject().apply {
                 put("id", stop.id); put("name", stop.name)
                 put("lat", stop.point?.lat); put("lon", stop.point?.lon)
@@ -80,6 +81,7 @@ object RideCodec {
         }
         require(stops.isNotEmpty())
         return Ride(d, stops, obj.getInt("boardingIndex"), Instant.parse(obj.str("fetchedAt")),
-            obj.optBoolean("demo"), obj.optInt("gpsPassedIndex", -1))
+            obj.optBoolean("demo"), obj.optInt("gpsPassedIndex", -1),
+            obj.optBoolean("boarded", true), obj.instant("trackingStartedAt"))
     }
 }

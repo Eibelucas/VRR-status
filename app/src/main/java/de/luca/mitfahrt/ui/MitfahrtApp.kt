@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import de.luca.mitfahrt.RideViewModel
 import de.luca.mitfahrt.BuildConfig
 import de.luca.mitfahrt.updates.UpdateState
@@ -45,6 +48,7 @@ import de.luca.mitfahrt.SearchState
 import de.luca.mitfahrt.ReportsState
 import de.luca.mitfahrt.data.*
 import de.luca.mitfahrt.tracking.RideNotifications
+import de.luca.mitfahrt.tracking.NowBarSupport
 import de.luca.mitfahrt.reports.DelayEvidence
 import kotlinx.coroutines.delay
 import java.time.Instant
@@ -135,7 +139,13 @@ fun MitfahrtApp(
                         }
                         if (ride.departure.cancelled) item { SmallNotice("Fahrt fällt aus", "Bitte eine andere Fahrt wählen", Icons.Outlined.WarningAmber, Amber) }
                         item { RideHero(ride, now) }
-                        item { NextStopCard(ride, now) }
+                        if (!ride.boarded && !ride.departure.cancelled) item {
+                            Button(onClick = vm::boardBus, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                                Icon(Icons.Outlined.DirectionsBus, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp)); Text("Bin im Bus")
+                            }
+                        }
+                        if (ride.boarded) item { NextStopCard(ride, now) }
                         if (!ride.demo) item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = { arrivalRide = ride }, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
@@ -290,6 +300,8 @@ private fun DetectionCard(state: TrackingState, onMonitor: () -> Unit, onStop: (
 
 @Composable
 private fun RideHero(ride: Ride, now: Instant) {
+    val waiting = !ride.boarded
+    val boarding = ride.boardingTime()
     Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Lime, contentColor = Ink)) {
         Column(Modifier.padding(24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -299,12 +311,23 @@ private fun RideHero(ride: Ride, now: Instant) {
                     modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(28.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(ride.remainingMinutes(now)?.toString() ?: "–", fontSize = 88.sp,
-                    fontWeight = FontWeight.Medium, letterSpacing = (-6).sp, lineHeight = 88.sp)
-                Text(" Min", fontSize = 23.sp, modifier = Modifier.padding(bottom = 10.dp), fontWeight = FontWeight.Medium)
+            if (waiting) {
+                Text(if (boarding.isArrival) "DEIN BUS KOMMT IN" else "BIS ZUR ABFAHRT", fontSize = 11.sp, letterSpacing = 1.sp)
+                Spacer(Modifier.height(8.dp))
+                Text(if (ride.departure.cancelled) "Fällt aus" else if (!boarding.at.isAfter(now)) "Wird erwartet"
+                    else countdownUntil(boarding.at, now), fontSize = if (boarding.at.isAfter(now) && !ride.departure.cancelled) 68.sp else 30.sp,
+                    fontWeight = FontWeight.Medium, letterSpacing = (-2).sp)
+                if (boarding.at.isAfter(now) && !ride.departure.cancelled) Text("Min : Sek", fontSize = 13.sp)
+                Spacer(Modifier.height(12.dp))
+                Text(shortName(ride.departure.stopName), fontSize = 19.sp, fontWeight = FontWeight.Medium)
+            } else {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(ride.remainingMinutes(now)?.toString() ?: "–", fontSize = 88.sp,
+                        fontWeight = FontWeight.Medium, letterSpacing = (-6).sp, lineHeight = 88.sp)
+                    Text(" Min", fontSize = 23.sp, modifier = Modifier.padding(bottom = 10.dp), fontWeight = FontWeight.Medium)
+                }
+                Text("bis ${shortName(ride.terminal.name)}", fontSize = 19.sp, fontWeight = FontWeight.Medium)
             }
-            Text("bis ${shortName(ride.terminal.name)}", fontSize = 19.sp, fontWeight = FontWeight.Medium)
             if (!ride.demo) {
                 val next = ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex)
                 val evidence = DelayEvidence.timingFor(ride, next) ?: DelayEvidence.timingFor(ride, ride.boardingIndex)
@@ -315,13 +338,15 @@ private fun RideHero(ride: Ride, now: Instant) {
                 }
             }
             Spacer(Modifier.height(20.dp))
-            LinearProgressIndicator(progress = { ride.progress(now) }, modifier = Modifier.fillMaxWidth().height(5.dp),
+            if (!waiting) LinearProgressIndicator(progress = { ride.progress(now) }, modifier = Modifier.fillMaxWidth().height(5.dp),
                 color = Ink, trackColor = Ink.copy(alpha = 0.16f))
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Ankunft ${clockTime(ride.terminal.effective(ride.offsetSeconds))}", fontSize = 13.sp)
+                Text(if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(boarding.at)}"
+                    else "Ankunft ${clockTime(ride.terminal.effective(ride.offsetSeconds))}", fontSize = 13.sp)
                 Text(when {
                     ride.demo -> "Beispieldaten"
+                    waiting -> if (boarding.live) "Live" else "Laut Fahrplan"
                     ride.terminal.estimated != null -> "Live"
                     ride.departure.estimated != null -> "Geschätzt"
                     else -> "Laut Fahrplan"
@@ -373,6 +398,12 @@ private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean
 
 @Composable
 private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(search.selectedStop?.id, lifecycle) {
+        if (search.selectedStop != null) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) { delay(30_000); vm.refreshSelectedStop() }
+        }
+    }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Header("Haltestellen", "DEINE FAHRT FINDEN", Icons.Outlined.Search) }
         if (search.selectedStop == null) {
@@ -450,7 +481,9 @@ private fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: 
             Text(shortName(d.destination), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(5.dp))
             Text(if (d.cancelled) "Fällt aus" else if (showStop) shortName(d.stopName) else
-                listOfNotNull(d.platform.takeIf { it.isNotBlank() }, if (d.estimated != null) {
+                listOfNotNull(d.platform.takeIf { it.isNotBlank() }, if (d.observedAt?.let { now.epochSecond - it.epochSecond > 120 } == true) {
+                    "Stand ${clockTime(d.observedAt)}"
+                } else if (d.estimated != null) {
                     if (d.delayMinutes > 0) "+${d.delayMinutes} Min" else "Live"
                 } else "Fahrplan").joinToString(" · "),
                 color = if (d.cancelled) Amber else Soft, fontSize = 12.sp)
@@ -458,9 +491,9 @@ private fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: 
         Spacer(Modifier.width(8.dp))
         if (loading) CircularProgressIndicator(Modifier.size(22.dp), color = Lime, strokeWidth = 2.dp)
         else Column(horizontalAlignment = Alignment.End) {
-            Text(if (d.cancelled) "–" else if (d.effective.isBefore(now)) "Jetzt" else "${minutesUntil(d.effective, now)} Min",
+            Text(if (d.cancelled) "–" else if (!d.effective.isAfter(now)) "Jetzt" else countdownUntil(d.effective, now),
                 color = if (d.cancelled) Soft else Lime, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Text(clockTime(d.effective), color = Soft, fontSize = 12.sp)
+            Text(if (d.effective.isAfter(now)) "Min : Sek" else clockTime(d.effective), color = Soft, fontSize = 12.sp)
         }
     }
 }
@@ -478,6 +511,11 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit) {
     val context = LocalContext.current
     val manager = context.getSystemService(NotificationManager::class.java)
+    var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
+    var samsungCompat by remember { mutableStateOf(NowBarSupport.samsungEnabled(context)) }
+    LaunchedEffect(Unit) {
+        while (true) { nowBarStatus = NowBarSupport.status(context); delay(2000) }
+    }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item { Header("Einstellungen", "MITFAHRT", Icons.Outlined.Tune) }
         item {
@@ -514,10 +552,23 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Icon(Icons.Outlined.Lock, null, tint = Lime)
                     Text("Auf dem Sperrbildschirm", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-                    Text(if (Build.VERSION.SDK_INT >= 36) "Die laufende Fahrt kann in der Now Bar erscheinen. Aktiviere dafür Live-Benachrichtigungen."
+                    Text(if (Build.VERSION.SDK_INT >= 36) "Bus auswählen, Live-Benachrichtigungen erlauben und die App verlassen. Die Now Bar prüfst du anschließend auf dem Sperrbildschirm."
                     else "Deine Fahrt erscheint als laufende Benachrichtigung. Für die Now Bar ist eine unterstützte Samsung-Version mit Android 16 nötig.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
-                    if (!manager.areNotificationsEnabled()) Text("Benachrichtigungen sind ausgeschaltet.", color = Amber, fontSize = 13.sp)
-                    else if (Build.VERSION.SDK_INT >= 36 && !manager.canPostPromotedNotifications()) Text("Live-Benachrichtigungen sind ausgeschaltet.", color = Amber, fontSize = 13.sp)
+                    Text(nowBarStatus, color = Paper, fontSize = 13.sp, lineHeight = 20.sp)
+                    if (Build.MANUFACTURER.equals("samsung", true) && Build.VERSION.SDK_INT >= 36) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Samsung-Kompatibilität", fontSize = 14.sp)
+                                Text("Experimentelle Now-Bar-Anpassung", color = Soft, fontSize = 12.sp)
+                            }
+                            Switch(checked = samsungCompat, onCheckedChange = { enabled ->
+                                samsungCompat = enabled
+                                NowBarSupport.setSamsungEnabled(context, enabled)
+                                val state = (context.applicationContext as de.luca.mitfahrt.MitfahrtApplication).store.state.value
+                                if (state.running && state.ride != null) RideNotifications(context).post(state)
+                            })
+                        }
+                    }
                     OutlinedButton(onClick = { RideNotifications.openSettings(context) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Benachrichtigungen öffnen") }
                 }
             }

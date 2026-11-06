@@ -1,9 +1,11 @@
-## Mitfahrt 0.4.0
+## Mitfahrt 0.5.0
 
-- Updates direkt in den Einstellungen suchen, herunterladen und mit dem Android-Installer installieren.
-- Prüfsumme, App-Kennung, Versionsnummer und Signatur werden vor der Installation geprüft.
-- Automatische GitHub-Prüfung und signierter APK-Release bei Versions-Tags.
-- Fortschritt der GPS-Haltestellenerkennung bleibt auch während einer Fahrtdaten-Aktualisierung erhalten.
-- Eigene Ankunftszeiten, Verspätungsberichte und die Trennung von VRR-Prognosen bleiben erhalten.
+- Countdown in Minuten und Sekunden bis zum Bus bzw. zur gemeldeten Abfahrt.
+- Warteansicht vor dem Einsteigen; „Bin im Bus“ wechselt zur laufenden Fahrt.
+- Automatische Aktualisierung der sichtbaren Abfahrtsliste alle 30 Sekunden.
+- Korrekte Android-Einstellungsseite für Live-Benachrichtigungen.
+- Samsung-Kompatibilitätsmodus für die Now Bar mit Statusanzeige und abschaltbarer experimenteller Anpassung.
+- Benachrichtigungsaufbau richtet sich nach der tatsächlichen Live-Update-Eignung des Android-Frameworks.
+- Zusätzliche Android-Framework-Tests für Live-Update-Eignung, Countdown und Samsung-Zusätze.
 
-Now Bar, APK-Installation und PDF-Ausgabe müssen noch auf einem realen Android-Gerät getestet werden.
+Auf dem Galaxy A56 mit One UI 9 muss die Now-Bar-Darstellung noch praktisch bestätigt werden. Nach Auswahl eines Busses Live-Benachrichtigungen erlauben, die App verlassen und den Sperrbildschirm prüfen.

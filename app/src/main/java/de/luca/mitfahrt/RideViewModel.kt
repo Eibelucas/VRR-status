@@ -68,6 +68,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun consumeShare() { reportState.value = reportState.value.copy(share = null) }
     fun clearReportError() { reportState.value = reportState.value.copy(error = null) }
     fun markArrival(stop: Stop) { app.arrivals.record(stop) }
+    fun boardBus() {
+        tracking.value.ride?.let { app.store.setRide(it.copy(boarded = true), preserveStatus = true) }
+    }
 
     fun query(value: String) { mutable.value = mutable.value.copy(query = value) }
     fun search() {
@@ -100,11 +103,22 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun backToStops() { job?.cancel(); mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), loading = false, error = null) }
+    suspend fun refreshSelectedStop() {
+        val previous = mutable.value
+        val stop = previous.selectedStop ?: return
+        if (previous.loading) return
+        try {
+            val departures = app.vrr.departures(stop).filter { it.effective.isAfter(Instant.now().minusSeconds(180)) }
+            if (mutable.value.selectedStop?.id == stop.id && !mutable.value.loading)
+                mutable.value = mutable.value.copy(departures = departures)
+        } catch (e: CancellationException) { throw e
+        } catch (_: Exception) { /* Keep the timestamped last data; the manual refresh remains available. */ }
+    }
     fun choose(departure: Departure) {
         if (departure.cancelled) return
         load {
             mutable.value = mutable.value.copy(choosing = departure.key)
-            val ride = app.vrr.ride(departure)
+            val ride = app.vrr.ride(departure).copy(boarded = false, trackingStartedAt = Instant.now())
             mutable.value = mutable.value.copy(pendingRide = ride, choosing = null)
         }
     }

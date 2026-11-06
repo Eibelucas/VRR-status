@@ -12,6 +12,8 @@ Eine native Android-App für die NEW-Busse in Mönchengladbach. Kotlin, Jetpack 
 2. **Fahrt wählen** → Haltestelle suchen → passende Linie und Richtung antippen.
 3. Restzeit, nächste Haltestelle und Fahrtverlauf werden angezeigt. **Fahrt beenden** stoppt den Hintergrunddienst.
 
+Nach Auswahl eines Busses zeigt die Warteansicht den Countdown in Minuten und Sekunden. Bei einer echten VRR-Ankunftsprognose steht dort **Dein Bus kommt in**, andernfalls ausdrücklich **Bis zur Abfahrt**. Nach Ablauf wird **Wird erwartet** angezeigt; der Timer behauptet keine tatsächliche Ankunft. **Bin im Bus** schaltet zur Fahrtenansicht um. Abfahrtslisten werden nur während der sichtbaren Haltestellenansicht alle 30 Sekunden aktualisiert.
+
 Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt NEW-Fahrten an nahe gelegenen Haltestellen vor. Die konkrete Fahrt muss bestätigt werden. Ein sichtbarer Hotspot beweist weder, dass man im Bus sitzt, noch welche Linie fährt. Die App verbindet sich nicht selbst mit einem WLAN.
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
@@ -39,6 +41,12 @@ Der Bericht ist ein privater Nachweis aus VRR-Daten, keine offizielle Bescheinig
 ## Now Bar
 
 Unter Android 16 verwendet die App eine `Notification.ProgressStyle` mit Fortschritt, Liniennummer, nächstem Halt, Restzeit und einer Beenden-Aktion. Die Promotion wird über die öffentliche Android-Extra `android.requestPromotedOngoing` angefragt und die Berechtigung `POST_PROMOTED_NOTIFICATIONS` deklariert. Die Promotion wird nur für eine vom Nutzer gestartete Fahrt angefragt, nicht für die allgemeine WLAN-Suche.
+
+Version 0.5 öffnet die tatsächliche Android-Aktion `android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS`. Die Benachrichtigung wird mit `hasPromotableCharacteristics()` geprüft: Frühe Android-16-Implementierungen benötigten eine angefragte Einfärbung, während neuere Implementierungen den unveränderten Standardaufbau bevorzugen. Die App behält jeweils nur die vom laufenden Framework als geeignet bewertete Variante bei. Während des Wartens verwendet sie zusätzlich den System-Countdown.
+
+Auf Samsung gibt es unter **Einstellungen → Auf dem Sperrbildschirm** einen abschaltbaren experimentellen Kompatibilitätsmodus. Nur bei tatsächlich freigegebenen Android-Live-Benachrichtigungen ergänzt er `android.ongoingActivityNoti.automation` und die eigene Paketkennung. Es werden keine privaten Framework-Methoden aufgerufen, keine fremde Paketkennung verwendet und keine Systemeinstellungen automatisch verändert. Die zusätzlichen Felder sind kein offizieller Samsung-API-Vertrag; Firmware-Änderungen können ihre Wirkung ändern. Grundlage ist das öffentliche [Interoperabilitätstestprojekt](https://github.com/tigerduck-app/android-dynamic-island-test). Die Darstellung auf dem angefragten Galaxy A56 / One UI 9 bleibt auf dem Gerät zu bestätigen.
+
+Die Statusanzeige unterscheidet Freigabe, geeignete Benachrichtigung und das von Android gesetzte Flag `FLAG_PROMOTED_ONGOING`. Dieses Flag ist keine Bestätigung, dass Samsungs Oberfläche die Now Bar tatsächlich gerendert hat. Zum Prüfen einen Bus verfolgen, Live-Benachrichtigungen freigeben, die App verlassen und den Bildschirm sperren.
 
 Samsung entscheidet je nach One-UI-Version, Gerät und Einstellungen über die tatsächliche Darstellung in der Now Bar. Die App bietet einen Link zu den Live-Benachrichtigungseinstellungen. Auf älteren Android-Versionen gibt es eine normale laufende Benachrichtigung. Die App benötigt mindestens Android 10. Eine tatsächliche Samsung-Now-Bar-Darstellung muss auf einem unterstützten Galaxy getestet werden.
 
@@ -95,7 +103,7 @@ Die Debug-APK liegt in `app/build/outputs/apk/debug/app-debug.apk`. `./gradlew :
 
 Die Unit-Tests verwenden echte öffentliche VRR-Antworten vom 06.11.2026 als Fixtures und prüfen Zuordnung, Ausfälle, Zeitzonen, Offlinezustand, Zeitberechnung und Wiederherstellung. Weitere Tests prüfen Berichts-Snapshots, originale Abrufzeiten, fehlende Prognosen, Abfahrt versus Ankunft und den Ausschluss von Demofahrten und hochgerechneten Zeiten als Belegdaten. WLAN und Now Bar benötigen zusätzlich einen Test während einer realen Busfahrt auf dem Zielgerät.
 
-Version 0.4: Release-Build, 53 Unit-Tests und Android Lint ohne Fehler bestanden. Davon prüfen 14 Tests Update-Metadaten, Download-Ziele, Paketkennungen, Versionen und Signaturen. APK-Prüfsumme und dieselbe Signatur wie Version 0.3 wurden zusätzlich geprüft. VRR-Endpunkte wurden mit echten NEW-Abfahrten und Fahrtverläufen geprüft. Ein Bildschirm- und Installationstest im Android-36-Emulator konnte in der Build-Umgebung nicht abgeschlossen werden: Ohne Hardwarebeschleunigung wurde der Emulator während des ersten Starts wegen der Ressourcenbegrenzung beendet. Die App einschließlich Update-Installation, PDF-Rendering und Android-Teilen ist auf einem realen Gerät noch nicht getestet.
+Version 0.5 ergänzt Countdown- und Wartezustand-Tests sowie Robolectric-Tests gegen das tatsächliche Android-16-Framework. Sie prüfen unter anderem Live-Update-Eignung, Benachrichtigungsvorlage, Countdown, Einstellungsaktion und begrenzte Samsung-Zusätze. Robolectric benötigt dafür JDK 21 und lädt ein Android-Framework-Artefakt. Der Signaturschlüssel für installierbare Updates bleibt derselbe. VRR-Endpunkte wurden mit echten NEW-Abfahrten und Fahrtverläufen geprüft. Die Samsung-Darstellung auf dem A56 / One UI 9 sowie Update-Installation und PDF-Ausgabe sind auf einem echten Gerät noch nicht bestätigt.
 
 ## Quellen
 
