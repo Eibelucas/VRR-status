@@ -18,6 +18,16 @@ Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
 
+## Bedienung ab 0.12
+
+Häufig genutzte Haltestellen lassen sich als **Favoriten** merken. Bis zu zwölf Favoriten und zwanzig zuletzt gewählte Haltestellen sind direkt auf der Startseite beziehungsweise in der Suche erreichbar. Plattformen derselben Haltestelle werden zusammengefasst. Gespeichert werden Haltestellenkennung, Name und gegebenenfalls öffentliche Haltestellenkoordinaten, keine Geräteposition oder alte Entfernung. Die Listen bleiben im privaten App-Speicher und sind vom Android-Backup ausgeschlossen.
+
+Die Suche liefert beim Tippen Vorschläge aus gespeicherten Haltestellen und fragt nach einer kurzen Tipp-Pause neue Ergebnisse ab. Der kompaktere Schulweg zeigt bei geeigneten aktuellen Abfahrten einen direkten Einstieg in die Fahrtverfolgung; weitere Abfahrten bleiben erreichbar. Bei einer bereits gewählten anderen Fahrt fragt die App vor dem Wechsel nach. Der Ausstieg wird über eine filterbare Haltestellenliste gewählt, Verwaltungsaktionen stehen im zugehörigen Menü.
+
+Unter **Einstellungen → Darstellung** gibt es **System**, **Hell** und **Dunkel**. Unter **Vibrationshinweise** werden Ankunfts- und Ausstiegshinweis unabhängig gesteuert. Für die Busankunft sind 60, 120 oder 180 Sekunden Vorlauf möglich, Standard sind 60 Sekunden. Die Einstellungen werden auch während einer laufenden Fahrt berücksichtigt und steuern die Hinweise auf Handy und gekoppelter Uhr gemeinsam. Bereits ausgelöste Hinweise derselben Fahrt werden durch eine Einstellungsänderung nicht erneut abgespielt. Der ausdrücklich angetippte Vibrationstest bleibt unabhängig davon nutzbar.
+
+Bei freigegebenem Standort wird die Entfernung während der sichtbaren Suchansicht weiter aktualisiert. Angezeigte Gehzeiten bleiben Schätzungen aus Entfernung und Gehgeschwindigkeit, ohne Fußwegenetz oder Ankunftsgarantie. Vor dem automatischen Fahrtende wird der aktuelle Fahrtverlauf nochmals abgefragt, damit eine neu entstandene Verspätung die Fahrt nicht vorschnell beendet. Fehlt die Abfahrtsabfrage, bleibt eine davon abhängige alte Prognose als unbestätigt erkennbar; unabhängig aktuelle Prognosen anderer Halte werden dadurch nicht verworfen.
+
 ## Startseite und Einführung
 
 Version 0.8 zeigt einmalig eine Einführung mit drei kurzen Schritten: Funktionen, Standort für nahe Haltestellen und Benachrichtigungen für den Fahrtstatus. Berechtigungen werden erst nach dem jeweiligen Antippen über Android angefragt. Standort und Benachrichtigungen sind optional. Ohne Standort bleibt die manuelle Suche verfügbar; eine dauerhaft abgelehnte Freigabe kann über die App-Einstellungen erneut eingerichtet werden. **Einstellungen → Einführung ansehen** öffnet die Einführung später erneut, ohne Fahrtdaten zu löschen.

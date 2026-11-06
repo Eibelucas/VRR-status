@@ -104,4 +104,13 @@ class ExitAlarmTest {
         val old = JSONObject(RideCodec.encode(r)).apply { remove("targetStopId"); remove("targetStopIndex") }
         assertNull(RideCodec.decode(old.toString()).exitTargetIndex())
     }
+    @Test fun `fresh target does not refresh an extrapolated previous stop`() {
+        val r = ride().let { base -> base.copy(departure = base.departure.copy(
+            estimated = base.departure.planned.plusSeconds(60), observedAt = now.minusSeconds(180)),
+            stops = base.stops.mapIndexed { i, stop -> if (i == 3) stop.copy(estimatedArrival = now.plusSeconds(120)) else stop }) }
+        assertFalse(ExitAlarm.due(state(r), now.plusSeconds(60)))
+        assertTrue(ExitAlarm.due(state(r.copy(gpsPassedIndex = 2)), now))
+        assertTrue(ExitAlarm.due(state(r.copy(departure = r.departure.copy(observedAt = now))), now.plusSeconds(60)))
+    }
+
 }

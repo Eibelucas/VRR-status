@@ -55,7 +55,13 @@ data class Ride(
     fun nextStop(now: Instant): RideStop? = stops.getOrNull(nextIndex(now))
     val terminal: RideStop get() = stops.last()
     fun remainingMinutes(now: Instant): Int? = terminal.effective(offsetSeconds)?.let { minutesUntil(it, now) }
-    fun isStale(now: Instant): Boolean = now.epochSecond - fetchedAt.epochSecond > 120
+    fun isStale(now: Instant): Boolean {
+        if (now.epochSecond - fetchedAt.epochSecond !in -30..120) return true
+        if (!boarded) return boardingTime().let { it.live && !it.isFresh(now) }
+        if (displayTarget().estimated == null && offsetSeconds != 0L)
+            return departure.observedAt?.let { now.epochSecond - it.epochSecond !in -30..120 } != false
+        return false
+    }
     fun complete(now: Instant): Boolean = terminal.effective(offsetSeconds)?.let { now.isAfter(it.plusSeconds(120)) } ?: false
     fun progress(now: Instant): Float {
         val begin = stops.getOrNull(boardingIndex)?.effective(offsetSeconds) ?: return 0f
@@ -65,14 +71,16 @@ data class Ride(
     }
 }
 
-data class BoardingTime(val at: Instant, val isArrival: Boolean, val live: Boolean)
+data class BoardingTime(val at: Instant, val isArrival: Boolean, val live: Boolean, val observedAt: Instant? = null) {
+    fun isFresh(now: Instant): Boolean = !live || observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } == true
+}
 
 fun Ride.boardingTime(): BoardingTime {
     val stop = stops.getOrNull(boardingIndex)
     return when {
-        stop?.estimatedArrival != null -> BoardingTime(stop.estimatedArrival, true, true)
-        stop?.estimatedDeparture != null -> BoardingTime(stop.estimatedDeparture, false, true)
-        departure.estimated != null -> BoardingTime(departure.estimated, false, true)
+        stop?.estimatedArrival != null -> BoardingTime(stop.estimatedArrival, true, true, fetchedAt)
+        stop?.estimatedDeparture != null -> BoardingTime(stop.estimatedDeparture, false, true, fetchedAt)
+        departure.estimated != null -> BoardingTime(departure.estimated, false, true, departure.observedAt)
         stop?.arrival != null -> BoardingTime(stop.arrival, true, false)
         else -> BoardingTime(stop?.departure ?: departure.planned, false, false)
     }

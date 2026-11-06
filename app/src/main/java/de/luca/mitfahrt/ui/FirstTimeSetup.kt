@@ -35,7 +35,7 @@ fun FirstTimeSetup(locationAllowed: Boolean, notificationsAllowed: Boolean,
                     Spacer(Modifier.height(32.dp))
                     Box(Modifier.size(80.dp).clip(RoundedCornerShape(26.dp)).background(Lime), contentAlignment = Alignment.Center) {
                         Icon(when (step) { 0 -> Icons.Outlined.DirectionsBus; 1 -> Icons.Outlined.NearMe; else -> Icons.Outlined.NotificationsActive },
-                            null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(38.dp))
+                            null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(38.dp))
                     }
                     Spacer(Modifier.height(28.dp))
                     Text(when (step) { 0 -> "Deine Busfahrt\nim Blick"; 1 -> "Was fährt\nin deiner Nähe?"; else -> "Auch bei\ngesperrtem Handy" },

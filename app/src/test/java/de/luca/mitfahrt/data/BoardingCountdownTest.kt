@@ -41,4 +41,27 @@ class BoardingCountdownTest {
         data.remove("boarded"); data.remove("trackingStartedAt")
         assertTrue(RideCodec.decode(data.toString()).boarded)
     }
+    @Test fun `a fresh trip cannot make an old monitor forecast live again`() {
+        val r = ride().let { it.copy(departure = it.departure.copy(observedAt = now.minusSeconds(121))) }
+        assertTrue(r.isStale(now))
+        assertFalse(r.boardingTime().isFresh(now))
+        val fresh = r.copy(departure = r.departure.copy(observedAt = now))
+        assertFalse(fresh.isStale(now))
+        assertTrue(fresh.boardingTime().isFresh(now))
+    }
+    @Test fun `independent fresh trip arrival does not inherit an old monitor timestamp`() {
+        val r = ride().let { base -> base.copy(
+            departure = base.departure.copy(observedAt = now.minusSeconds(300)),
+            stops = base.stops.mapIndexed { i, stop -> if (i == base.boardingIndex)
+                stop.copy(estimatedArrival = now.plusSeconds(60)) else stop }) }
+        assertFalse(r.isStale(now))
+        assertTrue(r.boardingTime().isFresh(now))
+        assertTrue(r.copy(fetchedAt = now.minusSeconds(121)).isStale(now))
+    }
+    @Test fun `future monitor timestamps beyond clock tolerance are not considered fresh`() {
+        val r = ride().let { it.copy(departure = it.departure.copy(observedAt = now.plusSeconds(31))) }
+        assertTrue(r.isStale(now))
+        assertFalse(r.boardingTime().isFresh(now))
+    }
+
 }

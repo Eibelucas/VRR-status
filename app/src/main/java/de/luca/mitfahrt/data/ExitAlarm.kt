@@ -46,8 +46,11 @@ object ExitAlarm {
         if (target.estimated == null && ride.offsetSeconds != 0L &&
             ride.departure.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } != true) return false
         val previous = (ride.boardingIndex until targetIndex).lastOrNull { !ride.stops[it].cancelled } ?: return false
-        return ride.gpsPassedIndex >= previous ||
-            ride.stops[previous].effective(ride.offsetSeconds)?.let { !it.isAfter(now.plusSeconds(15)) } == true
+        if (ride.gpsPassedIndex >= previous) return true
+        val previousStop = ride.stops[previous]
+        if (previousStop.estimated == null && ride.offsetSeconds != 0L &&
+            ride.departure.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } != true) return false
+        return previousStop.effective(ride.offsetSeconds)?.let { !it.isAfter(now.plusSeconds(15)) } == true
     }
 
     fun id(ride: Ride): String? = ride.exitTargetIndex()?.let { index ->

@@ -82,8 +82,9 @@ class MainActivity : ComponentActivity() {
                     !showIntro -> vm.retryHome()
                 }
             }
-            var pending by remember { mutableStateOf<Ride?>(null) }
-            var requestMonitor by remember { mutableStateOf(false) }
+            var pendingRideJson by rememberSaveable { mutableStateOf<String?>(null) }
+            var pendingAction by rememberSaveable { mutableStateOf<String?>(null) }
+            var switchRideJson by rememberSaveable { mutableStateOf<String?>(null) }
             var notice by remember { mutableStateOf<String?>(null) }
             var pendingInstallPath by rememberSaveable { mutableStateOf<String?>(null) }
             fun openInstaller(file: File) {
@@ -117,20 +118,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+                val action = pendingAction
+                val selected = pendingRideJson?.let { value -> runCatching { RideCodec.decode(value) }.getOrNull() }
+                pendingRideJson = null; pendingAction = null
                 val fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                if (requestMonitor && !fine) {
-                    notice = "Für die WLAN-Erkennung ist genauer Standort nötig. Du kannst deine Fahrt auch manuell wählen."
-                } else {
-                    runCatching { RideService.start(context, pending) }.onFailure {
+                when {
+                    action == "monitor" && !fine -> notice = "Für die WLAN-Erkennung ist genauer Standort nötig. Du kannst deine Fahrt auch manuell wählen."
+                    action == "ride" && selected == null -> notice = "Bitte wähle deine Fahrt erneut aus."
+                    action != null -> runCatching { RideService.start(context, selected) }.onFailure {
                         notice = "Die Fahrt konnte nicht gestartet werden. Bitte versuche es erneut."
                     }
                 }
-                pending = null
-                requestMonitor = false
             }
             fun begin(ride: Ride?) {
-                pending = ride
-                requestMonitor = ride == null
+                pendingRideJson = ride?.let(RideCodec::encode)
+                pendingAction = if (ride == null) "monitor" else "ride"
                 val required = buildList {
                     if (!tracking.running && ride?.demo != true && (ride == null ||
                             context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED)) {
@@ -144,12 +146,17 @@ class MainActivity : ComponentActivity() {
                 }.filter { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
                 if (required.isEmpty()) {
                     runCatching { RideService.start(context, ride) }.onFailure { notice = "Start fehlgeschlagen. Bitte erneut versuchen." }
-                    pending = null
-                    requestMonitor = false
+                    pendingRideJson = null
+                    pendingAction = null
                 } else permissions.launch(required.toTypedArray())
             }
+            fun selectRide(selected: Ride) {
+                val current = tracking.ride
+                if (current != null && current.departure.key != selected.departure.key) switchRideJson = RideCodec.encode(selected)
+                else begin(current?.takeIf { it.departure.key == selected.departure.key } ?: selected)
+            }
             LaunchedEffect(search.pendingRide) {
-                search.pendingRide?.let { begin(it); vm.consumeRide() }
+                search.pendingRide?.let { selected -> selectRide(selected); vm.consumeRide() }
             }
             if (showIntro) FirstTimeSetup(locationAllowed, notificationsAllowed,
                 onLocation = ::requestNearbyLocation,
@@ -165,10 +172,21 @@ class MainActivity : ComponentActivity() {
             else MitfahrtApp(tracking, search, vm, notice, updateState,
                 onCheckUpdate = updates::check, onDownloadUpdate = updates::download, onInstallUpdate = ::installUpdate,
                 onDismissNotice = { notice = null }, onMonitor = { begin(null) },
-                onDemo = { begin(DemoRide.create()) },
+                onDemo = { selectRide(DemoRide.create()) },
                 onResume = { tracking.ride?.let { begin(it) } },
                 onStop = { RideService.stop(context) }, onNearbyLocation = ::requestNearbyLocation,
                 onIntro = { showIntro = true })
+            switchRideJson?.let { value ->
+                val selected = runCatching { RideCodec.decode(value) }.getOrNull()
+                if (selected != null) de.luca.mitfahrt.ui.MitfahrtTheme {
+                    androidx.compose.material3.AlertDialog(onDismissRequest = { switchRideJson = null },
+                        title = { androidx.compose.material3.Text(if (selected.demo) "Demo starten?" else "Fahrt wechseln?") },
+                        text = { androidx.compose.material3.Text(if (selected.demo) "Die aktuelle Fahrt wird durch die Demofahrt ersetzt." else "Statt der aktuellen Fahrt Linie ${selected.departure.line} Richtung ${shortName(selected.departure.destination)} verfolgen?") },
+                        confirmButton = { androidx.compose.material3.TextButton(onClick = { switchRideJson = null; begin(selected) }) { androidx.compose.material3.Text("Wechseln") } },
+                        dismissButton = { androidx.compose.material3.TextButton(onClick = { switchRideJson = null }) { androidx.compose.material3.Text("Abbrechen") } })
+                }
+            }
+
         }
     }
 }

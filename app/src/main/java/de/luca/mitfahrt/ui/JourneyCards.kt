@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -17,69 +18,105 @@ import de.luca.mitfahrt.data.*
 import java.time.Instant
 
 @Composable
-fun SchoolTripCard(trips: List<SchoolTrip>, now: Instant, onSelect: (SchoolTrip) -> Unit, onRemove: (SchoolDirection) -> Unit) {
+fun SchoolTripCard(trips: List<SchoolTrip>, home: HomeState, now: Instant, busy: Boolean,
+    onSelect: (SchoolTrip) -> Unit, onRemove: (SchoolDirection) -> Unit, onStart: (SchoolTrip, Departure) -> Unit) {
     if (trips.isEmpty()) return
     val preferred = SchoolTrips.preferred(now)
+    var selected by rememberSaveable(preferred) { mutableStateOf(preferred.name) }
+    var menu by remember { mutableStateOf(false) }
+    val trip = trips.firstOrNull { it.direction.name == selected } ?: trips.first()
+    val next = if (home.status == NearbyStatus.READY) RouteHistory.suggestions(listOf(trip.route()), home.stops,
+        home.departures.filter { d -> home.stops.firstOrNull { stopKey(it.id) == stopKey(d.stopId) }?.let {
+            JourneyOptions.reachability(it, d, now).isPossible } == true }, now).firstOrNull() else null
     Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.School, null, tint = Lime)
-                Spacer(Modifier.width(10.dp)); Text("Dein Schulweg", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-            }
-            trips.sortedBy { it.direction != preferred }.forEach { trip ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(trip.direction.label, fontWeight = FontWeight.SemiBold)
-                        Text("${trip.line} · ${shortName(trip.boarding.name)} → ${shortName(trip.targetName)}", fontSize = 13.sp, color = Soft)
+                Spacer(Modifier.width(10.dp)); Text("Dein Schulweg", fontWeight = FontWeight.SemiBold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Schulweg verwalten", tint = Soft) }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("${trip.direction.label} entfernen") }, onClick = { menu = false; onRemove(trip.direction) })
                     }
-                    IconButton(onClick = { onRemove(trip.direction) }) { Icon(Icons.Outlined.Close, "${trip.direction.label} entfernen", tint = Soft) }
                 }
-                if (trip.direction == preferred) Button(onClick = { onSelect(trip) }, modifier = Modifier.fillMaxWidth()) { Text("Abfahrten ${trip.direction.label.replaceFirstChar { it.lowercase() }}") }
-                else OutlinedButton(onClick = { onSelect(trip) }, modifier = Modifier.fillMaxWidth()) { Text("Abfahrten ${trip.direction.label.replaceFirstChar { it.lowercase() }}") }
             }
+            if (trips.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                trips.sortedBy { it.direction.ordinal }.forEach { saved ->
+                    FilterChip(selected = trip.direction == saved.direction, onClick = { selected = saved.direction.name }, label = { Text(saved.direction.label) })
+                }
+            } else Text(trip.direction.label, color = Lime, fontSize = 13.sp)
+            Text("${trip.line} → ${shortName(trip.targetName)}", fontWeight = FontWeight.SemiBold, fontSize = 19.sp)
+            Text("Ab ${shortName(next?.stop?.name ?: trip.boarding.name)}", fontSize = 13.sp, color = Soft)
+            if (next != null) {
+                Text("Abfahrt in ${countdownUntil(next.departure.effective, now)}", fontWeight = FontWeight.Bold, color = Lime, fontSize = 24.sp)
+                JourneyOptions.walking(next.stop)?.let { Text(it.label, color = Soft, fontSize = 12.sp) }
+                Button(onClick = { onStart(trip, next.departure) }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
+                    Text(if (busy) "Fahrt wird geladen …" else "Diesen Bus verfolgen")
+                }
+                TextButton(onClick = { onSelect(trip) }) { Text("Weitere Abfahrten") }
+            } else Button(onClick = { onSelect(trip) }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text("Abfahrten anzeigen") }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExitTargetCard(ride: Ride, onTarget: (Int?) -> Unit, onSave: (SchoolDirection) -> Unit) {
-    var picker by remember { mutableStateOf(false) }
+fun ExitTargetCard(ride: Ride, exitEnabled: Boolean, onTarget: (Int?) -> Unit, onSave: (SchoolDirection) -> Unit) {
+    var picker by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var menu by remember { mutableStateOf(false) }
     val target = ride.exitTargetStop()
     Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Dein Ausstieg", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-            OutlinedButton(onClick = { picker = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.NotificationsActive, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                Text(target?.let { shortName(it.name) } ?: "Ausstieg wählen")
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (exitEnabled) Icons.Outlined.NotificationsActive else Icons.Outlined.NotificationsOff, null, tint = Lime)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Dein Ausstieg", color = Soft, fontSize = 12.sp)
+                Text(target?.let { shortName(it.name) } ?: "Noch kein Ziel gewählt", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                if (target != null) Text(when {
+                    target.cancelled -> "Halt entfällt"
+                    !exitEnabled -> "Ausstiegshinweis ausgeschaltet"
+                    else -> "Hinweis einen Halt vorher"
+                }, color = if (target.cancelled) Amber else Soft, fontSize = 12.sp)
             }
-            if (target != null) {
-                Text(if (target.cancelled) "Dieser Halt entfällt. Bitte ein anderes Ziel wählen."
-                    else "Vibration einen Halt vorher · nach Fahrtdaten", fontSize = 12.sp, color = if (target.cancelled) Amber else Soft)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { query = ""; picker = true }) { Text(if (target == null) "Wählen" else "Ändern") }
+            if (target != null) Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Ziel und Schulweg verwalten", tint = Soft) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     SchoolDirection.entries.forEach { direction ->
-                        TextButton(onClick = { onSave(direction) }, enabled = !target.cancelled, modifier = Modifier.weight(1f)) {
-                            Text(if (direction == SchoolDirection.TO_SCHOOL) "Als Hinweg merken" else "Als Rückweg merken")
-                        }
+                        DropdownMenuItem(text = { Text(if (direction == SchoolDirection.TO_SCHOOL) "Als Hinweg merken" else "Als Rückweg merken") },
+                            onClick = { menu = false; onSave(direction) }, enabled = !target.cancelled)
                     }
+                    DropdownMenuItem(text = { Text("Ziel entfernen") }, onClick = { menu = false; onTarget(null) })
                 }
-                TextButton(onClick = { onTarget(null) }) { Text("Ausstiegsalarm ausschalten", color = Soft) }
             }
         }
     }
-    if (picker) AlertDialog(onDismissRequest = { picker = false }, title = { Text("Wo steigst du aus?") },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                itemsIndexed(ride.stops.drop(ride.boardingIndex + 1)) { index, stop ->
-                    TextButton(onClick = { onTarget(ride.boardingIndex + 1 + index); picker = false }, enabled = !stop.cancelled,
-                        modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.fillMaxWidth()) {
-                            Text(shortName(stop.name))
-                            Text(if (stop.cancelled) "Halt entfällt" else clockTime(stop.effective(ride.offsetSeconds)), fontSize = 12.sp, color = Soft)
+    if (picker) ModalBottomSheet(onDismissRequest = { picker = false }, containerColor = Panel) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).navigationBarsPadding().imePadding()) {
+            Text("Wo steigst du aus?", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                placeholder = { Text("Haltestelle filtern") }, leadingIcon = { Icon(Icons.Outlined.Search, null) })
+            Spacer(Modifier.height(8.dp))
+            val stops = ride.stops.withIndex().filter { it.index > ride.boardingIndex && SavedStops.matches(Stop(it.value.id, it.value.name), query) }
+            LazyColumn(Modifier.heightIn(max = 420.dp).fillMaxWidth()) {
+                itemsIndexed(stops, key = { _, entry -> entry.index }) { _, entry ->
+                    TextButton(onClick = { onTarget(entry.index); picker = false }, enabled = !entry.value.cancelled,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(shortName(entry.value.name), modifier = Modifier.fillMaxWidth())
+                            Text(if (entry.value.cancelled) "Halt entfällt" else clockTime(entry.value.effective(ride.offsetSeconds)),
+                                fontSize = 12.sp, color = Soft, modifier = Modifier.fillMaxWidth())
                         }
+                        if (entry.index == ride.exitTargetIndex()) Icon(Icons.Outlined.Check, "Ausgewählt")
                     }
                 }
+                if (stops.isEmpty()) item { Text("Kein passender Halt im Fahrtverlauf.", modifier = Modifier.padding(vertical = 20.dp), color = Soft) }
             }
-        }, confirmButton = { TextButton(onClick = { picker = false }) { Text("Abbrechen") } })
+            Spacer(Modifier.height(16.dp))
+        }
+    }
 }
 
 @Composable

@@ -33,6 +33,28 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
             Icon(Icons.Outlined.Search, null, tint = Lime)
             Spacer(Modifier.width(12.dp)); Text("Haltestelle suchen", color = Soft)
         }
+        if (routes.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Deine Strecken", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                TextButton(onClick = { allRoutes = true }) { Text("Alle") }
+            }
+            if (home.status == NearbyStatus.READY) {
+                if (home.departuresLoading && matches.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+                matches.take(3).forEach { match -> key(match.route.key) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        DepartureRow(match.departure, now, choosingKey == match.departure.key, !choosing,
+                            showStop = true, distance = match.stop.distance) { onDeparture(match.departure) }
+                        JourneyOptions.walking(match.stop)?.let { walk ->
+                            Text("${walk.label} · ${JourneyOptions.reachability(match.stop, match.departure, now).label}",
+                                color = Soft, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
+                        }
+                    }
+                } }
+                if (matches.isEmpty() && !home.departuresLoading && !home.loading)
+                    Text(if (home.error != null) "Abfahrten gerade nicht verfügbar. Unter Alle erneut laden."
+                        else "Gerade keine passende Abfahrt in deiner Nähe.", color = Soft, fontSize = 13.sp, lineHeight = 19.sp)
+            } else routes.take(2).forEach { route -> HistoryRow(route) { onRoute(route) } }
+        }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("In deiner Nähe", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             IconButton(onClick = onRefresh, enabled = !home.loading) { Icon(Icons.Outlined.Refresh, "Haltestellen aktualisieren", tint = Lime) }
@@ -58,29 +80,12 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
         if (home.approximate) Text("Ungefährer Standort", color = Soft, fontSize = 12.sp)
         if (home.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         home.error?.let { Text(it, color = Amber, fontSize = 13.sp) }
-        home.stops.take(4).forEach { stop -> key(stop.id) { StopRow(stop) { onStop(stop) } } }
+        home.stops.take(3).forEach { stop -> key(stop.id) { StopRow(stop) { onStop(stop) } } }
         if (home.status == NearbyStatus.READY && home.stops.isEmpty() && !home.loading && home.error == null)
             Text("Keine Haltestelle im Umkreis von 700 m gefunden.", color = Soft, fontSize = 14.sp)
-        if (home.stops.size > 4) TextButton(onClick = onAllStops) { Text("Alle Haltestellen") }
-        Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Deine Strecken", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            if (routes.isNotEmpty()) TextButton(onClick = { allRoutes = true }) { Text("Alle") }
+        if (home.stops.size > 3) TextButton(onClick = onAllStops, modifier = Modifier.fillMaxWidth()) {
+            Text("Alle Haltestellen")
         }
-        if (routes.isEmpty()) Text("Deine gewählten Fahrten erscheinen beim nächsten Mal hier.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
-        else if (home.status == NearbyStatus.READY) {
-            if (home.departuresLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            matches.take(4).forEach { match -> key(match.route.key) {
-                DepartureRow(match.departure, now, choosingKey == match.departure.key, !choosing,
-                    showStop = true, distance = match.stop.distance) { onDeparture(match.departure) }
-                JourneyOptions.walking(match.stop)?.let { walk ->
-                    Text("${walk.label} · ${JourneyOptions.reachability(match.stop, match.departure, now).label}", color = Soft, fontSize = 12.sp,
-                        modifier = Modifier.padding(horizontal = 16.dp))
-                }
-            } }
-            if (matches.isEmpty() && !home.departuresLoading && !home.loading)
-                Text(if (home.error != null) "Öffne eine Strecke, um die Abfahrten erneut zu laden."
-                    else "Gerade keine passende Abfahrt in deiner Nähe.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
-        } else routes.take(3).forEach { route -> HistoryRow(route) { onRoute(route) } }
     }
     if (allRoutes) ModalBottomSheet(onDismissRequest = { allRoutes = false }, containerColor = Ink) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
@@ -102,7 +107,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
 private fun HistoryRow(route: FrequentRoute, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Panel).clickable(onClick = onClick).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Text(route.visit.line, color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.Bold,
+        Text(route.visit.line, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold,
             modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Lime).padding(horizontal = 10.dp, vertical = 8.dp))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

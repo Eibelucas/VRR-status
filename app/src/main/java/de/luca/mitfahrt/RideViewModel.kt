@@ -36,6 +36,15 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     val arrivals = app.arrivals.marks
     val routes = app.routes.routes
     val schoolTrips = app.schoolTrips.trips
+    val savedStops = app.savedStops.state
+    private val alertStore = AlertPreferencesStore(app)
+    val alertPreferences = alertStore.state
+    fun setArrivalAlert(enabled: Boolean) = alertStore.setArrivalEnabled(enabled)
+    fun setExitAlert(enabled: Boolean) = alertStore.setExitEnabled(enabled)
+    fun setAlertLead(seconds: Int) = alertStore.setLeadSeconds(seconds)
+    fun toggleFavorite(stop: Stop): Boolean = app.savedStops.toggleFavorite(stop)
+    fun restoreFavorite(stop: Stop, index: Int) = app.savedStops.restoreFavorite(stop, index)
+    fun removeRecentStop(stop: Stop) = app.savedStops.removeRecent(stop)
     private val hapticTestClient = de.luca.mitfahrt.alerts.HapticTestClient(app)
     val hapticTest = hapticTestClient.state
     fun testVibration() { viewModelScope.launch { hapticTestClient.run() } }
@@ -59,14 +68,17 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     private val mutable = MutableStateFlow(SearchState())
     val search = mutable.asStateFlow()
     private var job: Job? = null
+    private var queryJob: Job? = null
+    private var nearbyQueries = true
 
     init { viewModelScope.launch {
         val saved = withContext(Dispatchers.IO) { app.reports.list() }
         if (!reportState.value.busy && reportState.value.entries.isEmpty()) reportState.value = reportState.value.copy(entries = saved)
     } }
 
-    fun openHome() {
+    fun openHome(lookupNearby: Boolean = true) {
         if (homeJob?.isActive == true) return
+        nearbyQueries = lookupNearby
         homeState.value = HomeState()
         homeJob = viewModelScope.launch {
             launch {
@@ -74,15 +86,20 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                     if (event.status in setOf(NearbyStatus.NO_PERMISSION, NearbyStatus.LOCATION_OFF)) {
                         nearbyJob?.cancel(); boardsJob?.cancel(); queryPoint = null; lastPoint = null
                         homeState.value = HomeState(status = event.status)
+                        mutable.value = mutable.value.copy(selectedStop = mutable.value.selectedStop?.copy(distance = null))
                     } else homeState.value = homeState.value.copy(status = event.status, approximate = event.approximate)
                     event.point?.let { point ->
                         lastPoint = point; lastFix = SystemClock.elapsedRealtime()
-                        if (queryPoint?.distanceTo(point)?.let { it >= 100 } != false || lastFix - lastQuery >= 120_000)
+                        mutable.value.selectedStop?.let { stop ->
+                            mutable.value = mutable.value.copy(selectedStop = stop.copy(distance = stop.point?.distanceTo(point)?.toInt()))
+                        }
+                        if (nearbyQueries && (queryPoint?.distanceTo(point)?.let { it >= 100 } != false || lastFix - lastQuery >= 120_000))
                             loadNearby(point)
                     }
                 }
             }
-            launch { routes.drop(1).collect { refreshHomeDepartures() } }
+            launch { routes.drop(1).collect { if (nearbyQueries) refreshHomeDepartures() } }
+            launch { schoolTrips.drop(1).collect { if (nearbyQueries) refreshHomeDepartures() } }
             launch {
                 while (isActive) {
                     delay(30_000)
@@ -90,7 +107,8 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                         nearbyJob?.cancel(); boardsJob?.cancel()
                         homeState.value = HomeState(status = NearbyStatus.UNAVAILABLE)
                         queryPoint = null
-                    } else refreshHomeDepartures()
+                        mutable.value = mutable.value.copy(selectedStop = mutable.value.selectedStop?.copy(distance = null))
+                    } else if (nearbyQueries) refreshHomeDepartures()
                 }
             }
         }
@@ -162,7 +180,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshHomeDepartures() {
-        if (homeState.value.status != NearbyStatus.READY || homeState.value.stops.isEmpty() || routes.value.isEmpty() ||
+        if (homeState.value.status != NearbyStatus.READY || homeState.value.stops.isEmpty() || (routes.value.isEmpty() && schoolTrips.value.isEmpty()) ||
             nearbyJob?.isActive == true && homeState.value.loading || boardsJob?.isActive == true) return
         val stops = homeState.value.stops
         boardsJob = viewModelScope.launch {
@@ -207,8 +225,13 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         tracking.value.ride?.let { app.store.setRide(it.copy(boarded = true), preserveStatus = true) }
     }
 
-    fun query(value: String) { mutable.value = mutable.value.copy(query = value) }
+    fun query(value: String) {
+        queryJob?.cancel(); job?.cancel()
+        mutable.value = mutable.value.copy(query = value, stops = emptyList(), loading = false, searched = false, error = null)
+        if (value.trim().length >= 2) queryJob = viewModelScope.launch { delay(350); search() }
+    }
     fun search() {
+        queryJob?.cancel()
         val query = mutable.value.query.trim()
         if (query.length < 2) return
         load {
@@ -218,6 +241,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun nearby() {
+        queryJob?.cancel()
         if (homeState.value.stops.isNotEmpty() && homeState.value.status == NearbyStatus.READY) {
             job?.cancel()
             mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(),
@@ -239,6 +263,8 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun selectRoute(route: FrequentRoute) { selectStop(route.visit.stop, route) }
     fun selectStop(stop: Stop, route: FrequentRoute? = null, schoolTrip: SchoolTrip? = null) {
+        queryJob?.cancel()
+        app.savedStops.select(stop)
         load {
             val nearby = homeState.value.stops.firstOrNull { stopKey(it.id) == stopKey(stop.id) }
             val point = lastPoint?.takeIf { SystemClock.elapsedRealtime() - lastFix <= 90_000 }
@@ -260,6 +286,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: CancellationException) { throw e
         } catch (_: Exception) { /* Keep the timestamped last data; the manual refresh remains available. */ }
     }
+    fun chooseSchoolDeparture(trip: SchoolTrip, departure: Departure) { chooseWithTarget(departure, trip.targetId, trip.targetOccurrence) }
     fun choose(departure: Departure) { chooseWithTarget(departure, mutable.value.schoolTrip?.targetId, mutable.value.schoolTrip?.targetOccurrence ?: 0) }
     fun chooseAlternative(departure: Departure) { chooseWithTarget(departure, tracking.value.ride?.exitTargetStop()?.id, tracking.value.ride?.targetOccurrence() ?: 0) }
     private fun chooseWithTarget(departure: Departure, targetId: String?, occurrence: Int) {

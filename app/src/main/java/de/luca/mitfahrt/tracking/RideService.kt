@@ -24,11 +24,13 @@ class RideService : Service(), LocationListener {
     private lateinit var notifications: RideNotifications
     private lateinit var wifi: WifiManager
     private lateinit var locations: LocationManager
+    private lateinit var alertPreferences: AlertPreferencesStore
     private var loop: Job? = null
     private var observer: Job? = null
     private var lastWifiScan = 0L
     private var lastCandidates = 0L
     private var lastRideRefresh = 0L
+    private var lastCompletionCheck: Instant? = null
     private var candidateLookup: Job? = null
     private var approaching: Int? = null
     private var arrivalAlerted: String? = null
@@ -42,6 +44,7 @@ class RideService : Service(), LocationListener {
     override fun onCreate() {
         super.onCreate()
         notifications = RideNotifications(this)
+        alertPreferences = AlertPreferencesStore(this)
         wifi = applicationContext.getSystemService(WifiManager::class.java)
         locations = getSystemService(LocationManager::class.java)
     }
@@ -56,6 +59,7 @@ class RideService : Service(), LocationListener {
             store.setRide(ride)
             store.update { it.copy(monitoring = false, candidates = emptyList()) }
             approaching = null
+            lastCompletionCheck = null
             lastRideRefresh = SystemClock.elapsedRealtime()
         } else if (intent?.action == MONITOR) {
             store.setRide(null)
@@ -90,12 +94,17 @@ class RideService : Service(), LocationListener {
                     readWifi()
                     val ride = store.state.value.ride
                     if (ride != null) {
-                        if (ride.complete(Instant.now()) && (ride.demo || (!ride.isStale(Instant.now()) && !store.state.value.lastRefreshFailed))) {
-                            store.clear(); stopSelf(); break
-                        }
-                        if (!ride.demo && elapsed - lastRideRefresh > 30_000) {
+                        if (RideRefreshPolicy.needsRefresh(ride, elapsed - lastRideRefresh, lastCompletionCheck, Instant.now())) {
                             lastRideRefresh = elapsed
                             refreshRide(ride)
+                            store.state.value.ride?.takeIf { it.departure.key == ride.departure.key && it.complete(Instant.now()) }?.let {
+                                lastCompletionCheck = it.terminal.effective(it.offsetSeconds)
+                            }
+                        }
+                        val refreshed = store.state.value
+                        if (refreshed.ride?.departure?.key == ride.departure.key &&
+                            RideRefreshPolicy.canFinish(refreshed, lastCompletionCheck, Instant.now())) {
+                            store.clear(); stopSelf(); break
                         }
                     } else if (store.state.value.monitoring && store.state.value.wifi in setOf(WifiSignal.CONNECTED, WifiSignal.NEARBY)) {
                         findCandidates()
@@ -103,8 +112,8 @@ class RideService : Service(), LocationListener {
                     val current = store.state.value
                     val currentRide = current.ride
                     val snapshot = current.watchSnapshot()
-                    if (currentRide != null && currentRide.stops.getOrNull(currentRide.boardingIndex)?.cancelled != true &&
-                        de.luca.mitfahrt.shared.ArrivalAlert.due(snapshot, Instant.now())) {
+                    val alertOptions = alertPreferences.current()
+                    if (currentRide != null && ArrivalAlertPolicy.due(current, alertOptions, Instant.now())) {
                         val id = currentRide.departure.key
                         if (arrivalAlerted != id) {
                             arrivalAlerted = id
@@ -112,7 +121,7 @@ class RideService : Service(), LocationListener {
                             app.watch.arrivalAlert(id, requireNotNull(snapshot.boardingAt))
                         }
                     }
-                    if (ExitAlarm.due(current, Instant.now()) && currentRide != null) {
+                    if (ArrivalAlertPolicy.exitDue(current, alertOptions, Instant.now()) && currentRide != null) {
                         val id = ExitAlarm.id(currentRide)
                         val prefs = getSharedPreferences("exit_alerts", MODE_PRIVATE)
                         val seen = prefs.getStringSet("seen", emptySet()).orEmpty()
@@ -134,8 +143,10 @@ class RideService : Service(), LocationListener {
         try {
             var departure = ride.departure
             // The trip endpoint may omit real-time estimates even if the departure monitor has them.
-            runCatching { app.vrr.departures(Stop(departure.stopId, departure.stopName)) }.getOrNull()
-                ?.firstOrNull { it.key == departure.key }?.let { departure = it }
+            val monitor = runCatching { app.vrr.departures(Stop(departure.stopId, departure.stopName)) }
+                .getOrElse { error -> if (error is CancellationException) throw error else emptyList() }
+                .firstOrNull { it.key == departure.key }
+            monitor?.let { departure = it }
             if (departure.cancelled) {
                 // Cancelled trips may no longer have a TripStopTimes response. Publish the
                 // monitor's cancellation immediately without pretending old stop times are fresh.
@@ -148,9 +159,13 @@ class RideService : Service(), LocationListener {
             val updated = app.vrr.ride(departure)
             val current = store.state.value.ride
             if (current?.departure?.key == ride.departure.key) {
-                store.setRide(updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex),
-                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt).remapExitTargetFrom(current))
-                if (departure.cancelled) store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
+                val merged = updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex),
+                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt).remapExitTargetFrom(current)
+                store.setRide(merged)
+                if (monitor == null && RideRefreshPolicy.usesMonitorBaseline(merged)) {
+                    store.update { it.copy(lastRefreshFailed = true,
+                        message = "Fahrtverlauf aktualisiert. Die letzte Abfahrtsprognose konnte nicht bestätigt werden.") }
+                }
             }
         } catch (e: CancellationException) { throw e
         } catch (_: Exception) {
