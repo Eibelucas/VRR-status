@@ -1,0 +1,8 @@
+.gradle/
+.tooling/
+local.properties
+**/build/
+research/
+*.iml
+.idea/
+artifacts/
