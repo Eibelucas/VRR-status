@@ -7,6 +7,9 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.graphics.Color
+import android.graphics.drawable.Icon
+import de.luca.mitfahrt.R
 
 object NowBarSupport {
     const val PROMOTION_SETTINGS = "android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS"
@@ -19,22 +22,48 @@ object NowBarSupport {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("samsung_compatibility", enabled).apply()
     }
 
-    // Small, isolated vendor hint. No private style, reflected API, spoofed package or custom view.
-    // Guarded by the user's actual Android live-notification permission.
+    fun ownTitleEnabled(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getBoolean("samsung_own_title", Build.VERSION.SDK_INT >= 37)
+
+    fun setOwnTitleEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("samsung_own_title", enabled).apply()
+    }
+
+    // Undocumented Samsung hints, always gated by the real live-update permission.
+    // The private-card lane is restricted to Android 17 / One UI 9: it breaks 8.5.
     fun useSamsungHints(manufacturer: String, sdk: Int, canPromote: Boolean, enabled: Boolean): Boolean =
         manufacturer.equals("samsung", true) && sdk >= 36 && canPromote && enabled
 
-    fun extras(context: Context): Bundle {
+    fun extras(context: Context, title: String, text: String, chip: String, progress: Int): Bundle {
         val manager = context.getSystemService(NotificationManager::class.java)
         val allowed = Build.VERSION.SDK_INT >= 36 && manager.canPostPromotedNotifications()
-        return notificationExtras(context.packageName, Build.MANUFACTURER, Build.VERSION.SDK_INT, allowed, samsungEnabled(context))
+        return notificationExtras(context.packageName, Build.MANUFACTURER, Build.VERSION.SDK_INT, allowed, samsungEnabled(context),
+            ownTitleEnabled(context), title, text, chip, progress).apply {
+            if (containsKey("android.ongoingActivityNoti.style")) {
+                val icon = Icon.createWithResource(context, R.drawable.ic_bus)
+                putParcelable("android.ongoingActivityNoti.chipIcon", icon)
+                putParcelable("android.ongoingActivityNoti.nowbarIcon", icon)
+            }
+        }
     }
 
-    internal fun notificationExtras(packageName: String, manufacturer: String, sdk: Int, canPromote: Boolean, enabled: Boolean): Bundle = Bundle().apply {
+    internal fun notificationExtras(packageName: String, manufacturer: String, sdk: Int, canPromote: Boolean, enabled: Boolean,
+        ownTitle: Boolean = false, title: String = "Mitfahrt", text: String = "", chip: String = "Mitfahrt", progress: Int = 0): Bundle = Bundle().apply {
         putBoolean("android.requestPromotedOngoing", true)
         if (useSamsungHints(manufacturer, sdk, canPromote, enabled)) {
             putBoolean("android.ongoingActivityNoti.automation", true)
             putString("android.ongoingActivityNoti.automationPackage", packageName)
+            if (sdk >= 37 && ownTitle) {
+                putInt("android.ongoingActivityNoti.style", 1)
+                putString("android.ongoingActivityNoti.primaryInfo", "Mitfahrt · $title")
+                putString("android.ongoingActivityNoti.nowbarPrimaryInfo", "Mitfahrt · $title")
+                putString("android.ongoingActivityNoti.secondaryInfo", text)
+                putString("android.ongoingActivityNoti.chipExpandedText", chip)
+                putInt("android.ongoingActivityNoti.chipBgColor", Color.rgb(196, 245, 139))
+                putInt("android.ongoingActivityNoti.progress", progress.coerceIn(0, 100))
+                putInt("android.ongoingActivityNoti.progressMax", 100)
+                putBoolean("android.showSmallIcon", true)
+            }
         }
     }
 

@@ -1,11 +1,10 @@
-## Mitfahrt 0.5.0
+## Mitfahrt 0.6.0
 
-- Countdown in Minuten und Sekunden bis zum Bus bzw. zur gemeldeten Abfahrt.
-- Warteansicht vor dem Einsteigen; „Bin im Bus“ wechselt zur laufenden Fahrt.
-- Automatische Aktualisierung der sichtbaren Abfahrtsliste alle 30 Sekunden.
-- Korrekte Android-Einstellungsseite für Live-Benachrichtigungen.
-- Samsung-Kompatibilitätsmodus für die Now Bar mit Statusanzeige und abschaltbarer experimenteller Anpassung.
-- Benachrichtigungsaufbau richtet sich nach der tatsächlichen Live-Update-Eignung des Android-Frameworks.
-- Zusätzliche Android-Framework-Tests für Live-Update-Eignung, Countdown und Samsung-Zusätze.
+- **Busse auf der Karte** öffnet die offizielle NEW-Livekarte direkt in Mitfahrt, auch ohne aktive Fahrt.
+- Fahrzeugmarker und Linienauswahl kommen von `livebus.new.de`. Die Karte ordnet keinen Marker ungeprüft der gewählten VRR-Fahrt zu.
+- Eigene Kartenfelder für die Now Bar auf Android 17 / One UI 9: „Mitfahrt“, Linie, Richtung und Fahrtstatus. Das soll den gemeldeten Gemini-Titel ersetzen.
+- Unter **Einstellungen → Auf dem Sperrbildschirm → Eigenen Titel verwenden** lässt sich die neue Darstellung ausschalten, um zum bereits funktionierenden Modus zurückzukehren.
+- Die Karte erhält keinen Zugriff auf Berichte, Ankünfte, WLAN oder den Gerätestandort. Beim Schließen oder Verlassen der App wird die Webansicht beendet.
+- Zusätzliche Tests für Samsung-Titelfelder und die Navigation der eingebetteten Karte.
 
-Auf dem Galaxy A56 mit One UI 9 muss die Now-Bar-Darstellung noch praktisch bestätigt werden. Nach Auswahl eines Busses Live-Benachrichtigungen erlauben, die App verlassen und den Sperrbildschirm prüfen.
+Die Now Bar aus Version 0.5 wurde auf dem Galaxy A56 / One UI 9 vom Nutzer bestätigt. Die neue Titeldarstellung muss auf diesem Gerät geprüft werden; Samsungs Felder sind keine offizielle API. Android-/Samsung-Sicherheitsprüfungen bei der APK-Installation werden vom System gesteuert und bleiben bestehen. Updates verwenden denselben Signaturschlüssel wie bisher.

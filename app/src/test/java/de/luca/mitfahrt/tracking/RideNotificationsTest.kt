@@ -53,6 +53,28 @@ class RideNotificationsTest {
         assertFalse(NowBarSupport.notificationExtras(context.packageName, "samsung", 37, true, false).containsKey("android.ongoingActivityNoti.automation"))
         assertFalse(NowBarSupport.notificationExtras(context.packageName, "google", 37, true, true).containsKey("android.ongoingActivityNoti.automation"))
     }
+    @Test fun `Samsung own title provides journey text on Android 17 only`() {
+        val extras = NowBarSupport.notificationExtras(context.packageName, "samsung", 37, true, true,
+            true, "006 → Rheydt Hbf", "Nächster Halt: Marienplatz", "006 · 3 Min", 30)
+        assertEquals(1, extras.getInt("android.ongoingActivityNoti.style"))
+        assertEquals("Mitfahrt · 006 → Rheydt Hbf", extras.getString("android.ongoingActivityNoti.primaryInfo"))
+        assertEquals("Mitfahrt · 006 → Rheydt Hbf", extras.getString("android.ongoingActivityNoti.nowbarPrimaryInfo"))
+        assertEquals("Nächster Halt: Marienplatz", extras.getString("android.ongoingActivityNoti.secondaryInfo"))
+        assertEquals("006 · 3 Min", extras.getString("android.ongoingActivityNoti.chipExpandedText"))
+        assertEquals(30, extras.getInt("android.ongoingActivityNoti.progress"))
+        assertEquals(context.packageName, extras.getString("android.ongoingActivityNoti.automationPackage"))
+        // Never switch the working Android-16 / One-UI-8.5 notification into the card lane.
+        assertFalse(NowBarSupport.notificationExtras(context.packageName, "samsung", 36, true, true, true)
+            .containsKey("android.ongoingActivityNoti.style"))
+    }
+    @Test fun `own title respects permission vendor and both switches`() {
+        listOf(
+            NowBarSupport.notificationExtras(context.packageName, "samsung", 37, false, true, true),
+            NowBarSupport.notificationExtras(context.packageName, "samsung", 37, true, false, true),
+            NowBarSupport.notificationExtras(context.packageName, "samsung", 37, true, true, false),
+            NowBarSupport.notificationExtras(context.packageName, "google", 37, true, true, true)
+        ).forEach { assertFalse(it.containsKey("android.ongoingActivityNoti.style")) }
+    }
     @Test fun `live update settings use the actual Android action`() {
         assertEquals(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS, NowBarSupport.PROMOTION_SETTINGS)
     }

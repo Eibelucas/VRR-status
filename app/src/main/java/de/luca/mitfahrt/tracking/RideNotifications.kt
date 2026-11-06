@@ -68,9 +68,11 @@ class RideNotifications(private val context: Context) {
             if (ride.departure.cancelled) "Bus fällt aus" else if (!boardingTime.at.isAfter(now)) "Bus wird erwartet"
             else "${if (boardingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(boardingTime.at, now)}"
         } else if (next == null) "Endhaltestelle erreicht" else "Nächster Halt: ${shortName(next.name)}"
-        builder.setContentTitle("${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.terminal.name)}")
-            .setContentText(listOfNotNull(headline,
-                delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }).joinToString(" · "))
+        val title = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.terminal.name)}"
+        val text = listOfNotNull(headline,
+            delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }).joinToString(" · ")
+        builder.setContentTitle(title)
+            .setContentText(text)
             .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Endhalt" } ?: "Ankunft unbekannt"}")
         if (waiting && !ride.departure.cancelled && boardingTime.at.isAfter(now)) {
             builder.setWhen(boardingTime.at.toEpochMilli()).setShowWhen(true)
@@ -81,7 +83,9 @@ class RideNotifications(private val context: Context) {
                 .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(196, 245, 139))))
                 .setProgress(if (waiting) 0 else (ride.progress(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
-            builder.addExtras(NowBarSupport.extras(context))
+            builder.addExtras(NowBarSupport.extras(context, title, "$text · $timeSource",
+                "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
+                if (waiting) 0 else (ride.progress(now) * 100).toInt()))
             builder.setShortCriticalText(remaining?.let { "$it Min" } ?: ride.departure.line)
         } else {
             builder.setStyle(Notification.BigTextStyle().bigText(

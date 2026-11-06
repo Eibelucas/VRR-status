@@ -79,6 +79,7 @@ fun MitfahrtApp(
     var page by rememberSaveable { mutableIntStateOf(0) }
     var showAll by rememberSaveable { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
+    var showLiveMap by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableStateOf(Instant.now()) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { while (true) { now = Instant.now(); delay(1000) } }
@@ -146,6 +147,7 @@ fun MitfahrtApp(
                             }
                         }
                         if (ride.boarded) item { NextStopCard(ride, now) }
+                        if (!ride.demo) item { LiveMapCard { showLiveMap = true } }
                         if (!ride.demo) item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = { arrivalRide = ride }, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
@@ -190,6 +192,7 @@ fun MitfahrtApp(
                         }
                     } else {
                         item { WelcomeCard(onChoose = { page = 1 }) }
+                        item { LiveMapCard { showLiveMap = true } }
                         item { DetectionCard(tracking, onMonitor, onStop) }
                         if (tracking.candidates.isNotEmpty()) {
                             item { Text("Dein Bus?", fontSize = 21.sp, fontWeight = FontWeight.SemiBold) }
@@ -205,6 +208,7 @@ fun MitfahrtApp(
                 else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate)
             }
         }
+        if (showLiveMap) NewLiveMapScreen(onClose = { showLiveMap = false })
         if (confirmStop) AlertDialog(onDismissRequest = { confirmStop = false }, title = { Text("Fahrt beenden?") },
             text = { Text("Die Fahrtanzeige wird geschlossen.") },
             confirmButton = { TextButton(onClick = { confirmStop = false; onStop() }) { Text("Beenden") } },
@@ -229,6 +233,22 @@ fun MitfahrtApp(
                         }
                     }
                 }, confirmButton = { TextButton(onClick = { arrivalRide = null }) { Text("Abbrechen") } })
+        }
+    }
+}
+
+@Composable
+private fun LiveMapCard(onClick: () -> Unit) {
+    Card(onClick = onClick, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+        Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(Icons.Outlined.Map, null, tint = Lime)
+            Column(Modifier.weight(1f)) {
+                Text("Busse auf der Karte", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text("Livepositionen von NEW", color = Soft, fontSize = 13.sp)
+            }
+            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, tint = Soft, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -513,6 +533,11 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     val manager = context.getSystemService(NotificationManager::class.java)
     var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
     var samsungCompat by remember { mutableStateOf(NowBarSupport.samsungEnabled(context)) }
+    var ownTitle by remember { mutableStateOf(NowBarSupport.ownTitleEnabled(context)) }
+    fun refreshNowBar() {
+        val state = (context.applicationContext as de.luca.mitfahrt.MitfahrtApplication).store.state.value
+        if (state.running && state.ride != null) RideNotifications(context).post(state)
+    }
     LaunchedEffect(Unit) {
         while (true) { nowBarStatus = NowBarSupport.status(context); delay(2000) }
     }
@@ -564,8 +589,18 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
                             Switch(checked = samsungCompat, onCheckedChange = { enabled ->
                                 samsungCompat = enabled
                                 NowBarSupport.setSamsungEnabled(context, enabled)
-                                val state = (context.applicationContext as de.luca.mitfahrt.MitfahrtApplication).store.state.value
-                                if (state.running && state.ride != null) RideNotifications(context).post(state)
+                                refreshNowBar()
+                            })
+                        }
+                        if (samsungCompat && Build.VERSION.SDK_INT >= 37) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Eigenen Titel verwenden", fontSize = 14.sp)
+                                Text("Bei Darstellungsproblemen ausschalten", color = Soft, fontSize = 12.sp)
+                            }
+                            Switch(checked = ownTitle, onCheckedChange = { enabled ->
+                                ownTitle = enabled
+                                NowBarSupport.setOwnTitleEnabled(context, enabled)
+                                refreshNowBar()
                             })
                         }
                     }
