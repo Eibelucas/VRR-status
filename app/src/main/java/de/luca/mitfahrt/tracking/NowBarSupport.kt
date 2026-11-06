@@ -59,7 +59,7 @@ object NowBarSupport {
                 putString("android.ongoingActivityNoti.nowbarPrimaryInfo", "Mitfahrt · $title")
                 putString("android.ongoingActivityNoti.secondaryInfo", text)
                 putString("android.ongoingActivityNoti.chipExpandedText", chip)
-                putInt("android.ongoingActivityNoti.chipBgColor", Color.rgb(196, 245, 139))
+                putInt("android.ongoingActivityNoti.chipBgColor", Color.rgb(180, 0, 85))
                 putInt("android.ongoingActivityNoti.progress", progress.coerceIn(0, 100))
                 putInt("android.ongoingActivityNoti.progressMax", 100)
                 putBoolean("android.showSmallIcon", true)

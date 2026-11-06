@@ -1,11 +1,11 @@
 <resources>
     <style name="Theme.Mitfahrt" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">#0B1B20</item>
-        <item name="android:navigationBarColor">#0B1B20</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F2F2F3</item>
+        <item name="android:navigationBarColor">#F2F2F3</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#0B1B20</item>
-        <item name="android:colorAccent">#C4F58B</item>
+        <item name="android:windowBackground">#F2F2F3</item>
+        <item name="android:colorAccent">#B40055</item>
     </style>
 </resources>

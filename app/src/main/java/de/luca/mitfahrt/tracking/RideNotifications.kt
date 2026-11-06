@@ -37,7 +37,7 @@ class RideNotifications(private val context: Context) {
             .setCategory(if (ride != null) Notification.CATEGORY_NAVIGATION else Notification.CATEGORY_SERVICE)
             .addAction(Notification.Action.Builder(null, "Beenden", stop).build())
             .setDeleteIntent(stop)
-            .setColor(Color.rgb(196, 245, 139))
+            .setColor(Color.rgb(180, 0, 85))
         if (ride == null) {
             val title = when (state.wifi) {
                 WifiSignal.CONNECTED -> "NEW-Hotspot verbunden"
@@ -80,7 +80,7 @@ class RideNotifications(private val context: Context) {
         }
         if (Build.VERSION.SDK_INT >= 36) {
             builder.setStyle(Notification.ProgressStyle()
-                .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(196, 245, 139))))
+                .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(180, 0, 85))))
                 .setProgress(if (waiting) 0 else (ride.progress(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
             builder.addExtras(NowBarSupport.extras(context, title, "$text · $timeSource",

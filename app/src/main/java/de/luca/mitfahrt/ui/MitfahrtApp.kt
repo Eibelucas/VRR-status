@@ -55,20 +55,20 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal val Ink = Color(0xFF0B1B20)
-internal val Panel = Color(0xFF15292F)
-internal val Soft = Color(0xFF9BAEB2)
-internal val Lime = Color(0xFFC4F58B)
-internal val Paper = Color(0xFFF3F5EB)
-internal val Amber = Color(0xFFFFCB83)
+internal val Ink = Color(0xFFF2F2F3)
+internal val Panel = Color(0xFFFFFFFF)
+internal val Soft = Color(0xFF62636D)
+internal val Lime = Color(0xFFB40055)
+internal val Paper = Color(0xFF22262F)
+internal val Amber = Color(0xFF925000)
 internal val Shape = RoundedCornerShape(24.dp)
 
 @Composable
 internal fun MitfahrtTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme(
-        primary = Lime, onPrimary = Ink, background = Ink, onBackground = Paper,
+    MaterialTheme(colorScheme = lightColorScheme(
+        primary = Lime, onPrimary = Color.White, background = Ink, onBackground = Paper,
         surface = Panel, onSurface = Paper, surfaceVariant = Panel, onSurfaceVariant = Soft,
-        outline = Color(0xFF385057), secondary = Lime
+        outline = Color(0xFFD9D5DF), secondary = Lime
     ), content = content)
 }
 
@@ -133,7 +133,7 @@ fun MitfahrtApp(
                         "Berichte" to Icons.Outlined.Description, "Einstellungen" to Icons.Outlined.Tune).forEachIndexed { index, (title, icon) ->
                         NavigationBarItem(selected = page == index, onClick = { page = index },
                             icon = { Icon(icon, contentDescription = null) }, label = { Text(title) },
-                            colors = NavigationBarItemDefaults.colors(selectedIconColor = Ink, indicatorColor = Lime,
+                            colors = NavigationBarItemDefaults.colors(selectedIconColor = Color.White, indicatorColor = Lime,
                                 selectedTextColor = Paper, unselectedTextColor = Soft, unselectedIconColor = Soft))
                     }
                 }
@@ -324,7 +324,7 @@ private fun DetectionCard(state: TrackingState, onMonitor: () -> Unit, onStop: (
 private fun RideHero(ride: Ride, now: Instant) {
     val waiting = !ride.boarded
     val boarding = ride.boardingTime()
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Lime, contentColor = Ink)) {
+    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Lime, contentColor = Color.White)) {
         Column(Modifier.padding(24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LineBadge(ride.departure.line, dark = true)
@@ -361,7 +361,7 @@ private fun RideHero(ride: Ride, now: Instant) {
             }
             Spacer(Modifier.height(20.dp))
             if (!waiting) LinearProgressIndicator(progress = { ride.progress(now) }, modifier = Modifier.fillMaxWidth().height(5.dp),
-                color = Ink, trackColor = Ink.copy(alpha = 0.16f))
+                color = Color.White, trackColor = Color.White.copy(alpha = 0.16f))
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(boarding.at)}"
@@ -404,8 +404,8 @@ private fun NextStopCard(ride: Ride, now: Instant) {
 private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean, passed: Boolean, last: Boolean, skipped: Boolean) {
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.Top) {
         Column(Modifier.width(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.padding(top = 6.dp).size(if (next) 12.dp else 8.dp).clip(CircleShape).background(if (next) Lime else Color(0xFF52666C)))
-            if (!last) Box(Modifier.width(2.dp).height(32.dp).background(Color(0xFF30474E)))
+            Box(Modifier.padding(top = 6.dp).size(if (next) 12.dp else 8.dp).clip(CircleShape).background(if (next) Lime else Color(0xFFAAA3B5)))
+            if (!last) Box(Modifier.width(2.dp).height(32.dp).background(Color(0xFFD9D5DF)))
         }
         Column(Modifier.weight(1f).padding(start = 8.dp)) {
             if (skipped) Text("Weitere Halte", color = Soft, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))

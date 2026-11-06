@@ -149,3 +149,7 @@ Version 0.5 ergänzt Countdown- und Wartezustand-Tests sowie Robolectric-Tests g
 Version 0.7 ergänzt Tests des gemeinsamen Watch-Codecs, für beschädigte Payloads, das Altern von Prognose und Verbindung unabhängig voneinander, Fahrtende, Watch-Datenquelle und den Ausschluss der Watch-APK als Handy-Update. Beide Apps werden gebaut und statisch geprüft. Die tatsächliche Data-Layer-Verbindung und Bedienung auf der Galaxy Watch 5 Pro müssen auf dem Gerät bestätigt werden.
 
 Version 0.8 prüft zusätzlich Streckenhäufigkeit ohne Doppelzählung, Zuordnung zur Richtung und zu anderen nahen Einstiegshaltestellen, Ausschluss alter Abfahrten und Positionen, Teilausfälle und begrenzte parallele Abfragen. Android-Framework-Tests prüfen die Standortfreigabe und das Entfernen der Empfänger beim Schließen ohne Start eines Hintergrunddienstes. Der erste Einrichtungsablauf sowie echte Standortwechsel müssen zusätzlich auf einem Gerät geprüft werden.
+
+## Gestaltung
+
+Ab 0.9 orientieren sich Beerenton `#B40055`, helle Flächen und Karten an [NEW](https://www.new.de/oepnv). Die Watch kombiniert den Beerenton mit dunklen OLED-Flächen und gut lesbaren hellen Akzenten. App-Symbole und Live-Benachrichtigungen verwenden dieselbe Farbfamilie. Eigenständiges Bussymbol, kein offizielles NEW-Logo; Mitfahrt bleibt inoffiziell.

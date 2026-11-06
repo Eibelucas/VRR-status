@@ -98,7 +98,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
 private fun HistoryRow(route: FrequentRoute, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Panel).clickable(onClick = onClick).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Text(route.visit.line, color = Ink, fontWeight = FontWeight.Bold,
+        Text(route.visit.line, color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.Bold,
             modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Lime).padding(horizontal = 10.dp, vertical = 8.dp))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

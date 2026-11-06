@@ -28,10 +28,10 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.ceil
 
-private val Lime = Color(0xFFC4F58B)
-private val Ink = Color(0xFF0B1B20)
-private val Panel = Color(0xFF15292F)
-private val Soft = Color(0xFF9BAEB2)
+private val Lime = Color(0xFFFF9BC7)
+private val Ink = Color(0xFF21132A)
+private val Panel = Color(0xFF281E48)
+private val Soft = Color(0xFFCAC0D0)
 private val Amber = Color(0xFFFFCB83)
 
 @Composable
@@ -98,9 +98,9 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit) {
 
 @Composable
 private fun RideHero(ride: WatchRide, now: Instant) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Lime).padding(horizontal = 14.dp, vertical = 16.dp),
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xFFB40055)).padding(horizontal = 14.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("${ride.line} → ${ride.destination}", color = Ink, style = MaterialTheme.typography.labelMedium,
+        Text("${ride.line} → ${ride.destination}", color = Color.White, style = MaterialTheme.typography.labelMedium,
             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(10.dp))
         val target = if (ride.boarded) ride.terminalAt else ride.boardingAt
@@ -112,7 +112,7 @@ private fun RideHero(ride: WatchRide, now: Instant) {
             seconds == 0L -> "Erwartet"
             else -> "%d:%02d".format(Locale.ROOT, seconds / 60, seconds % 60)
         }
-        Text(value, color = Ink, fontSize = if (value.length > 7) 26.sp else 36.sp, fontWeight = FontWeight.Bold,
+        Text(value, color = Color.White, fontSize = if (value.length > 7) 26.sp else 36.sp, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, maxLines = 1)
         Spacer(Modifier.height(4.dp))
         Text(when {
@@ -120,7 +120,7 @@ private fun RideHero(ride: WatchRide, now: Instant) {
             ride.boarded -> "bis zum Endhalt"
             ride.boardingIsArrival -> "bis dein Bus kommt"
             else -> "bis zur Abfahrt"
-        }, color = Ink, fontSize = 11.sp, textAlign = TextAlign.Center)
+        }, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center)
     }
 }
 
