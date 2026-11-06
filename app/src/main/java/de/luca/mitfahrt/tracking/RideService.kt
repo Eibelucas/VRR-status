@@ -69,6 +69,7 @@ class RideService : Service(), LocationListener {
             store.update { it.copy(running = false, monitoring = false, message = "Bitte Standortzugriff in den App-Einstellungen erlauben und erneut starten.") }
             stopSelf(); return START_NOT_STICKY
         }
+        if (intent?.action == START_RIDE) store.state.value.ride?.let { app.routes.record(it) }
         if (loop == null) {
             sessionStart = SystemClock.elapsedRealtime()
             startSensors()

@@ -8,15 +8,27 @@ Eine native Android-App für die NEW-Busse in Mönchengladbach. Kotlin, Jetpack 
 
 ## Verwenden
 
-1. APK auf dem Android-Handy installieren und Mitfahrt öffnen.
-2. **Fahrt wählen** → Haltestelle suchen → passende Linie und Richtung antippen.
-3. Restzeit, nächste Haltestelle und Fahrtverlauf werden angezeigt. **Fahrt beenden** stoppt den Hintergrunddienst.
+1. APK auf dem Android-Handy installieren und die kurze Einführung durchgehen oder überspringen.
+2. Auf der Startseite eine nahe Haltestelle, eine passende eigene Strecke oder **Haltestelle suchen** wählen.
+3. Passenden Bus antippen. Nach dem Einsteigen **Bin im Bus** wählen; **Fahrt beenden** stoppt den Hintergrunddienst.
 
 Nach Auswahl eines Busses zeigt die Warteansicht den Countdown in Minuten und Sekunden. Bei einer echten VRR-Ankunftsprognose steht dort **Dein Bus kommt in**, andernfalls ausdrücklich **Bis zur Abfahrt**. Nach Ablauf wird **Wird erwartet** angezeigt; der Timer behauptet keine tatsächliche Ankunft. **Bin im Bus** schaltet zur Fahrtenansicht um. Abfahrtslisten werden nur während der sichtbaren Haltestellenansicht alle 30 Sekunden aktualisiert.
 
 Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt NEW-Fahrten an nahe gelegenen Haltestellen vor. Die konkrete Fahrt muss bestätigt werden. Ein sichtbarer Hotspot beweist weder, dass man im Bus sitzt, noch welche Linie fährt. Die App verbindet sich nicht selbst mit einem WLAN.
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
+
+## Startseite und Einführung
+
+Version 0.8 zeigt einmalig eine Einführung mit drei kurzen Schritten: Funktionen, Standort für nahe Haltestellen und Benachrichtigungen für den Fahrtstatus. Berechtigungen werden erst nach dem jeweiligen Antippen über Android angefragt. Standort und Benachrichtigungen sind optional. Ohne Standort bleibt die manuelle Suche verfügbar; eine dauerhaft abgelehnte Freigabe kann über die App-Einstellungen erneut eingerichtet werden. **Einstellungen → Einführung ansehen** öffnet die Einführung später erneut, ohne Fahrtdaten zu löschen.
+
+Bei freigegebenem Standort lädt die Startseite automatisch bis zu zwölf Haltestellen im Umkreis von 700 m, nach Entfernung sortiert. Die ersten vier erscheinen direkt, **Alle Haltestellen** zeigt die vollständige Liste. Für diese Suche läuft ein eigener Standortempfänger nur während der sichtbaren Start- oder Suchseite; eine aktive Buserkennung oder ein Hintergrunddienst sind nicht nötig. Beim Verlassen werden dessen Standortempfänger entfernt und keine weiteren Abfragen gestartet; noch eintreffende Ergebnisse werden verworfen. Eine gesondert gestartete Busfahrt kann wie bisher ihren sichtbaren Vordergrunddienst weiterführen. Alte oder sehr ungenaue Standortdaten werden nicht für neue Vorschläge verwendet; ein ungefährer Standort ist als solcher gekennzeichnet.
+
+Unter **Deine Strecken** erscheinen häufig ausgewählte Linien und Richtungen, die aktuell an den nahen Haltestellen fahren. Die App prüft dafür echte NEW-Abfahrten mit passender Linienkennung und Richtung. Der Einstieg muss nicht derselbe wie bei der vergangenen Auswahl sein. Pro Strecke wird eine bevorstehende, aktuelle Abfahrt an der nächstgelegenen passenden Haltestelle angezeigt. Vergangene Abfahrten, Ausfälle, veraltete Prognosen und die Gegenrichtung werden nicht als Vorschlag angeboten. Die Abfahrten werden auf der sichtbaren Startseite alle 30 Sekunden aktualisiert; Anfragen für mehrere Haltestellen laufen begrenzt parallel. Fehler an einzelnen Haltestellen lassen die anderen Ergebnisse sichtbar.
+
+**Alle** öffnet den gesamten Streckenverlauf. Von dort wird der bisherige Einstieg mit frisch geladenen Abfahrten der gewählten Linie und Richtung geöffnet; es wird niemals eine alte Fahrt mit ihren vergangenen Zeiten neu gestartet. Ohne Standort sind die häufigsten Strecken direkt erreichbar. Beim ersten Upgrade kann die zuletzt gespeicherte echte Fahrt als einzelner Eintrag übernommen werden. Weitere Auswahlen werden ab jetzt gelernt. Erneutes Aktualisieren oder Fortsetzen derselben Fahrt erhöht ihre Häufigkeit nicht; Demo und ausgefallene Fahrten werden nicht gezählt.
+
+Der Streckenverlauf enthält maximal 200 gewählte Fahrten mit Linie, Richtung, Haltestellenkennung, Haltestellenname und Auswahlzeitpunkt. Für Vorschläge zählen die letzten 90 Tage. Es werden keine Gerätekoordinaten oder WLAN-Namen im Streckenverlauf gespeichert. **Alle → Streckenverlauf löschen** entfernt diesen Verlauf; Berichte und Ankünfte bleiben erhalten. Die Daten werden nicht mit Klassenkameraden oder der Watch-App geteilt und sind vom Android-Backup ausgeschlossen.
 
 ## Verspätungsbericht für die Schule
 
@@ -115,7 +127,7 @@ git push origin main v0.4.0
 
 ## Lokal entwickeln
 
-Voraussetzungen: JDK 17 oder 21, Android SDK mit Plattform 36 und Build Tools 36.0.0. `local.properties` bei Bedarf mit `sdk.dir=/pfad/zum/android-sdk` anlegen.
+Voraussetzungen: JDK 21, Android SDK mit Plattform 36 und Build Tools 36.0.0. `local.properties` bei Bedarf mit `sdk.dir=/pfad/zum/android-sdk` anlegen.
 
 ```sh
 ./gradlew :shared:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :wear:assembleDebug :wear:lintDebug
@@ -135,3 +147,5 @@ Version 0.5 ergänzt Countdown- und Wartezustand-Tests sowie Robolectric-Tests g
 - [EFA-Schnittstellenreferenz](https://efa.ips.codes/)
 
 Version 0.7 ergänzt Tests des gemeinsamen Watch-Codecs, für beschädigte Payloads, das Altern von Prognose und Verbindung unabhängig voneinander, Fahrtende, Watch-Datenquelle und den Ausschluss der Watch-APK als Handy-Update. Beide Apps werden gebaut und statisch geprüft. Die tatsächliche Data-Layer-Verbindung und Bedienung auf der Galaxy Watch 5 Pro müssen auf dem Gerät bestätigt werden.
+
+Version 0.8 prüft zusätzlich Streckenhäufigkeit ohne Doppelzählung, Zuordnung zur Richtung und zu anderen nahen Einstiegshaltestellen, Ausschluss alter Abfahrten und Positionen, Teilausfälle und begrenzte parallele Abfragen. Android-Framework-Tests prüfen die Standortfreigabe und das Entfernen der Empfänger beim Schließen ohne Start eines Hintergrunddienstes. Der erste Einrichtungsablauf sowie echte Standortwechsel müssen zusätzlich auf einem Gerät geprüft werden.

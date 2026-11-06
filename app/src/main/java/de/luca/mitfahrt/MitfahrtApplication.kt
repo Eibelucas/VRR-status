@@ -6,6 +6,7 @@ import de.luca.mitfahrt.data.ArrivalStore
 import de.luca.mitfahrt.data.VrrClient
 import de.luca.mitfahrt.reports.ReportFiles
 import de.luca.mitfahrt.watch.WatchPublisher
+import de.luca.mitfahrt.data.RouteHistoryStore
 
 class MitfahrtApplication : Application() {
     val store by lazy { RideStore(this) }
@@ -13,6 +14,7 @@ class MitfahrtApplication : Application() {
     val reports by lazy { ReportFiles(this) }
     val arrivals by lazy { ArrivalStore(this) }
     val watch by lazy { WatchPublisher(this, store) }
+    val routes by lazy { RouteHistoryStore(this, store.lastRide.value) }
 
     override fun onCreate() {
         super.onCreate()

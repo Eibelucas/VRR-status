@@ -55,25 +55,36 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-private val Ink = Color(0xFF0B1B20)
-private val Panel = Color(0xFF15292F)
-private val Soft = Color(0xFF9BAEB2)
-private val Lime = Color(0xFFC4F58B)
-private val Paper = Color(0xFFF3F5EB)
-private val Amber = Color(0xFFFFCB83)
-private val Shape = RoundedCornerShape(24.dp)
+internal val Ink = Color(0xFF0B1B20)
+internal val Panel = Color(0xFF15292F)
+internal val Soft = Color(0xFF9BAEB2)
+internal val Lime = Color(0xFFC4F58B)
+internal val Paper = Color(0xFFF3F5EB)
+internal val Amber = Color(0xFFFFCB83)
+internal val Shape = RoundedCornerShape(24.dp)
+
+@Composable
+internal fun MitfahrtTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = darkColorScheme(
+        primary = Lime, onPrimary = Ink, background = Ink, onBackground = Paper,
+        surface = Panel, onSurface = Paper, surfaceVariant = Panel, onSurfaceVariant = Soft,
+        outline = Color(0xFF385057), secondary = Lime
+    ), content = content)
+}
 
 @Composable
 fun MitfahrtApp(
     tracking: TrackingState, search: SearchState, vm: RideViewModel, notice: String?, updates: UpdateState,
     onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit,
     onDismissNotice: () -> Unit, onMonitor: () -> Unit, onDemo: () -> Unit,
-    onResume: () -> Unit, onStop: () -> Unit
+    onResume: () -> Unit, onStop: () -> Unit, onNearbyLocation: () -> Unit, onIntro: () -> Unit
 ) {
     val context = LocalContext.current
     val reports by vm.reports.collectAsStateWithLifecycle()
     val lastRide by vm.lastRide.collectAsStateWithLifecycle()
     val arrivals by vm.arrivals.collectAsStateWithLifecycle()
+    val home by vm.home.collectAsStateWithLifecycle()
+    val routes by vm.routes.collectAsStateWithLifecycle()
     var reportRide by remember { mutableStateOf<Ride?>(null) }
     var arrivalRide by remember { mutableStateOf<Ride?>(null) }
     var page by rememberSaveable { mutableIntStateOf(0) }
@@ -82,6 +93,15 @@ fun MitfahrtApp(
     var showLiveMap by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableStateOf(Instant.now()) }
     val snackbar = remember { SnackbarHostState() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(page, tracking.ride?.departure?.key, search.selectedStop?.id, lifecycle) {
+        if (page == 0 && tracking.ride == null || page == 1 && search.selectedStop == null) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                vm.openHome()
+                try { kotlinx.coroutines.awaitCancellation() } finally { vm.closeHome() }
+            }
+        }
+    }
     LaunchedEffect(Unit) { while (true) { now = Instant.now(); delay(1000) } }
     LaunchedEffect(tracking.ride?.departure?.key) { if (tracking.ride != null) { page = 0; showAll = false } }
     LaunchedEffect(notice, search.error, reports.error) {
@@ -103,11 +123,7 @@ fun MitfahrtApp(
             vm.consumeShare()
         }
     }
-    MaterialTheme(colorScheme = darkColorScheme(
-        primary = Lime, onPrimary = Ink, background = Ink, onBackground = Paper,
-        surface = Panel, onSurface = Paper, surfaceVariant = Panel, onSurfaceVariant = Soft,
-        outline = Color(0xFF385057), secondary = Lime
-    )) {
+    MitfahrtTheme {
         Scaffold(
             containerColor = Ink,
             snackbarHost = { SnackbarHost(snackbar) },
@@ -191,7 +207,13 @@ fun MitfahrtApp(
                             }
                         }
                     } else {
-                        item { WelcomeCard(onChoose = { page = 1 }) }
+                        item {
+                            HomeOverview(home, routes, now, search.loading, search.choosing,
+                                onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome,
+                                onStop = { vm.selectStop(it); page = 1 },
+                                onAllStops = { vm.nearby(); page = 1 }, onRoute = { vm.selectRoute(it); page = 1 },
+                                onDeparture = vm::choose, onClearHistory = vm::clearRoutes)
+                        }
                         item { LiveMapCard { showLiveMap = true } }
                         item { DetectionCard(tracking, onMonitor, onStop) }
                         if (tracking.candidates.isNotEmpty()) {
@@ -203,9 +225,9 @@ fun MitfahrtApp(
                         }
                     }
                 }
-                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets))
+                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation)
                 2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport)
-                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate)
+                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro)
             }
         }
         if (showLiveMap) NewLiveMapScreen(onClose = { showLiveMap = false })
@@ -263,26 +285,6 @@ private fun Header(title: String, subtitle: String, icon: ImageVector) {
         }
         Box(Modifier.size(48.dp).clip(CircleShape).background(Panel), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = Lime, modifier = Modifier.size(23.dp))
-        }
-    }
-}
-
-@Composable
-private fun WelcomeCard(onChoose: () -> Unit) {
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Lime, contentColor = Ink)) {
-        Column(Modifier.padding(24.dp)) {
-            Icon(Icons.Outlined.DirectionsBus, null, Modifier.size(36.dp))
-            Spacer(Modifier.height(36.dp))
-            Text("Deine\nBusfahrt", fontSize = 35.sp, lineHeight = 39.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = (-1.5).sp)
-            Spacer(Modifier.height(12.dp))
-            Text("Wohin fährst du?", fontSize = 15.sp, lineHeight = 22.sp)
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = onChoose, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Paper)) {
-                Text("Fahrt wählen", fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.width(12.dp)); Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(19.dp))
-            }
         }
     }
 }
@@ -417,7 +419,14 @@ private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean
 }
 
 @Composable
-private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier) {
+private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier,
+    home: HomeState, routes: List<FrequentRoute>, onNearbyLocation: () -> Unit) {
+    var waitingNearby by remember { mutableStateOf(false) }
+    LaunchedEffect(home.stops, home.loading, home.status) {
+        if (waitingNearby && home.status == NearbyStatus.READY && !home.loading && home.stops.isNotEmpty()) {
+            waitingNearby = false; vm.nearby()
+        }
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(search.selectedStop?.id, lifecycle) {
         if (search.selectedStop != null) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -428,25 +437,29 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
         item { Header("Haltestellen", "DEINE FAHRT FINDEN", Icons.Outlined.Search) }
         if (search.selectedStop == null) {
             item {
-                OutlinedTextField(value = search.query, onValueChange = vm::query,
+                OutlinedTextField(value = search.query, onValueChange = { waitingNearby = false; vm.query(it) },
                     modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(18.dp),
                     placeholder = { Text("Haltestelle suchen") }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { vm.search() }),
+                    keyboardActions = KeyboardActions(onSearch = { waitingNearby = false; vm.search() }),
                     trailingIcon = { if (search.query.isNotEmpty()) IconButton(onClick = { vm.query("") }) { Icon(Icons.Outlined.Close, "Suche leeren") } })
             }
             item {
-                Button(onClick = vm::search, enabled = search.query.trim().length >= 2 && !search.loading,
+                Button(onClick = { waitingNearby = false; vm.search() }, enabled = search.query.trim().length >= 2 && !search.loading,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text("Suchen") }
             }
-            if (tracking.location != null) item {
-                TextButton(onClick = vm::nearby, enabled = !search.loading) {
+            item {
+                TextButton(onClick = {
+                    if (home.status == NearbyStatus.READY || tracking.location != null) vm.nearby()
+                    else { waitingNearby = true; onNearbyLocation() }
+                }, enabled = !search.loading) {
                     Icon(Icons.Outlined.MyLocation, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("In meiner Nähe")
                 }
             }
             if (!search.searched && !search.loading) {
-                item { Text("Häufige Haltestellen", color = Soft, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp)) }
-                items(listOf(Stop("de:05116:23007", "Hbf /Europaplatz"), Stop("de:05116:23023", "Rheydt Hbf"))) { stop ->
+                val suggestions = home.stops.ifEmpty { routes.map { it.visit.stop }.distinctBy { stopKey(it.id) } }
+                if (suggestions.isNotEmpty()) item { Text(if (home.stops.isNotEmpty()) "In deiner Nähe" else "Zuletzt gewählt", color = Soft, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp)) }
+                items(suggestions, key = { it.id }) { stop ->
                     StopRow(stop) { vm.selectStop(stop) }
                 }
             }
@@ -460,11 +473,12 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                     IconButton(onClick = vm::backToStops) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
                     Column(Modifier.weight(1f)) {
                         Text(shortName(search.selectedStop.name), fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-                        Text("NEW · Abfahrten", color = Soft, fontSize = 13.sp)
+                        Text(search.routeFilter?.let { "${it.visit.line} → ${shortName(it.visit.destination)}" } ?: "NEW · Abfahrten", color = Soft, fontSize = 13.sp)
                     }
-                    IconButton(onClick = { vm.selectStop(search.selectedStop) }, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Aktualisieren") }
+                    IconButton(onClick = { vm.selectStop(search.selectedStop, search.routeFilter) }, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Aktualisieren") }
                 }
             }
+            if (search.routeFilter != null) item { TextButton(onClick = { vm.selectStop(search.selectedStop) }) { Text("Alle Linien anzeigen") } }
             item { PersonalArrivalCard(search.selectedStop, arrivals) { vm.markArrival(search.selectedStop) } }
             items(search.departures, key = { it.key }) { departure ->
                 DepartureRow(departure, now, search.choosing == departure.key, enabled = !search.loading) { vm.choose(departure) }
@@ -478,7 +492,7 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
 }
 
 @Composable
-private fun StopRow(stop: Stop, onClick: () -> Unit) {
+internal fun StopRow(stop: Stop, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel).clickable(onClick = onClick).padding(18.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Outlined.LocationOn, null, tint = Soft, modifier = Modifier.size(22.dp))
@@ -492,7 +506,7 @@ private fun StopRow(stop: Stop, onClick: () -> Unit) {
 }
 
 @Composable
-private fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: Boolean, showStop: Boolean = false, onClick: () -> Unit) {
+internal fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: Boolean, showStop: Boolean = false, distance: Int? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Panel)
         .clickable(enabled = enabled && !d.cancelled, onClick = onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         LineBadge(d.line)
@@ -500,7 +514,7 @@ private fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: 
         Column(Modifier.weight(1f)) {
             Text(shortName(d.destination), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(5.dp))
-            Text(if (d.cancelled) "Fällt aus" else if (showStop) shortName(d.stopName) else
+            Text(if (d.cancelled) "Fällt aus" else if (showStop) shortName(d.stopName) + (distance?.let { " · $it m" } ?: "") else
                 listOfNotNull(d.platform.takeIf { it.isNotBlank() }, if (d.observedAt?.let { now.epochSecond - it.epochSecond > 120 } == true) {
                     "Stand ${clockTime(d.observedAt)}"
                 } else if (d.estimated != null) {
@@ -528,7 +542,7 @@ private fun LineBadge(line: String, dark: Boolean = false) {
 
 @Composable
 private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: UpdateState,
-    onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit) {
+    onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit) {
     val context = LocalContext.current
     val manager = context.getSystemService(NotificationManager::class.java)
     var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
@@ -543,6 +557,7 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item { Header("Einstellungen", "MITFAHRT", Icons.Outlined.Tune) }
+        item { TextButton(onClick = onIntro) { Icon(Icons.Outlined.HelpOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Einführung ansehen") } }
         item {
             Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
