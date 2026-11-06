@@ -72,6 +72,8 @@ GitHub Actions prüft Pushes und Pull Requests mit Unit-Tests, Android Lint und 
 
 Für installierbare Folgeversionen muss immer derselbe private Signaturschlüssel verwendet werden. Der Release-Job benötigt das Repository-Secret `ANDROID_KEYSTORE_BASE64`. Für die bereits verteilte Vorschau gelten die Android-Debug-Standardwerte für Alias und Passwörter; bei einem eigenen Schlüssel können sie über `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS` und `ANDROID_KEY_PASSWORD` überschrieben werden. Die private Schlüsseldatei gehört niemals in Git oder einen öffentlichen Release. Ohne konfigurierten Schlüssel schlägt der Release-Job mit einem Hinweis fehl, statt eine anders signierte Update-APK zu veröffentlichen.
 
+Alternativ kann der Workflow über **Run workflow → publish_prebuilt** eine bereits lokal signierte APK aus einem angegebenen Asset-Branch veröffentlichen. Dafür ist kein privater Schlüssel auf GitHub erforderlich. Vor dem Upload werden Zertifikat gegen `release-signing.sha256`, Paketkennung, Version und SHA-256 geprüft und das Update-Manifest neu erzeugt. Dieser Weg wird für die erste Veröffentlichung verwendet; automatische neue Signaturen für künftige Tags benötigen weiterhin das Secret.
+
 Lokal kann ein vorhandener Schlüssel über `MITFAHRT_KEYSTORE`, `MITFAHRT_STORE_PASSWORD`, `MITFAHRT_KEY_ALIAS` und `MITFAHRT_KEY_PASSWORD` eingebunden werden. Ohne diese Variablen baut Gradle wie bisher eine Vorschau mit dem lokalen Debug-Schlüssel. Ein auf einem anderen Rechner neu erzeugter Debug-Schlüssel kann bestehende Installationen nicht aktualisieren.
 
 ```sh
