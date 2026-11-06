@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.watch" android:required="true" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <application android:name=".WatchApplication" android:allowBackup="false" android:label="Mitfahrt"
         android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="false"
         android:icon="@drawable/ic_launcher" android:theme="@android:style/Theme.DeviceDefault">
@@ -15,6 +16,10 @@
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/ride/v1" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/arrival-alert/v1" />
             </intent-filter>
         </service>
     </application>

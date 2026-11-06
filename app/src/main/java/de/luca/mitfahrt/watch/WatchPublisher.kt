@@ -13,6 +13,7 @@ import kotlinx.coroutines.tasks.await
 import java.time.Instant
 
 class WatchPublisher(context: Context, private val store: RideStore) {
+    private val contextRef = context.applicationContext
     private val client = Wearable.getDataClient(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -26,6 +27,20 @@ class WatchPublisher(context: Context, private val store: RideStore) {
     }
 
     fun requestPublish() { scope.launch { publish() } }
+
+    fun arrivalAlert(id: String, boardingAt: Instant) {
+        val bytes = de.luca.mitfahrt.shared.ArrivalAlert.encode(id, Instant.now(), boardingAt)
+        scope.launch {
+            try {
+                val nodes = Wearable.getNodeClient(contextRef).connectedNodes.await()
+                for (node in nodes) try {
+                    Wearable.getMessageClient(contextRef).sendMessage(node.id, de.luca.mitfahrt.shared.ArrivalAlert.PATH, bytes).await()
+                } catch (cancelled: CancellationException) { throw cancelled
+                } catch (_: Exception) { /* A disconnected watch receives no delayed replay. */ }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { /* No delayed replay when the watch reconnects. */ }
+        }
+    }
 
     private suspend fun publish() {
         try {

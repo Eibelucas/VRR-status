@@ -9,7 +9,10 @@ fun TrackingState.watchSnapshot(now: Instant = Instant.now()): WatchRide {
     val ride = ride ?: return WatchRide(now)
     val boarding = ride.boardingTime()
     val live = if (!ride.boarded) boarding.live else ride.terminal.estimated != null
-    return WatchRide(sentAt = now, active = true, running = running, fetchedAt = ride.fetchedAt,
+    val boardingStop = ride.stops.getOrNull(ride.boardingIndex)
+    val monitorOnly = !ride.boarded && boardingStop?.estimatedArrival == null && boardingStop?.estimatedDeparture == null && ride.departure.estimated != null
+    val sourceAt = if (monitorOnly) minOf(ride.fetchedAt, ride.departure.observedAt ?: Instant.EPOCH) else ride.fetchedAt
+    return WatchRide(sentAt = now, active = true, running = running, fetchedAt = sourceAt,
         line = ride.departure.line, destination = shortName(ride.terminal.name),
         nextStop = ride.nextStop(now)?.name?.let(::shortName) ?: "Endhaltestelle",
         boarded = ride.boarded, boardingAt = boarding.at, boardingIsArrival = boarding.isArrival,

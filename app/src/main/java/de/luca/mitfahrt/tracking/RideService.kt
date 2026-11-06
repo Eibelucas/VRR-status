@@ -15,6 +15,7 @@ import de.luca.mitfahrt.MitfahrtApplication
 import de.luca.mitfahrt.data.*
 import kotlinx.coroutines.*
 import java.time.Instant
+import de.luca.mitfahrt.watch.watchSnapshot
 
 class RideService : Service(), LocationListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -30,6 +31,7 @@ class RideService : Service(), LocationListener {
     private var lastRideRefresh = 0L
     private var candidateLookup: Job? = null
     private var approaching: Int? = null
+    private var arrivalAlerted: String? = null
     private var sessionStart = 0L
     private var sensorsRegistered = false
 
@@ -97,6 +99,17 @@ class RideService : Service(), LocationListener {
                         }
                     } else if (store.state.value.monitoring && store.state.value.wifi in setOf(WifiSignal.CONNECTED, WifiSignal.NEARBY)) {
                         findCandidates()
+                    }
+                    val current = store.state.value
+                    val currentRide = current.ride
+                    val snapshot = current.watchSnapshot()
+                    if (currentRide != null && de.luca.mitfahrt.shared.ArrivalAlert.due(snapshot, Instant.now())) {
+                        val id = currentRide.departure.key
+                        if (arrivalAlerted != id) {
+                            arrivalAlerted = id
+                            de.luca.mitfahrt.alerts.ArrivalHaptics.pulse(this@RideService, id)
+                            app.watch.arrivalAlert(id, requireNotNull(snapshot.boardingAt))
+                        }
                     }
                     notifications.post(store.state.value)
                     delay(10_000)

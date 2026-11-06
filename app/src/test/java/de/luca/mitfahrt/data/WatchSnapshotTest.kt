@@ -34,4 +34,13 @@ class WatchSnapshotTest {
         assertFalse(snapshot.active)
         assertEquals("", snapshot.line)
     }
+    @Test fun `a fresh trip fetch cannot revive an old boarding forecast for alerts`() {
+        val base = DemoRide.create(now)
+        val ride = base.copy(demo = false, boarded = false, departure = base.departure.copy(
+            estimated = now.plusSeconds(50), observedAt = now.minusSeconds(180)))
+        val snapshot = TrackingState(ride, running = true).watchSnapshot(now)
+        assertTrue(snapshot.stale(now))
+        assertFalse(de.luca.mitfahrt.shared.ArrivalAlert.due(snapshot, now))
+    }
+
 }

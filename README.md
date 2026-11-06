@@ -153,3 +153,9 @@ Version 0.8 prüft zusätzlich Streckenhäufigkeit ohne Doppelzählung, Zuordnun
 ## Gestaltung
 
 Ab 0.9 orientieren sich Beerenton `#B40055`, helle Flächen und Karten an [NEW](https://www.new.de/oepnv). Die Watch kombiniert den Beerenton mit dunklen OLED-Flächen und gut lesbaren hellen Akzenten. App-Symbole und Live-Benachrichtigungen verwenden dieselbe Farbfamilie. Eigenständiges Bussymbol, kein offizielles NEW-Logo; Mitfahrt bleibt inoffiziell.
+
+## Busankunft per Vibration
+
+Ab 0.10 vibrieren Handy und gekoppelte Wear-OS-Uhr einmal, wenn die gemeldete Ankunft (sonst Abfahrt) noch höchstens 60 Sekunden entfernt ist. Die Prüfung läuft im aktiven Fahrt-Dienst etwa alle zehn Sekunden. Neue Prognosen verschieben den noch nicht ausgelösten Hinweis. Voraussetzung: laufende Fahrt, Warteansicht, frische Daten, kein Ausfall und keine Demo. Nach **Bin im Bus** erfolgen keine Einstiegshinweise mehr.
+
+Für die Vibration auf der Uhr muss auch die Watch-App auf mindestens 0.10 aktualisiert werden. Das Handy schickt ein nicht gespeichertes Echtzeitereignis über die Wear OS Data Layer. Die Watch-App muss dafür nicht geöffnet sein, die Uhr muss jedoch erreichbar sein. Alte Ereignisse werden abgewiesen; getrennte Uhren erhalten später keinen nachgeholten Alarm. Beide Geräte merken sich bereits gewarnte Fahrten lokal, auch über App-Neustarts hinweg. Systemseitige Vibrations-/Nicht-stören-Regeln bleiben maßgeblich. Der Hinweis ist eine Prognose, keine Bestätigung der tatsächlichen Ankunft.

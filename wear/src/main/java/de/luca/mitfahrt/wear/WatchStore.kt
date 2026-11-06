@@ -31,6 +31,12 @@ class WatchStore(context: Context) {
 }
 
 class WatchDataService : WearableListenerService() {
+    override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
+        if (event.path != de.luca.mitfahrt.shared.ArrivalAlert.PATH) return
+        de.luca.mitfahrt.shared.ArrivalAlert.recentId(event.data, java.time.Instant.now())?.let {
+            de.luca.mitfahrt.alerts.ArrivalHaptics.pulse(this, it)
+        }
+    }
     override fun onDataChanged(events: DataEventBuffer) {
         for (event in events) if (event.type == DataEvent.TYPE_CHANGED && event.dataItem.uri.path == WatchProtocol.PATH)
             (application as WatchApplication).store.receive(event.dataItem.data)

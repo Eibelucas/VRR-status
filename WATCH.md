@@ -16,8 +16,8 @@ Die App ist noch nicht im Play Store. Auf dem Handy lässt sich die normale APK 
 
 Die beiden APKs stehen öffentlich unter [Releases](https://github.com/Eibelucas/VRR-status/releases/latest):
 
-- **Mitfahrt-0.9.0.apk** ist für Android-Handys.
-- **Mitfahrt-Wear-0.9.0.apk** ist ausschließlich für die Uhr.
+- **Mitfahrt-0.10.0.apk** ist für Android-Handys.
+- **Mitfahrt-Wear-0.10.0.apk** ist ausschließlich für die Uhr.
 
 Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Computer mit den offiziellen [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) übertragen. Für ADB über WLAN:
 
@@ -28,7 +28,7 @@ Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Comp
 ```sh
 adb pair UHR_IP:KOPPLUNGSPORT
 adb connect UHR_IP:VERBINDUNGSPORT
-adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.9.0.apk
+adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.10.0.apk
 ```
 
 Danach Debugging wieder ausschalten und Mitfahrt aus der App-Liste der Uhr öffnen. Die alltägliche Nutzung benötigt kein Debugging. Für spätere Watch-Updates dieselbe APK-Variante mit `install -r` installieren. Die In-App-Updatefunktion der Handy-App aktualisiert zunächst nur die Handy-App.
@@ -44,3 +44,5 @@ Die Uhr erhält nur den aktuellen Fahrtstatus einschließlich Linie, Ziel, näch
 Google Play Services verbindet die beiden Installationen über die [Wear OS Data Layer](https://developer.android.com/training/wearables/data/overview). Paketkennung und Signaturschlüssel müssen auf Handy und Uhr übereinstimmen; andere App-Installationen bei Klassenkameraden erhalten diese Daten nicht. Die Übertragung nutzt Bluetooth oder bei Bedarf Googles verschlüsselte Vermittlung über das Netz. Die zuletzt empfangene Momentaufnahme bleibt im privaten Uhr-Speicher. Es wird kein eigener Server betrieben.
 
 Eine reale Kopplung mit der Galaxy Watch 5 Pro ist in der Entwicklungsumgebung nicht verfügbar. Installation, Runddisplay und Übertragung müssen auf der echten Uhr bestätigt werden.
+
+Ab 0.10 kann die Uhr auch bei geschlossener App einmal vor der Busankunft vibrieren. Dafür Handy- und Watch-App aktualisieren und die Uhr mit dem Handy verbinden. Verpasste Warnungen werden nach einer längeren Trennung nicht nachgeholt.
