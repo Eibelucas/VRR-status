@@ -14,3 +14,5 @@ dist/
 .secrets/
 .env
 .env.*
+__pycache__/
+*.pyc

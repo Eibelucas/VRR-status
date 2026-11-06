@@ -2,6 +2,8 @@
 
 Projekt: [Eibelucas/VRR-status](https://github.com/Eibelucas/VRR-status)
 
+[APK herunterladen](https://github.com/Eibelucas/VRR-status/releases/latest) · [Build-Prüfungen](https://github.com/Eibelucas/VRR-status/actions)
+
 Eine native Android-App für die NEW-Busse in Mönchengladbach. Kotlin, Jetpack Compose und Material 3. Kein Konto und kein Backend nötig.
 
 ## Verwenden
@@ -91,7 +93,7 @@ Die Debug-APK liegt in `app/build/outputs/apk/debug/app-debug.apk`. `./gradlew :
 
 Die Unit-Tests verwenden echte öffentliche VRR-Antworten vom 06.11.2026 als Fixtures und prüfen Zuordnung, Ausfälle, Zeitzonen, Offlinezustand, Zeitberechnung und Wiederherstellung. Weitere Tests prüfen Berichts-Snapshots, originale Abrufzeiten, fehlende Prognosen, Abfahrt versus Ankunft und den Ausschluss von Demofahrten und hochgerechneten Zeiten als Belegdaten. WLAN und Now Bar benötigen zusätzlich einen Test während einer realen Busfahrt auf dem Zielgerät.
 
-Version 0.4 ergänzt 14 Tests für Update-Metadaten, Download-Ziele, Paketkennungen, Versionen und Signaturen zu den bisherigen 39 Tests. VRR-Endpunkte wurden mit echten NEW-Abfahrten und Fahrtverläufen geprüft. Ein Bildschirm- und Installationstest im Android-36-Emulator konnte in der Build-Umgebung nicht abgeschlossen werden: Ohne Hardwarebeschleunigung wurde der Emulator während des ersten Starts wegen der Ressourcenbegrenzung beendet. Die App einschließlich Update-Installation, PDF-Rendering und Android-Teilen ist auf einem realen Gerät noch nicht getestet.
+Version 0.4: Release-Build, 53 Unit-Tests und Android Lint ohne Fehler bestanden. Davon prüfen 14 Tests Update-Metadaten, Download-Ziele, Paketkennungen, Versionen und Signaturen. APK-Prüfsumme und dieselbe Signatur wie Version 0.3 wurden zusätzlich geprüft. VRR-Endpunkte wurden mit echten NEW-Abfahrten und Fahrtverläufen geprüft. Ein Bildschirm- und Installationstest im Android-36-Emulator konnte in der Build-Umgebung nicht abgeschlossen werden: Ohne Hardwarebeschleunigung wurde der Emulator während des ersten Starts wegen der Ressourcenbegrenzung beendet. Die App einschließlich Update-Installation, PDF-Rendering und Android-Teilen ist auf einem realen Gerät noch nicht getestet.
 
 ## Quellen
 
