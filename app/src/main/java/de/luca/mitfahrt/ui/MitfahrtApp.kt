@@ -626,6 +626,29 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
             }
         }
         item {
+            Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Outlined.Watch, null, tint = Lime)
+                    Text("Auf deiner Uhr", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                    Text("Linie, nächster Halt und Restzeit auf Wear OS. Die Fahrt wählst du hier am Handy.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${UpdateInfo.REPOSITORY}/blob/main/WATCH.md")))
+                    }) { Text("Watch-App & Installation") }
+                }
+            }
+        }
+        item {
+            OutlinedButton(onClick = {
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "Mitfahrt · Busstatus für Mönchengladbach\n${UpdateInfo.REPOSITORY}/releases/latest")
+                }, "App teilen"))
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Icon(Icons.Outlined.Share, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp)); Text("App teilen")
+            }
+        }
+        item {
             Text("Daten vom VRR. Standort wird für Haltestellenabfragen an den VRR übermittelt. Kein Konto, keine Werbung, keine Analyse-Tracker.",
                 color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
             Spacer(Modifier.height(8.dp))

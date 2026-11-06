@@ -41,12 +41,15 @@ jobs:
       - name: Android SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Tests, lint and build
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+        run: ./gradlew --no-daemon :shared:test :app:testDebugUnitTest :app:lintDebug :wear:lintDebug :app:assembleDebug :wear:assembleDebug
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-reports
-          path: app/build/reports/
+          path: |
+            app/build/reports/
+            wear/build/reports/
+            shared/build/reports/
           retention-days: 14
 
   release:
@@ -82,9 +85,11 @@ jobs:
           MITFAHRT_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD || 'android' }}
           MITFAHRT_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'androiddebugkey' }}
           MITFAHRT_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'android' }}
-        run: ./gradlew --no-daemon :app:assembleRelease
+        run: ./gradlew --no-daemon :app:assembleRelease :wear:assembleRelease
       - name: Create update manifest
-        run: python3 scripts/create_update_manifest.py --apk app/build/outputs/apk/release/app-release.apk --tag "$GITHUB_REF_NAME" --output dist
+        run: |
+          python3 scripts/create_update_manifest.py --apk app/build/outputs/apk/release/app-release.apk --tag "$GITHUB_REF_NAME" --output dist
+          python3 scripts/create_update_manifest.py --wear --apk wear/build/outputs/apk/release/wear-release.apk --tag "$GITHUB_REF_NAME" --output dist
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

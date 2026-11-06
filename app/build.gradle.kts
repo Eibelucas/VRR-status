@@ -12,8 +12,8 @@ android {
         applicationId = "de.luca.mitfahrt"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "0.7.0"
     }
     val releaseStore = System.getenv("MITFAHRT_KEYSTORE")?.takeIf { it.isNotBlank() }
     signingConfigs {
@@ -54,6 +54,9 @@ android {
 }
 
 dependencies {
+    implementation(project(":shared"))
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.material3:material3")

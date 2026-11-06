@@ -25,6 +25,9 @@ class UpdateInfoTest {
     @Test(expected = IllegalArgumentException::class) fun `external URL cannot be used as an asset`() {
         UpdateInfo.parse(manifest().put("apkAssetName", "https://other.example/update.apk"), app)
     }
+    @Test(expected = IllegalArgumentException::class) fun `watch APK cannot be offered as a phone update`() {
+        UpdateInfo.parse(manifest().put("apkAssetName", "Mitfahrt-Wear-0.5.0.apk"), app)
+    }
     @Test(expected = IllegalArgumentException::class) fun `invalid digest is rejected`() {
         UpdateInfo.parse(manifest().put("sha256", "anything"), app)
     }

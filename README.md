@@ -2,7 +2,7 @@
 
 Projekt: [Eibelucas/VRR-status](https://github.com/Eibelucas/VRR-status)
 
-[APK herunterladen](https://github.com/Eibelucas/VRR-status/releases/latest) · [Build-Prüfungen](https://github.com/Eibelucas/VRR-status/actions)
+[APKs herunterladen](https://github.com/Eibelucas/VRR-status/releases/latest) · [Watch-Anleitung](WATCH.md) · [Build-Prüfungen](https://github.com/Eibelucas/VRR-status/actions)
 
 Eine native Android-App für die NEW-Busse in Mönchengladbach. Kotlin, Jetpack Compose und Material 3. Kein Konto und kein Backend nötig.
 
@@ -37,6 +37,16 @@ Die Ankunft des Busses am ausgewählten Halt wird ausdrücklich als Fahrplanzeit
 Es werden ausschließlich tatsächlich vom VRR gelieferte Prognosen verwendet. Eine anhand der letzten Verspätung hochgerechnete Ankunft wird niemals als gemeldete Prognose exportiert. Liegen für einen Halt nur Fahrplanzeiten vor, ist er nicht auswählbar; häufig ist dann nur die Einstiegshaltestelle mit ihrer gemeldeten Abfahrtsprognose verfügbar. Fehlende oder alte Abrufzeiten werden ausdrücklich als gespeicherter Datenstand gekennzeichnet. Aus Demofahrten können keine Belege erstellt werden.
 
 Der Bericht ist ein privater Nachweis aus VRR-Daten, keine offizielle Bescheinigung von NEW oder VRR. Eine Prognose bestätigt keine tatsächliche Ankunft oder persönliche Mitfahrt. Dies steht auch im PDF.
+
+## Wear OS und Teilen
+
+Ab Version 0.7 gibt es eine Begleit-App für die Galaxy Watch 5 Pro und andere Wear-OS-Uhren ab Wear OS 3. Sie übernimmt Linie, Richtung, Countdown, nächsten Halt, Restzeit und Datenstand vom gekoppelten Android-Handy. Jede Uhr erhält nur den Status ihres eigenen Handys. Die Fahrt wird auf dem Handy ausgewählt; die Uhr benötigt weder GPS- noch WLAN-Berechtigungen. Nach mehr als zwei Minuten ohne aktuelle Zeitdaten oder Übertragung sowie bei pausierter Fahrt bleibt der alte Stand ausdrücklich markiert.
+
+[Installation und Verwendung auf der Uhr](WATCH.md). Die Veröffentlichung enthält getrennte APKs für Handy und Uhr mit identischer Paketkennung, Version und Signatur. Die Erstinstallation der Uhr-App und deren Updates erfolgen zunächst über einen Wear-OS-APK-Installer oder ADB; die Handy-App installiert keine Uhr-App automatisch. Ein Play-Store-Eintrag ist noch nicht vorhanden. Die bestehende In-App-Updatefunktion lädt ausschließlich die Handy-APK und lehnt Watch-APKs ab.
+
+Unter **Einstellungen → App teilen** wird der öffentliche Download-Link über den normalen Android-Teilen-Dialog angeboten. Es werden keine Nachrichten ungefragt versendet. Jeder Klassenkamerad kann die App ohne Einladung oder eigenes App-Konto verwenden. Ankünfte, Berichte und gewählte Fahrten bleiben getrennt auf den jeweiligen Geräten.
+
+Die Synchronisierung verwendet die Wear OS Data Layer von Google Play Services. Sie überträgt nur den aktuellen Fahrtstatus und Zeitstempel, keine Berichte, selbst erfassten Ankünfte, Standortkoordinaten oder WLAN-Namen. Google kann die verschlüsselte Übertragung über das Netz vermitteln, wenn keine Bluetooth-Verbindung besteht. Die Uhr speichert die letzte Momentaufnahme lokal ohne Android-Backup. Der gemeinsame, versionierte Binär-Codec begrenzt Payloads und lehnt unvollständige oder unbekannte Versionen ab.
 
 ## NEW-Livekarte
 
@@ -88,11 +98,11 @@ Die Update-Quelle ist ausschließlich `https://github.com/Eibelucas/VRR-status/r
 
 ## Automatischer Build und Releases
 
-GitHub Actions prüft Pushes und Pull Requests mit Unit-Tests, Android Lint und einem APK-Build. Ein Tag wie `v0.4.0` baut nach erfolgreichen Prüfungen eine signierte APK und veröffentlicht sie zusammen mit `update.json` und Prüfsumme. Tag und APK-Version müssen übereinstimmen; die `versionCode` muss für jedes Update steigen.
+GitHub Actions prüft Pushes und Pull Requests mit Tests des gemeinsamen Übertragungsformats, Handy-Unit-Tests, Android Lint für beide Apps und Builds beider APKs. Ein Tag wie `v0.4.0` baut nach erfolgreichen Prüfungen eine signierte APK und veröffentlicht sie zusammen mit `update.json` und Prüfsumme. Tag und APK-Version müssen übereinstimmen; die `versionCode` muss für jedes Update steigen.
 
 Für installierbare Folgeversionen muss immer derselbe private Signaturschlüssel verwendet werden. Der Release-Job benötigt das Repository-Secret `ANDROID_KEYSTORE_BASE64`. Für die bereits verteilte Vorschau gelten die Android-Debug-Standardwerte für Alias und Passwörter; bei einem eigenen Schlüssel können sie über `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS` und `ANDROID_KEY_PASSWORD` überschrieben werden. Die private Schlüsseldatei gehört niemals in Git oder einen öffentlichen Release. Ohne konfigurierten Schlüssel schlägt der Release-Job mit einem Hinweis fehl, statt eine anders signierte Update-APK zu veröffentlichen.
 
-Alternativ kann der Workflow über **Run workflow → publish_prebuilt** eine bereits lokal signierte APK aus einem angegebenen Asset-Branch veröffentlichen. Dafür ist kein privater Schlüssel auf GitHub erforderlich. Vor dem Upload werden Zertifikat gegen `release-signing.sha256`, Paketkennung, Version und SHA-256 geprüft und das Update-Manifest neu erzeugt. Dieser Weg wird für die erste Veröffentlichung verwendet; automatische neue Signaturen für künftige Tags benötigen weiterhin das Secret.
+Alternativ kann der Workflow über **Run workflow → publish_prebuilt** eine bereits lokal signierte APK aus einem angegebenen Asset-Branch veröffentlichen. Dafür ist kein privater Schlüssel auf GitHub erforderlich. Vor dem Upload werden Zertifikat gegen `release-signing.sha256`, Paketkennung, Version und SHA-256 geprüft und das Update-Manifest neu erzeugt. Ist eine Watch-APK dabei, werden zusätzlich deren Geräteanforderung, Versionsgleichheit mit der Handy-App, Signatur und eigenes `watch-update.json` geprüft. Dieser Weg wird für die erste Veröffentlichung verwendet; automatische neue Signaturen für künftige Tags benötigen weiterhin das Secret.
 
 Lokal kann ein vorhandener Schlüssel über `MITFAHRT_KEYSTORE`, `MITFAHRT_STORE_PASSWORD`, `MITFAHRT_KEY_ALIAS` und `MITFAHRT_KEY_PASSWORD` eingebunden werden. Ohne diese Variablen baut Gradle wie bisher eine Vorschau mit dem lokalen Debug-Schlüssel. Ein auf einem anderen Rechner neu erzeugter Debug-Schlüssel kann bestehende Installationen nicht aktualisieren.
 
@@ -108,7 +118,7 @@ git push origin main v0.4.0
 Voraussetzungen: JDK 17 oder 21, Android SDK mit Plattform 36 und Build Tools 36.0.0. `local.properties` bei Bedarf mit `sdk.dir=/pfad/zum/android-sdk` anlegen.
 
 ```sh
-./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :shared:test :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :wear:assembleDebug :wear:lintDebug
 ```
 
 Die Debug-APK liegt in `app/build/outputs/apk/debug/app-debug.apk`. `./gradlew :app:assembleRelease` erstellt eine verkleinerte Vorschau-APK mit Debug-Signatur in `app/build/outputs/apk/release/`. Eine private Release-Signierung und Play-Store-Veröffentlichung sind nicht eingerichtet.
@@ -123,3 +133,5 @@ Version 0.5 ergänzt Countdown- und Wartezustand-Tests sowie Robolectric-Tests g
 - [Android WLAN-Scans und Drosselung](https://developer.android.com/develop/connectivity/wifi/wifi-scan)
 - [Samsung Now Bar](https://www.samsung.com/us/support/answer/ANS10004605/)
 - [EFA-Schnittstellenreferenz](https://efa.ips.codes/)
+
+Version 0.7 ergänzt Tests des gemeinsamen Watch-Codecs, für beschädigte Payloads, das Altern von Prognose und Verbindung unabhängig voneinander, Fahrtende, Watch-Datenquelle und den Ausschluss der Watch-APK als Handy-Update. Beide Apps werden gebaut und statisch geprüft. Die tatsächliche Data-Layer-Verbindung und Bedienung auf der Galaxy Watch 5 Pro müssen auf dem Gerät bestätigt werden.

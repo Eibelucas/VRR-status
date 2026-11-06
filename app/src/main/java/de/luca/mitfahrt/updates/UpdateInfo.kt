@@ -19,6 +19,7 @@ data class UpdateInfo(val versionCode: Long, val versionName: String, val assetN
             val minSdk = json.getInt("minSdk")
             require(code > 0 && name.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) { "Ungültige Update-Version." }
             require(asset.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]*\\.apk")) && !asset.contains("..")) { "Ungültige APK-Datei." }
+            require(asset == "Mitfahrt-$name.apk") { "Das Update ist nicht die passende Handy-Version." }
             require(digest.matches(Regex("[0-9a-f]{64}")) && size in 1..MAX_SIZE && minSdk >= 1) { "Ungültige Update-Daten." }
             return UpdateInfo(code, name, asset, digest, size, minSdk)
         }

@@ -1,10 +1,14 @@
-## Mitfahrt 0.6.0
+## Mitfahrt 0.7.0
 
-- **Busse auf der Karte** öffnet die offizielle NEW-Livekarte direkt in Mitfahrt, auch ohne aktive Fahrt.
-- Fahrzeugmarker und Linienauswahl kommen von `livebus.new.de`. Die Karte ordnet keinen Marker ungeprüft der gewählten VRR-Fahrt zu.
-- Eigene Kartenfelder für die Now Bar auf Android 17 / One UI 9: „Mitfahrt“, Linie, Richtung und Fahrtstatus. Das soll den gemeldeten Gemini-Titel ersetzen.
-- Unter **Einstellungen → Auf dem Sperrbildschirm → Eigenen Titel verwenden** lässt sich die neue Darstellung ausschalten, um zum bereits funktionierenden Modus zurückzukehren.
-- Die Karte erhält keinen Zugriff auf Berichte, Ankünfte, WLAN oder den Gerätestandort. Beim Schließen oder Verlassen der App wird die Webansicht beendet.
-- Zusätzliche Tests für Samsung-Titelfelder und die Navigation der eingebetteten Karte.
+- **Neu: Wear-OS-App** für die Galaxy Watch 5 Pro und andere Uhren ab Wear OS 3.
+- Linie, Richtung, Bus-Countdown, nächster Halt und Restzeit vom gekoppelten Handy. Veraltete oder pausierte Daten bleiben erkennbar.
+- **App teilen** in den Handy-Einstellungen: öffentlicher Download für Klassenkameraden, ohne eigenes App-Konto. Jeder nutzt seine eigenen Fahrten und Berichte.
+- **NEW-Livekarte** aus Version 0.6 direkt in der Handy-App.
+- **Eigener Now-Bar-Titel** auf One UI 9 mit „Mitfahrt“ und Fahrtstatus; abschaltbarer Rückfall auf den funktionierenden Modus aus 0.5. Der neue Titel muss auf dem A56 bestätigt werden.
+- Getrennte Handy- und Watch-APKs mit demselben Signaturschlüssel. Die Handy-App bietet nur die passende Handy-APK als Update an.
 
-Die Now Bar aus Version 0.5 wurde auf dem Galaxy A56 / One UI 9 vom Nutzer bestätigt. Die neue Titeldarstellung muss auf diesem Gerät geprüft werden; Samsungs Felder sind keine offizielle API. Android-/Samsung-Sicherheitsprüfungen bei der APK-Installation werden vom System gesteuert und bleiben bestehen. Updates verwenden denselben Signaturschlüssel wie bisher.
+**Handy:** `Mitfahrt-0.7.0.apk` installieren oder in Mitfahrt nach Updates suchen.
+
+**Uhr:** `Mitfahrt-Wear-0.7.0.apk` einmal auf der Uhr installieren. [Watch-Anleitung](https://github.com/Eibelucas/VRR-status/blob/main/WATCH.md). Kein Play-Store-Eintrag; Watch-Updates erfolgen vorerst über APK-Installation. Fahrt am Handy wählen, dann Mitfahrt auf der Uhr öffnen. Die reale Kopplung und Runddisplay-Bedienung müssen auf der Watch 5 Pro geprüft werden.
+
+Android-/Samsung-Sicherheitsprüfungen beim Installieren bleiben vom System gesteuert. Der App-Code kann sie nicht abschalten.
