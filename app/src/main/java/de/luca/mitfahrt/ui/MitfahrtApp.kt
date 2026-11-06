@@ -85,6 +85,10 @@ fun MitfahrtApp(
     val arrivals by vm.arrivals.collectAsStateWithLifecycle()
     val home by vm.home.collectAsStateWithLifecycle()
     val routes by vm.routes.collectAsStateWithLifecycle()
+    val schoolTrips by vm.schoolTrips.collectAsStateWithLifecycle()
+    val alternatives by vm.alternatives.collectAsStateWithLifecycle()
+    val hapticTest by vm.hapticTest.collectAsStateWithLifecycle()
+    val actionMessage by vm.actionMessage.collectAsStateWithLifecycle()
     var reportRide by remember { mutableStateOf<Ride?>(null) }
     var arrivalRide by remember { mutableStateOf<Ride?>(null) }
     var page by rememberSaveable { mutableIntStateOf(0) }
@@ -104,6 +108,16 @@ fun MitfahrtApp(
     }
     LaunchedEffect(Unit) { while (true) { now = Instant.now(); delay(1000) } }
     LaunchedEffect(tracking.ride?.departure?.key) { if (tracking.ride != null) { page = 0; showAll = false } }
+    LaunchedEffect(actionMessage) {
+        actionMessage?.let { snackbar.showSnackbar(it); vm.clearActionMessage() }
+    }
+    LaunchedEffect(tracking.ride?.departure?.key, tracking.ride?.departure?.cancelled, tracking.ride?.boarded, page, lifecycle) {
+        if (page == 0 && tracking.ride?.departure?.cancelled == true && tracking.ride?.boarded == false) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) { vm.refreshAlternatives(); delay(30_000) }
+            }
+        }
+    }
     LaunchedEffect(notice, search.error, reports.error) {
         (notice ?: search.error ?: reports.error)?.let { snackbar.showSnackbar(it); onDismissNotice(); vm.clearError(); vm.clearReportError() }
     }
@@ -155,6 +169,9 @@ fun MitfahrtApp(
                             SmallNotice("Verbindung unterbrochen", "Stand ${clockTime(ride.fetchedAt)}", Icons.Outlined.CloudOff, Amber)
                         }
                         if (ride.departure.cancelled) item { SmallNotice("Fahrt fällt aus", "Bitte eine andere Fahrt wählen", Icons.Outlined.WarningAmber, Amber) }
+                        if (ride.departure.cancelled && !ride.boarded) item {
+                            AlternativesCard(ride, alternatives, now, vm::refreshAlternatives, vm::chooseAlternative)
+                        }
                         item { RideHero(ride, now) }
                         if (!ride.boarded && !ride.departure.cancelled) item {
                             Button(onClick = vm::boardBus, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
@@ -163,6 +180,7 @@ fun MitfahrtApp(
                             }
                         }
                         if (ride.boarded) item { NextStopCard(ride, now) }
+                        if (!ride.demo && !ride.departure.cancelled) item { ExitTargetCard(ride, vm::setExitTarget, vm::saveSchoolTrip) }
                         if (!ride.demo) item { LiveMapCard { showLiveMap = true } }
                         if (!ride.demo) item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -207,6 +225,7 @@ fun MitfahrtApp(
                             }
                         }
                     } else {
+                        item { SchoolTripCard(schoolTrips, now, vm::selectSchoolTrip, vm::removeSchoolTrip) }
                         item {
                             HomeOverview(home, routes, now, search.loading, search.choosing,
                                 onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome,
@@ -227,7 +246,7 @@ fun MitfahrtApp(
                 }
                 1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation)
                 2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport)
-                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro)
+                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration)
             }
         }
         if (showLiveMap) NewLiveMapScreen(onClose = { showLiveMap = false })
@@ -344,11 +363,11 @@ private fun RideHero(ride: Ride, now: Instant) {
                 Text(shortName(ride.departure.stopName), fontSize = 19.sp, fontWeight = FontWeight.Medium)
             } else {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(ride.remainingMinutes(now)?.toString() ?: "–", fontSize = 88.sp,
+                    Text(ride.minutesToTarget(now)?.toString() ?: "–", fontSize = 88.sp,
                         fontWeight = FontWeight.Medium, letterSpacing = (-6).sp, lineHeight = 88.sp)
                     Text(" Min", fontSize = 23.sp, modifier = Modifier.padding(bottom = 10.dp), fontWeight = FontWeight.Medium)
                 }
-                Text("bis ${shortName(ride.terminal.name)}", fontSize = 19.sp, fontWeight = FontWeight.Medium)
+                Text("bis ${shortName(ride.displayTarget().name)}", fontSize = 19.sp, fontWeight = FontWeight.Medium)
             }
             if (!ride.demo) {
                 val next = ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex)
@@ -360,16 +379,16 @@ private fun RideHero(ride: Ride, now: Instant) {
                 }
             }
             Spacer(Modifier.height(20.dp))
-            if (!waiting) LinearProgressIndicator(progress = { ride.progress(now) }, modifier = Modifier.fillMaxWidth().height(5.dp),
+            if (!waiting) LinearProgressIndicator(progress = { ride.progressToTarget(now) }, modifier = Modifier.fillMaxWidth().height(5.dp),
                 color = Color.White, trackColor = Color.White.copy(alpha = 0.16f))
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(boarding.at)}"
-                    else "Ankunft ${clockTime(ride.terminal.effective(ride.offsetSeconds))}", fontSize = 13.sp)
+                    else "Ankunft ${clockTime(ride.displayTarget().effective(ride.offsetSeconds))}", fontSize = 13.sp)
                 Text(when {
                     ride.demo -> "Beispieldaten"
                     waiting -> if (boarding.live) "Live" else "Laut Fahrplan"
-                    ride.terminal.estimated != null -> "Live"
+                    ride.displayTarget().estimated != null -> "Live"
                     ride.departure.estimated != null -> "Geschätzt"
                     else -> "Laut Fahrplan"
                 }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -380,7 +399,7 @@ private fun RideHero(ride: Ride, now: Instant) {
 
 @Composable
 private fun NextStopCard(ride: Ride, now: Instant) {
-    val next = ride.nextStop(now)
+    val next = ride.nextStopToTarget(now)
     Row(Modifier.fillMaxWidth().clip(Shape).background(Panel).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(42.dp).clip(CircleShape).background(Lime.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
             Icon(Icons.Outlined.NearMe, null, tint = Lime, modifier = Modifier.size(20.dp))
@@ -389,7 +408,7 @@ private fun NextStopCard(ride: Ride, now: Instant) {
         Column(Modifier.weight(1f)) {
             Text(if (next != null) "NÄCHSTER HALT" else "ENDHALTESTELLE", color = Soft, fontSize = 10.sp, letterSpacing = 1.sp)
             Spacer(Modifier.height(5.dp))
-            Text(next?.let { shortName(it.name) } ?: "Ziel erreicht", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            Text(next?.let { shortName(it.name) } ?: "Ziel laut Fahrtverlauf", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
         }
         next?.effective(ride.offsetSeconds)?.let {
             Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
@@ -475,13 +494,17 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                         Text(shortName(search.selectedStop.name), fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
                         Text(search.routeFilter?.let { "${it.visit.line} → ${shortName(it.visit.destination)}" } ?: "NEW · Abfahrten", color = Soft, fontSize = 13.sp)
                     }
-                    IconButton(onClick = { vm.selectStop(search.selectedStop, search.routeFilter) }, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Aktualisieren") }
+                    IconButton(onClick = { vm.selectStop(search.selectedStop, search.routeFilter, search.schoolTrip) }, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Aktualisieren") }
                 }
             }
             if (search.routeFilter != null) item { TextButton(onClick = { vm.selectStop(search.selectedStop) }) { Text("Alle Linien anzeigen") } }
+            JourneyOptions.walking(search.selectedStop)?.let { walk -> item {
+                Text("${walk.label} · geschätzter Weg zur Haltestelle", color = Soft, fontSize = 13.sp)
+            } }
             item { PersonalArrivalCard(search.selectedStop, arrivals) { vm.markArrival(search.selectedStop) } }
             items(search.departures, key = { it.key }) { departure ->
                 DepartureRow(departure, now, search.choosing == departure.key, enabled = !search.loading) { vm.choose(departure) }
+                WalkingHint(search.selectedStop, departure, now)
             }
             if (search.departures.isEmpty() && !search.loading) item { EmptyState("Gerade keine NEW-Abfahrten", "Wähle eine andere Haltestelle oder aktualisiere die Liste.") }
         }
@@ -542,7 +565,7 @@ private fun LineBadge(line: String, dark: Boolean = false) {
 
 @Composable
 private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: UpdateState,
-    onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit) {
+    onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit, hapticTest: de.luca.mitfahrt.alerts.HapticTestState, onHapticTest: () -> Unit) {
     val context = LocalContext.current
     val manager = context.getSystemService(NotificationManager::class.java)
     var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
@@ -649,6 +672,12 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
                     TextButton(onClick = {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${UpdateInfo.REPOSITORY}/blob/main/WATCH.md")))
                     }) { Text("Watch-App & Installation") }
+                    Text("Für die Kachel auf der Uhr: Kachel hinzufügen → Fahrtstatus.", color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
+                    OutlinedButton(onClick = onHapticTest, enabled = !hapticTest.running, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (hapticTest.running) "Uhr wird geprüft …" else "Vibration auf Handy & Uhr testen")
+                    }
+                    hapticTest.message?.let { Text(it, color = Soft, fontSize = 13.sp) }
+                    Text("Nicht stören und Vibrationsstärke gelten auf beiden Geräten.", color = Soft, fontSize = 12.sp)
                 }
             }
         }
@@ -801,7 +830,7 @@ private fun EmptyState(title: String, text: String) {
 private fun sourceText(ride: Ride, now: Instant): String = when {
     ride.demo -> "Demofahrt · Keine echten Fahrtdaten"
     ride.isStale(now) -> "Letzter Stand ${clockTime(ride.fetchedAt)} · Zeiten können abweichen"
-    ride.terminal.estimated != null -> "VRR-Echtzeitdaten · Stand ${clockTime(ride.fetchedAt)}"
+    ride.displayTarget().estimated != null -> "VRR-Echtzeitdaten · Stand ${clockTime(ride.fetchedAt)}"
     ride.departure.estimated != null -> "Ankunft anhand der letzten Verspätung geschätzt · Stand ${clockTime(ride.fetchedAt)}"
     else -> "Zeiten laut Fahrplan · Stand ${clockTime(ride.fetchedAt)}"
 }

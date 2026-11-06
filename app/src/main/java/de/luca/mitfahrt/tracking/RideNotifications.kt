@@ -51,8 +51,8 @@ class RideNotifications(private val context: Context) {
         }
         val waiting = !ride.boarded
         val boardingTime = ride.boardingTime()
-        val next = ride.nextStop(now)
-        val remaining = if (waiting) minutesUntil(boardingTime.at, now) else ride.remainingMinutes(now)
+        val next = ride.nextStopToTarget(now)
+        val remaining = if (waiting) minutesUntil(boardingTime.at, now) else ride.minutesToTarget(now)
         val delay = DelayEvidence.timingFor(ride, ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex))
             ?: DelayEvidence.timingFor(ride, ride.boardingIndex)
         val stale = ride.isStale(now) || state.lastRefreshFailed || !state.running
@@ -60,20 +60,20 @@ class RideNotifications(private val context: Context) {
             ride.demo -> "Demo"
             stale -> "Veraltet"
             waiting -> if (boardingTime.live) "Live" else "Fahrplan"
-            ride.terminal.estimated != null -> "Live"
+            ride.displayTarget().estimated != null -> "Live"
             ride.departure.estimated != null -> "Geschätzt"
             else -> "Fahrplan"
         }
         val headline = if (waiting) {
             if (ride.departure.cancelled) "Bus fällt aus" else if (!boardingTime.at.isAfter(now)) "Bus wird erwartet"
             else "${if (boardingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(boardingTime.at, now)}"
-        } else if (next == null) "Endhaltestelle erreicht" else "Nächster Halt: ${shortName(next.name)}"
-        val title = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.terminal.name)}"
+        } else if (next == null) "Ziel laut Fahrtverlauf erreicht" else "Nächster Halt: ${shortName(next.name)}"
+        val title = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.displayTarget().name)}"
         val text = listOfNotNull(headline,
             delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }).joinToString(" · ")
         builder.setContentTitle(title)
             .setContentText(text)
-            .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Endhalt" } ?: "Ankunft unbekannt"}")
+            .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
         if (waiting && !ride.departure.cancelled && boardingTime.at.isAfter(now)) {
             builder.setWhen(boardingTime.at.toEpochMilli()).setShowWhen(true)
                 .setUsesChronometer(true).setChronometerCountDown(true)
@@ -81,18 +81,18 @@ class RideNotifications(private val context: Context) {
         if (Build.VERSION.SDK_INT >= 36) {
             builder.setStyle(Notification.ProgressStyle()
                 .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(180, 0, 85))))
-                .setProgress(if (waiting) 0 else (ride.progress(now) * 100).toInt())
+                .setProgress(if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
             builder.addExtras(NowBarSupport.extras(context, title, "$text · $timeSource",
                 "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
-                if (waiting) 0 else (ride.progress(now) * 100).toInt()))
+                if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt()))
             builder.setShortCriticalText(remaining?.let { "$it Min" } ?: ride.departure.line)
         } else {
             builder.setStyle(Notification.BigTextStyle().bigText(
                 "$headline\n" +
-                    (if (waiting) "${shortName(ride.departure.stopName)} · $timeSource" else "${remaining?.let { "$it Min" } ?: "–"} bis ${shortName(ride.terminal.name)} · $timeSource") +
+                    (if (waiting) "${shortName(ride.departure.stopName)} · $timeSource" else "${remaining?.let { "$it Min" } ?: "–"} bis ${shortName(ride.displayTarget().name)} · $timeSource") +
                     (delay?.let { "\n${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" } ?: "")))
-                .setProgress(100, (ride.progress(now) * 100).toInt(), false)
+                .setProgress(100, (ride.progressToTarget(now) * 100).toInt(), false)
         }
         val notification = builder.build()
         if (Build.VERSION.SDK_INT >= 36 && !notification.hasPromotableCharacteristics()) {

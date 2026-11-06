@@ -17,7 +17,7 @@ data class NearbyDepartures(val departures: List<Departure>, val failed: Int)
 
 class NearbyHomeLoader(private val fetchStops: suspend (GeoPoint) -> List<Stop>,
     private val fetchDepartures: suspend (Stop) -> List<Departure>) {
-    suspend fun stops(point: GeoPoint): List<Stop> = fetchStops(point).distinctBy { stopKey(it.id) }
+    suspend fun stops(point: GeoPoint): List<Stop> = fetchStops(point).map { stop -> stop.copy(distance = stop.distance ?: stop.point?.distanceTo(point)?.toInt()) }.distinctBy { stopKey(it.id) }
         .sortedBy { it.distance ?: it.point?.distanceTo(point)?.toInt() ?: Int.MAX_VALUE }.take(12)
 
     suspend fun departures(stops: List<Stop>): NearbyDepartures = coroutineScope {

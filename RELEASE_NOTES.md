@@ -1,11 +1,12 @@
-## Mitfahrt 0.10.0
+## Mitfahrt 0.11.0
 
-- Handy und gekoppelte Wear-OS-Uhr vibrieren einmal etwa eine Minute vor der aktuellen Busankunftsprognose; ohne Ankunftszeit gilt die angezeigte Abfahrt.
-- Nur für eine laufende, ausgewählte Fahrt vor dem Einsteigen. Keine Warnung bei Demo, Ausfall, veralteten Daten oder bereits vergangener Prognose.
-- Eine neue Verspätung verschiebt den Zeitpunkt. Nach einem bereits ausgelösten Hinweis wird für dieselbe Fahrt nicht erneut vibriert.
-- Die Uhr erhält einen frischen Hinweis vom Handy, auch wenn die Watch-App geschlossen ist. Keine verspätete Wiederholung nach einer längeren Trennung.
-- Systemseitige Vibrations- und Nicht-stören-Einstellungen gelten weiterhin.
+- **Ausstiegsalarm:** Zielhalt wählen, nach dem Einsteigen **Bin im Bus** antippen. Handy und Uhr warnen einmal einen bedienten Halt vorher anhand aktueller Fahrtdaten bzw. passierter Halte. Keine garantierte Fahrzeugposition.
+- **Gehzeit:** geschätzter Weg zur Haltestelle und Einschätzung, ob die gemeldete Abfahrt noch erreichbar ist.
+- **Schulweg:** Hin- und Rückfahrt mit Ausstieg lokal speichern; morgens Hinweg, nachmittags Rückweg oben anbieten. Neue Abfahrten werden stets frisch geladen.
+- **Alternativen bei Ausfall:** aktuelle passende Direktverbindungen am bisherigen oder nahen Einstieg. Dein gewähltes Ziel wird vor dem Wechsel geprüft.
+- **Watch-Kachel:** unter **Kachel hinzufügen → Fahrtstatus** einrichten. Countdown, Ziel und nächster Halt per Wischen; alte Daten werden automatisch markiert.
+- **Vibration testen:** unter **Einstellungen → Auf deiner Uhr**. Empfangsbestätigung der Uhr statt bloßer Sendebestätigung.
 
-Handy: Mitfahrt-0.10.0.apk. Uhr: Mitfahrt-Wear-0.10.0.apk. Für die neue Uhren-Vibration beide Apps aktualisieren; die Uhr muss mit dem Handy verbunden sein.
+**Beide Apps aktualisieren:** Mitfahrt-0.11.0.apk für das Handy, Mitfahrt-Wear-0.11.0.apk für die Uhr. Derselbe Signaturschlüssel wie bisher. [Watch-Anleitung](https://github.com/Eibelucas/VRR-status/blob/main/WATCH.md).
 
-Die Warnung basiert auf VRR-Zeiten und bestätigt keine tatsächliche Busankunft. Die Vibration auf dem A56 und der Watch 5 Pro muss praktisch geprüft werden.
+Gehzeit und Fahrtfortschritt sind Schätzungen. Der reale Ausstiegsalarm, die Kacheldarstellung und die Vibration müssen auf A56/Watch 5 Pro bestätigt werden; Systemregeln für Nicht-stören und Vibration bleiben bestehen.

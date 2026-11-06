@@ -103,12 +103,23 @@ class RideService : Service(), LocationListener {
                     val current = store.state.value
                     val currentRide = current.ride
                     val snapshot = current.watchSnapshot()
-                    if (currentRide != null && de.luca.mitfahrt.shared.ArrivalAlert.due(snapshot, Instant.now())) {
+                    if (currentRide != null && currentRide.stops.getOrNull(currentRide.boardingIndex)?.cancelled != true &&
+                        de.luca.mitfahrt.shared.ArrivalAlert.due(snapshot, Instant.now())) {
                         val id = currentRide.departure.key
                         if (arrivalAlerted != id) {
                             arrivalAlerted = id
                             de.luca.mitfahrt.alerts.ArrivalHaptics.pulse(this@RideService, id)
                             app.watch.arrivalAlert(id, requireNotNull(snapshot.boardingAt))
+                        }
+                    }
+                    if (ExitAlarm.due(current, Instant.now()) && currentRide != null) {
+                        val id = ExitAlarm.id(currentRide)
+                        val prefs = getSharedPreferences("exit_alerts", MODE_PRIVATE)
+                        val seen = prefs.getStringSet("seen", emptySet()).orEmpty()
+                        if (id != null && id !in seen) {
+                            prefs.edit().putStringSet("seen", (seen.toList().takeLast(99) + id).toSet()).apply()
+                            de.luca.mitfahrt.alerts.ArrivalHaptics.pulse(this@RideService, id)
+                            app.watch.arrivalAlert(id, requireNotNull(currentRide.exitTargetStop()?.effective(currentRide.offsetSeconds)))
                         }
                     }
                     notifications.post(store.state.value)
@@ -132,7 +143,7 @@ class RideService : Service(), LocationListener {
             val current = store.state.value.ride
             if (current?.departure?.key == ride.departure.key) {
                 store.setRide(updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex),
-                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt))
+                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt).remapExitTargetFrom(current))
                 if (departure.cancelled) store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
             }
         } catch (e: CancellationException) { throw e

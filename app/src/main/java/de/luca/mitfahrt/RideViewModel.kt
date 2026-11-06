@@ -19,8 +19,10 @@ data class SearchState(
     val selectedStop: Stop? = null, val departures: List<Departure> = emptyList(),
     val loading: Boolean = false, val error: String? = null,
     val pendingRide: Ride? = null, val choosing: String? = null,
-    val searched: Boolean = false, val routeFilter: FrequentRoute? = null
+    val searched: Boolean = false, val routeFilter: FrequentRoute? = null, val schoolTrip: SchoolTrip? = null
 )
+data class AlternativesState(val forJourney: String? = null, val stops: List<Stop> = emptyList(),
+    val departures: List<Departure> = emptyList(), val loading: Boolean = false, val error: String? = null)
 
 data class ReportsState(
     val entries: List<DelayEvidence> = emptyList(), val busy: Boolean = false,
@@ -33,6 +35,15 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     val lastRide = app.store.lastRide
     val arrivals = app.arrivals.marks
     val routes = app.routes.routes
+    val schoolTrips = app.schoolTrips.trips
+    private val hapticTestClient = de.luca.mitfahrt.alerts.HapticTestClient(app)
+    val hapticTest = hapticTestClient.state
+    fun testVibration() { viewModelScope.launch { hapticTestClient.run() } }
+    private val alternativeState = MutableStateFlow(AlternativesState())
+    val alternatives = alternativeState.asStateFlow()
+    private var alternativeJob: Job? = null
+    private val actionState = MutableStateFlow<String?>(null)
+    val actionMessage = actionState.asStateFlow()
     private val homeState = MutableStateFlow(HomeState())
     val home = homeState.asStateFlow()
     private val homeLoader = NearbyHomeLoader(app.vrr::nearby, app.vrr::departures)
@@ -91,6 +102,45 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun retryHome() { closeHome(); queryPoint = null; openHome() }
     fun clearRoutes() { app.routes.clear(); homeState.value = homeState.value.copy(departures = emptyList()) }
+    fun clearActionMessage() { actionState.value = null }
+    fun setExitTarget(index: Int?) {
+        tracking.value.ride?.let { app.store.setRide(it.withExitTarget(index), preserveStatus = true) }
+    }
+    fun saveSchoolTrip(direction: SchoolDirection) {
+        val trip = tracking.value.ride?.let { SchoolTrips.fromRide(direction, it) }
+        if (trip == null) actionState.value = "Wähle zuerst deine Ausstiegshaltestelle."
+        else { app.schoolTrips.save(trip); actionState.value = "${direction.label} gespeichert" }
+    }
+    fun removeSchoolTrip(direction: SchoolDirection) { app.schoolTrips.remove(direction) }
+    fun selectSchoolTrip(trip: SchoolTrip) { selectStop(trip.boarding, trip.route(), trip) }
+
+    fun refreshAlternatives() {
+        val ride = tracking.value.ride ?: return
+        if (ride.demo || ride.boarded || !ride.departure.cancelled || alternativeJob?.isActive == true) return
+        alternativeState.value = AlternativesState(forJourney = ride.departure.key, loading = true)
+        alternativeJob = viewModelScope.launch {
+            try {
+                val current = tracking.value
+                val point = if (lastPoint != null && SystemClock.elapsedRealtime() - lastFix <= 90_000) lastPoint
+                    else current.location?.takeIf { current.locationAt?.let { Instant.now().epochSecond - it.epochSecond in 0..90 } == true }
+                val boarding = ride.stops.getOrNull(ride.boardingIndex)
+                val original = Stop(stopKey(ride.departure.stopId), ride.departure.stopName, boarding?.point,
+                    if (point != null) boarding?.point?.distanceTo(point)?.toInt() else null)
+                val nearby = if (point == null) emptyList() else runCatching { homeLoader.stops(point) }.getOrElse {
+                    if (it is CancellationException) throw it
+                    emptyList()
+                }
+                val stops = (nearby + original).distinctBy { stopKey(it.id) }
+                val result = homeLoader.departures(stops)
+                if (tracking.value.ride?.departure?.key == ride.departure.key)
+                    alternativeState.value = AlternativesState(ride.departure.key, stops, result.departures,
+                        error = if (result.failed > 0) "Einige Abfahrten sind gerade nicht erreichbar." else null)
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                alternativeState.value = AlternativesState(ride.departure.key, error = "Alternativen konnten nicht geladen werden.")
+            }
+        }
+    }
 
     private fun loadNearby(point: GeoPoint) {
         val moved = queryPoint?.distanceTo(point)?.let { it >= 100 } != false
@@ -162,7 +212,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         val query = mutable.value.query.trim()
         if (query.length < 2) return
         load {
-            mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), routeFilter = null)
+            mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), routeFilter = null, schoolTrip = null)
             val stops = app.vrr.search(query)
             mutable.value = mutable.value.copy(stops = stops, searched = true)
         }
@@ -171,7 +221,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         if (homeState.value.stops.isNotEmpty() && homeState.value.status == NearbyStatus.READY) {
             job?.cancel()
             mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(),
-                stops = homeState.value.stops, searched = true, loading = false, error = null, routeFilter = null)
+                stops = homeState.value.stops, searched = true, loading = false, error = null, routeFilter = null, schoolTrip = null)
             return
         }
         val state = tracking.value
@@ -183,18 +233,22 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         load {
-            mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), routeFilter = null)
+            mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), routeFilter = null, schoolTrip = null)
             mutable.value = mutable.value.copy(stops = app.vrr.nearby(point), searched = true)
         }
     }
     fun selectRoute(route: FrequentRoute) { selectStop(route.visit.stop, route) }
-    fun selectStop(stop: Stop, route: FrequentRoute? = null) {
+    fun selectStop(stop: Stop, route: FrequentRoute? = null, schoolTrip: SchoolTrip? = null) {
         load {
-            mutable.value = mutable.value.copy(selectedStop = stop, departures = emptyList(), routeFilter = route)
+            val nearby = homeState.value.stops.firstOrNull { stopKey(it.id) == stopKey(stop.id) }
+            val point = lastPoint?.takeIf { SystemClock.elapsedRealtime() - lastFix <= 90_000 }
+                ?: tracking.value.location?.takeIf { tracking.value.locationAt?.let { at -> Instant.now().epochSecond - at.epochSecond in 0..90 } == true }
+            val selected = nearby ?: stop.copy(distance = if (point != null) stop.point?.distanceTo(point)?.toInt() else null)
+            mutable.value = mutable.value.copy(selectedStop = selected, departures = emptyList(), routeFilter = route, schoolTrip = schoolTrip)
             mutable.value = mutable.value.copy(departures = filterDepartures(app.vrr.departures(stop), route))
         }
     }
-    fun backToStops() { job?.cancel(); mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), loading = false, error = null, routeFilter = null) }
+    fun backToStops() { job?.cancel(); mutable.value = mutable.value.copy(selectedStop = null, departures = emptyList(), loading = false, error = null, routeFilter = null, schoolTrip = null) }
     suspend fun refreshSelectedStop() {
         val previous = mutable.value
         val stop = previous.selectedStop ?: return
@@ -206,12 +260,20 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: CancellationException) { throw e
         } catch (_: Exception) { /* Keep the timestamped last data; the manual refresh remains available. */ }
     }
-    fun choose(departure: Departure) {
+    fun choose(departure: Departure) { chooseWithTarget(departure, mutable.value.schoolTrip?.targetId, mutable.value.schoolTrip?.targetOccurrence ?: 0) }
+    fun chooseAlternative(departure: Departure) { chooseWithTarget(departure, tracking.value.ride?.exitTargetStop()?.id, tracking.value.ride?.targetOccurrence() ?: 0) }
+    private fun chooseWithTarget(departure: Departure, targetId: String?, occurrence: Int) {
         if (departure.cancelled) return
         load {
             mutable.value = mutable.value.copy(choosing = departure.key)
             val ride = app.vrr.ride(departure).copy(boarded = false, trackingStartedAt = Instant.now())
-            mutable.value = mutable.value.copy(pendingRide = ride, choosing = null)
+            val selected = if (targetId == null) ride else ride.withExitTarget(SchoolTrips.targetIndex(ride, targetId, occurrence))
+            if (targetId != null && selected.exitTargetStop() == null) {
+                actionState.value = "Diese Fahrt bedient deinen Ausstieg nicht. Bitte eine andere Fahrt wählen."
+                mutable.value = mutable.value.copy(choosing = null)
+                return@load
+            }
+            mutable.value = mutable.value.copy(pendingRide = selected, choosing = null)
         }
     }
     fun consumeRide() { mutable.value = mutable.value.copy(pendingRide = null) }

@@ -72,6 +72,10 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
             matches.take(4).forEach { match -> key(match.route.key) {
                 DepartureRow(match.departure, now, choosingKey == match.departure.key, !choosing,
                     showStop = true, distance = match.stop.distance) { onDeparture(match.departure) }
+                JourneyOptions.walking(match.stop)?.let { walk ->
+                    Text("${walk.label} · ${JourneyOptions.reachability(match.stop, match.departure, now).label}", color = Soft, fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp))
+                }
             } }
             if (matches.isEmpty() && !home.departuresLoading && !home.loading)
                 Text(if (home.error != null) "Öffne eine Strecke, um die Abfahrten erneut zu laden."

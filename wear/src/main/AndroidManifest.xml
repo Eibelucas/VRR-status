@@ -14,6 +14,10 @@
         </activity>
         <service android:name=".WatchDataService" android:exported="true">
             <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/haptic-test/v1" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/ride/v1" />
             </intent-filter>
@@ -21,6 +25,14 @@
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/arrival-alert/v1" />
             </intent-filter>
+        </service>
+        <service android:name=".RideTileService" android:exported="true"
+            android:label="Fahrtstatus" android:icon="@drawable/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data android:name="androidx.wear.tiles.PREVIEW" android:resource="@drawable/tile_preview" />
         </service>
     </application>
 </manifest>

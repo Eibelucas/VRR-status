@@ -12,10 +12,19 @@ object ArrivalHaptics {
         val seen = prefs.getStringSet("seen", emptySet()).orEmpty()
         if (id in seen) return
         prefs.edit().putStringSet("seen", (seen.toList().takeLast(99) + id).toSet()).apply()
-        val vibrator = context.getSystemService(Vibrator::class.java)
-        runCatching {
+        trigger(context)
+    }
+
+    /** Does not read or change journey-alert history. A true result means the API accepted the request. */
+    fun testPulse(context: Context): Boolean = runCatching {
+        if (!context.getSystemService(Vibrator::class.java).hasVibrator()) return@runCatching false
+        trigger(context)
+    }.getOrDefault(false)
+
+    private fun trigger(context: Context): Boolean = runCatching {
+            val vibrator = context.getSystemService(Vibrator::class.java)
             vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 250, 120, 250), -1),
                 AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT).build())
-        }
-    }
+            true
+    }.getOrDefault(false)
 }

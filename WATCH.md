@@ -16,8 +16,8 @@ Die App ist noch nicht im Play Store. Auf dem Handy lässt sich die normale APK 
 
 Die beiden APKs stehen öffentlich unter [Releases](https://github.com/Eibelucas/VRR-status/releases/latest):
 
-- **Mitfahrt-0.10.0.apk** ist für Android-Handys.
-- **Mitfahrt-Wear-0.10.0.apk** ist ausschließlich für die Uhr.
+- **Mitfahrt-0.11.0.apk** ist für Android-Handys.
+- **Mitfahrt-Wear-0.11.0.apk** ist ausschließlich für die Uhr.
 
 Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Computer mit den offiziellen [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) übertragen. Für ADB über WLAN:
 
@@ -28,7 +28,7 @@ Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Comp
 ```sh
 adb pair UHR_IP:KOPPLUNGSPORT
 adb connect UHR_IP:VERBINDUNGSPORT
-adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.10.0.apk
+adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.11.0.apk
 ```
 
 Danach Debugging wieder ausschalten und Mitfahrt aus der App-Liste der Uhr öffnen. Die alltägliche Nutzung benötigt kein Debugging. Für spätere Watch-Updates dieselbe APK-Variante mit `install -r` installieren. Die In-App-Updatefunktion der Handy-App aktualisiert zunächst nur die Handy-App.
@@ -46,3 +46,11 @@ Google Play Services verbindet die beiden Installationen über die [Wear OS Data
 Eine reale Kopplung mit der Galaxy Watch 5 Pro ist in der Entwicklungsumgebung nicht verfügbar. Installation, Runddisplay und Übertragung müssen auf der echten Uhr bestätigt werden.
 
 Ab 0.10 kann die Uhr auch bei geschlossener App einmal vor der Busankunft vibrieren. Dafür Handy- und Watch-App aktualisieren und die Uhr mit dem Handy verbinden. Verpasste Warnungen werden nach einer längeren Trennung nicht nachgeholt.
+
+## Kachel und Vibrationstest ab 0.11
+
+Auf der Uhr zur Kachelübersicht wischen, **Kachel hinzufügen → Fahrtstatus** wählen. Die Kachel zeigt Countdown, Richtung und nächsten Halt aus dem Handy-Status. Ein Antippen öffnet die Watch-App. Der Minuten-Countdown läuft über eine kurze lokale Timeline weiter; ohne frische Daten wechselt sie automatisch zu **Daten veraltet**. Es werden keine zusätzlichen GPS-Abfragen auf der Uhr gestartet.
+
+Unter **Einstellungen → Auf deiner Uhr → Vibration auf Handy & Uhr testen** lässt sich ein kurzer Test ohne Busfahrt auslösen. Der Handy-Test wird sofort ausgelöst, die Uhr muss ihren Empfang bestätigen. Ohne Verbindung bzw. Watch-App ab 0.11 meldet die Handy-App nach spätestens zwölf Sekunden die fehlende Bestätigung. Eine API-Bestätigung beweist keine physisch spürbare Vibration; Nicht-stören und Vibrationsstärke bleiben maßgeblich.
+
+Den Ausstieg wählst du am Handy unter **Dein Ausstieg**. Danach beziehen sich Restzeit und Ziel auf der Uhr auf diesen Halt. Nach **Bin im Bus** vibrieren Handy und Uhr einmal am vorherigen bedienten Halt, anhand von aktuellem Fahrplan/Prognose oder passierten Halten per Standort. Dies ist keine garantierte Erkennung der tatsächlichen Busposition. Die Kachel und die Hintergrundzustellung müssen auf deiner Watch 5 Pro praktisch bestätigt werden.

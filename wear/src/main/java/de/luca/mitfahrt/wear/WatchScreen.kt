@@ -117,7 +117,7 @@ private fun RideHero(ride: WatchRide, now: Instant) {
         Spacer(Modifier.height(4.dp))
         Text(when {
             ride.cancelled -> "Andere Fahrt wählen"
-            ride.boarded -> "bis zum Endhalt"
+            ride.boarded -> "bis zum Ziel"
             ride.boardingIsArrival -> "bis dein Bus kommt"
             else -> "bis zur Abfahrt"
         }, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center)

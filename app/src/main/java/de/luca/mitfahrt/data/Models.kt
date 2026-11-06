@@ -43,7 +43,8 @@ data class RideStop(
 data class Ride(
     val departure: Departure, val stops: List<RideStop>, val boardingIndex: Int,
     val fetchedAt: Instant, val demo: Boolean = false, val gpsPassedIndex: Int = -1,
-    val boarded: Boolean = true, val trackingStartedAt: Instant? = null
+    val boarded: Boolean = true, val trackingStartedAt: Instant? = null,
+    val targetStopId: String? = null, val targetStopIndex: Int? = null
 ) {
     val offsetSeconds: Long get() = departure.estimated?.let { it.epochSecond - departure.planned.epochSecond } ?: 0
     // A departure delay is only an extrapolation for later stops, never a live ETA.

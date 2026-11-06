@@ -7,12 +7,16 @@ import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.WearableListenerService
 import de.luca.mitfahrt.shared.WatchProtocol
+import de.luca.mitfahrt.shared.HapticTestProtocol
+import com.google.android.gms.wearable.Wearable
+import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class WatchApplication : Application() { val store by lazy { WatchStore(this) } }
 
 class WatchStore(context: Context) {
+    private val tileContext = context.applicationContext
     private val prefs = context.getSharedPreferences("watch_ride", Context.MODE_PRIVATE)
     private val mutable = MutableStateFlow(runCatching {
         prefs.getString("snapshot", null)?.let { WatchProtocol.decode(Base64.decode(it, Base64.NO_WRAP)) }
@@ -24,14 +28,26 @@ class WatchStore(context: Context) {
     @Synchronized fun receive(bytes: ByteArray?) {
         val snapshot = runCatching { bytes?.let(WatchProtocol::decode) }.getOrNull() ?: return
         if (mutable.value?.sentAt?.isAfter(snapshot.sentAt) == true) return
+        val previous = mutable.value
         prefs.edit().putString("snapshot", Base64.encodeToString(bytes, Base64.NO_WRAP)).apply()
         mutable.value = snapshot
         syncMessage.value = null
+        if (previous?.copy(sentAt = Instant.EPOCH) != snapshot.copy(sentAt = Instant.EPOCH))
+            RideTileUpdates.request(tileContext)
     }
 }
 
 class WatchDataService : WearableListenerService() {
     override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
+        if (event.path == HapticTestProtocol.REQUEST) {
+            val request = HapticTestProtocol.decode(event.data, Instant.now()) ?: return
+            val triggered = de.luca.mitfahrt.alerts.ArrivalHaptics.testPulse(this)
+            runCatching {
+                Wearable.getMessageClient(this).sendMessage(event.sourceNodeId, HapticTestProtocol.ACK,
+                    HapticTestProtocol.encodeAck(request, triggered))
+            }
+            return
+        }
         if (event.path != de.luca.mitfahrt.shared.ArrivalAlert.PATH) return
         de.luca.mitfahrt.shared.ArrivalAlert.recentId(event.data, java.time.Instant.now())?.let {
             de.luca.mitfahrt.alerts.ArrivalHaptics.pulse(this, it)
