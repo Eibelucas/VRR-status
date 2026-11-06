@@ -137,7 +137,13 @@ class RideService : Service(), LocationListener {
             runCatching { app.vrr.departures(Stop(departure.stopId, departure.stopName)) }.getOrNull()
                 ?.firstOrNull { it.key == departure.key }?.let { departure = it }
             if (departure.cancelled) {
-                store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
+                // Cancelled trips may no longer have a TripStopTimes response. Publish the
+                // monitor's cancellation immediately without pretending old stop times are fresh.
+                store.state.value.ride?.takeIf { it.departure.key == ride.departure.key }?.let { current ->
+                    store.setRide(current.copy(departure = departure), preserveStatus = true)
+                    store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
+                }
+                return
             }
             val updated = app.vrr.ride(departure)
             val current = store.state.value.ride

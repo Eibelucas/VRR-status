@@ -34,8 +34,8 @@ fun SchoolTripCard(trips: List<SchoolTrip>, now: Instant, onSelect: (SchoolTrip)
                     }
                     IconButton(onClick = { onRemove(trip.direction) }) { Icon(Icons.Outlined.Close, "${trip.direction.label} entfernen", tint = Soft) }
                 }
-                if (trip.direction == preferred) Button(onClick = { onSelect(trip) }, modifier = Modifier.fillMaxWidth()) { Text("Abfahrten ${trip.direction.label.lowercase()}") }
-                else OutlinedButton(onClick = { onSelect(trip) }, modifier = Modifier.fillMaxWidth()) { Text("Abfahrten ${trip.direction.label.lowercase()}") }
+                if (trip.direction == preferred) Button(onClick = { onSelect(trip) }, modifier = Modifier.fillMaxWidth()) { Text("Abfahrten ${trip.direction.label.replaceFirstChar { it.lowercase() }}") }
+                else OutlinedButton(onClick = { onSelect(trip) }, modifier = Modifier.fillMaxWidth()) { Text("Abfahrten ${trip.direction.label.replaceFirstChar { it.lowercase() }}") }
             }
         }
     }

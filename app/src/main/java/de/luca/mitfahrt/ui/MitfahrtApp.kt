@@ -165,7 +165,7 @@ fun MitfahrtApp(
                             }
                         }
                         if (!tracking.running) item { NoticeCard("Fahrt pausiert", "Zum Weiterverfolgen fortsetzen.", "Fortsetzen", onResume) }
-                        else if (!ride.demo && (ride.isStale(now) || tracking.lastRefreshFailed)) item {
+                        else if (!ride.demo && !ride.departure.cancelled && (ride.isStale(now) || tracking.lastRefreshFailed)) item {
                             SmallNotice("Verbindung unterbrochen", "Stand ${clockTime(ride.fetchedAt)}", Icons.Outlined.CloudOff, Amber)
                         }
                         if (ride.departure.cancelled) item { SmallNotice("Fahrt fällt aus", "Bitte eine andere Fahrt wählen", Icons.Outlined.WarningAmber, Amber) }
@@ -406,7 +406,7 @@ private fun NextStopCard(ride: Ride, now: Instant) {
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(if (next != null) "NÄCHSTER HALT" else "ENDHALTESTELLE", color = Soft, fontSize = 10.sp, letterSpacing = 1.sp)
+            Text(if (next != null) "NÄCHSTER HALT" else "ZIEL", color = Soft, fontSize = 10.sp, letterSpacing = 1.sp)
             Spacer(Modifier.height(5.dp))
             Text(next?.let { shortName(it.name) } ?: "Ziel laut Fahrtverlauf", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
         }
