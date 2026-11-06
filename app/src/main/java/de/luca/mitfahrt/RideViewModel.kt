@@ -37,7 +37,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
 
     init { viewModelScope.launch {
         val saved = withContext(Dispatchers.IO) { app.reports.list() }
-        reportState.value = reportState.value.copy(entries = saved)
+        if (!reportState.value.busy && reportState.value.entries.isEmpty()) reportState.value = reportState.value.copy(entries = saved)
     } }
 
     fun createReport(ride: Ride, stopIndex: Int) {

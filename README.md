@@ -1,5 +1,7 @@
 # Mitfahrt
 
+Projekt: [Eibelucas/VRR-status](https://github.com/Eibelucas/VRR-status)
+
 Eine native Android-App für die NEW-Busse in Mönchengladbach. Kotlin, Jetpack Compose und Material 3. Kein Konto und kein Backend nötig.
 
 ## Verwenden
@@ -56,7 +58,28 @@ Mitfahrt ist keine offizielle App von NEW oder VRR.
 
 Die App speichert die aktive und letzte echte Fahrt lokal. Beim Beenden wird die aktive Sitzung gelöscht; die letzte Fahrt bleibt für einen späteren Bericht erhalten und wird bei der nächsten Fahrt ersetzt. Selbst bestätigte Ankünfte enthalten nur gewählte Haltestelle und Gerätezeit, keine GPS-Koordinaten. Diese Einträge sowie erstellte PDFs und ihre unveränderlichen Datenstände bleiben im privaten App-Speicher, bis die App-Daten gelöscht oder die App deinstalliert wird. Beim Teilen wird nur die ausgewählte PDF-Datei über einen nicht öffentlichen Android FileProvider freigegeben. Standortkoordinaten werden für die Haltestellensuche an den VRR übertragen. WLAN-Namen und GPS-Verlauf werden nicht hochgeladen oder dauerhaft gespeichert. Keine Analyse-SDKs oder Werbung. Kein Android-Cloud-Backup der Fahrtdaten und Berichte.
 
-## Entwickeln
+## App-Updates
+
+Unter **Einstellungen → App-Updates → Nach Updates suchen** prüft die App die neueste öffentliche GitHub-Version. Eine neue APK wird erst nach Antippen heruntergeladen. Danach prüft Mitfahrt SHA-256, Paketkennung, Versionsnummer und den Signaturschlüssel gegenüber der installierten App. **Installieren** öffnet den Android-Installer; falls erforderlich führt die App vorher zur Android-Freigabe für Installationen aus Mitfahrt. Eine stille Installation findet nicht statt. Berichte und Ankünfte bleiben bei einem regulären Update erhalten.
+
+Die Update-Quelle ist ausschließlich `https://github.com/Eibelucas/VRR-status/releases/latest/download/update.json`. Es werden keine GitHub-Zugangsdaten in der App gespeichert. Solange noch kein Release mit `update.json` veröffentlicht ist, zeigt die App das an.
+
+## Automatischer Build und Releases
+
+GitHub Actions prüft Pushes und Pull Requests mit Unit-Tests, Android Lint und einem APK-Build. Ein Tag wie `v0.4.0` baut nach erfolgreichen Prüfungen eine signierte APK und veröffentlicht sie zusammen mit `update.json` und Prüfsumme. Tag und APK-Version müssen übereinstimmen; die `versionCode` muss für jedes Update steigen.
+
+Für installierbare Folgeversionen muss immer derselbe private Signaturschlüssel verwendet werden. Der Release-Job benötigt das Repository-Secret `ANDROID_KEYSTORE_BASE64`. Für die bereits verteilte Vorschau gelten die Android-Debug-Standardwerte für Alias und Passwörter; bei einem eigenen Schlüssel können sie über `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS` und `ANDROID_KEY_PASSWORD` überschrieben werden. Die private Schlüsseldatei gehört niemals in Git oder einen öffentlichen Release. Ohne konfigurierten Schlüssel schlägt der Release-Job mit einem Hinweis fehl, statt eine anders signierte Update-APK zu veröffentlichen.
+
+Lokal kann ein vorhandener Schlüssel über `MITFAHRT_KEYSTORE`, `MITFAHRT_STORE_PASSWORD`, `MITFAHRT_KEY_ALIAS` und `MITFAHRT_KEY_PASSWORD` eingebunden werden. Ohne diese Variablen baut Gradle wie bisher eine Vorschau mit dem lokalen Debug-Schlüssel. Ein auf einem anderen Rechner neu erzeugter Debug-Schlüssel kann bestehende Installationen nicht aktualisieren.
+
+```sh
+./gradlew :app:assembleRelease
+python3 scripts/create_update_manifest.py --apk app/build/outputs/apk/release/app-release.apk --tag v0.4.0 --output dist
+git tag v0.4.0
+git push origin main v0.4.0
+```
+
+## Lokal entwickeln
 
 Voraussetzungen: JDK 17 oder 21, Android SDK mit Plattform 36 und Build Tools 36.0.0. `local.properties` bei Bedarf mit `sdk.dir=/pfad/zum/android-sdk` anlegen.
 
@@ -68,7 +91,7 @@ Die Debug-APK liegt in `app/build/outputs/apk/debug/app-debug.apk`. `./gradlew :
 
 Die Unit-Tests verwenden echte öffentliche VRR-Antworten vom 06.11.2026 als Fixtures und prüfen Zuordnung, Ausfälle, Zeitzonen, Offlinezustand, Zeitberechnung und Wiederherstellung. Weitere Tests prüfen Berichts-Snapshots, originale Abrufzeiten, fehlende Prognosen, Abfahrt versus Ankunft und den Ausschluss von Demofahrten und hochgerechneten Zeiten als Belegdaten. WLAN und Now Bar benötigen zusätzlich einen Test während einer realen Busfahrt auf dem Zielgerät.
 
-Prüfstand Version 0.3: Release-Build, 39 Unit-Tests und Android Lint ohne Fehler bestanden. VRR-Endpunkte wurden mit echten NEW-Abfahrten und Fahrtverläufen geprüft. Ein Bildschirm- und Installationstest im Android-36-Emulator konnte in der Build-Umgebung nicht abgeschlossen werden: Ohne Hardwarebeschleunigung wurde der Emulator während des ersten Starts wegen der Ressourcenbegrenzung beendet. Die App einschließlich PDF-Rendering und Android-Teilen ist auf einem realen Gerät noch nicht getestet.
+Version 0.4 ergänzt 14 Tests für Update-Metadaten, Download-Ziele, Paketkennungen, Versionen und Signaturen zu den bisherigen 39 Tests. VRR-Endpunkte wurden mit echten NEW-Abfahrten und Fahrtverläufen geprüft. Ein Bildschirm- und Installationstest im Android-36-Emulator konnte in der Build-Umgebung nicht abgeschlossen werden: Ohne Hardwarebeschleunigung wurde der Emulator während des ersten Starts wegen der Ressourcenbegrenzung beendet. Die App einschließlich Update-Installation, PDF-Rendering und Android-Teilen ist auf einem realen Gerät noch nicht getestet.
 
 ## Quellen
 

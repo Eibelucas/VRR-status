@@ -3,6 +3,7 @@ package de.luca.mitfahrt.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import de.luca.mitfahrt.BuildConfig
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
@@ -47,7 +48,7 @@ class VrrClient {
             conn.connectTimeout = 12_000
             conn.readTimeout = 18_000
             conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("User-Agent", "Mitfahrt-Android/0.1")
+            conn.setRequestProperty("User-Agent", "Mitfahrt-Android/${BuildConfig.VERSION_NAME}")
             check(conn.responseCode == 200) { "VRR ist gerade nicht erreichbar (${conn.responseCode})." }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             val root = JSONObject(body)

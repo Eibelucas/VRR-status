@@ -36,6 +36,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.luca.mitfahrt.RideViewModel
+import de.luca.mitfahrt.BuildConfig
+import de.luca.mitfahrt.updates.UpdateState
+import de.luca.mitfahrt.updates.UpdatePhase
+import de.luca.mitfahrt.updates.UpdateInfo
+import java.io.File
 import de.luca.mitfahrt.SearchState
 import de.luca.mitfahrt.ReportsState
 import de.luca.mitfahrt.data.*
@@ -56,7 +61,8 @@ private val Shape = RoundedCornerShape(24.dp)
 
 @Composable
 fun MitfahrtApp(
-    tracking: TrackingState, search: SearchState, vm: RideViewModel, notice: String?,
+    tracking: TrackingState, search: SearchState, vm: RideViewModel, notice: String?, updates: UpdateState,
+    onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit,
     onDismissNotice: () -> Unit, onMonitor: () -> Unit, onDemo: () -> Unit,
     onResume: () -> Unit, onStop: () -> Unit
 ) {
@@ -186,7 +192,7 @@ fun MitfahrtApp(
                 }
                 1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets))
                 2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport)
-                else -> SettingsPage(Modifier.padding(insets), onDemo)
+                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate)
             }
         }
         if (confirmStop) AlertDialog(onDismissRequest = { confirmStop = false }, title = { Text("Fahrt beenden?") },
@@ -468,11 +474,41 @@ private fun LineBadge(line: String, dark: Boolean = false) {
 }
 
 @Composable
-private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit) {
+private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: UpdateState,
+    onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit) {
     val context = LocalContext.current
     val manager = context.getSystemService(NotificationManager::class.java)
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item { Header("Einstellungen", "MITFAHRT", Icons.Outlined.Tune) }
+        item {
+            Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("App-Updates", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                    Text("Installiert: ${BuildConfig.VERSION_NAME}", color = Soft, fontSize = 13.sp)
+                    Text(when (updates.phase) {
+                        UpdatePhase.IDLE -> "Updates über GitHub"
+                        UpdatePhase.CHECKING -> "Suche nach Updates …"
+                        UpdatePhase.CURRENT -> "Du bist auf dem neuesten Stand."
+                        UpdatePhase.EMPTY -> "Noch keine Update-Version veröffentlicht."
+                        UpdatePhase.AVAILABLE -> "Version ${updates.info?.versionName} ist verfügbar."
+                        UpdatePhase.DOWNLOADING -> "Wird heruntergeladen · ${(updates.progress * 100).toInt()} %"
+                        UpdatePhase.READY -> "Version ${updates.info?.versionName} ist bereit."
+                        UpdatePhase.ERROR -> updates.message ?: "Das Update konnte nicht geladen werden."
+                    }, color = if (updates.phase == UpdatePhase.ERROR) Amber else Paper, fontSize = 14.sp, lineHeight = 20.sp)
+                    if (updates.phase == UpdatePhase.DOWNLOADING) LinearProgressIndicator(progress = { updates.progress }, modifier = Modifier.fillMaxWidth())
+                    when (updates.phase) {
+                        UpdatePhase.CHECKING -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        UpdatePhase.DOWNLOADING -> Unit
+                        UpdatePhase.AVAILABLE -> Button(onClick = onDownloadUpdate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Herunterladen") }
+                        UpdatePhase.READY -> Button(onClick = { updates.file?.let(onInstallUpdate) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Installieren") }
+                        else -> OutlinedButton(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Nach Updates suchen") }
+                    }
+                    if (updates.phase == UpdatePhase.ERROR && updates.info != null)
+                        TextButton(onClick = onDownloadUpdate) { Text("Download erneut versuchen") }
+                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateInfo.REPOSITORY))) }) { Text("Projekt auf GitHub") }
+                }
+            }
+        }
         item {
             Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -509,7 +545,7 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Text("Letzte Fahrt, selbst erfasste Ankünfte und Berichte werden auf deinem Gerät gespeichert.", color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
             Spacer(Modifier.height(16.dp))
-            Text("Mitfahrt 0.3 · Inoffizielle App", color = Soft, fontSize = 12.sp)
+            Text("Mitfahrt ${BuildConfig.VERSION_NAME} · Inoffizielle App", color = Soft, fontSize = 12.sp)
         }
     }
 }

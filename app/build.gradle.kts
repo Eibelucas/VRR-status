@@ -12,8 +12,17 @@ android {
         applicationId = "de.luca.mitfahrt"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
+    }
+    val releaseStore = System.getenv("MITFAHRT_KEYSTORE")?.takeIf { it.isNotBlank() }
+    signingConfigs {
+        if (releaseStore != null) create("releaseKey") {
+            storeFile = file(releaseStore)
+            storePassword = requireNotNull(System.getenv("MITFAHRT_STORE_PASSWORD")) { "MITFAHRT_STORE_PASSWORD fehlt" }
+            keyAlias = requireNotNull(System.getenv("MITFAHRT_KEY_ALIAS")) { "MITFAHRT_KEY_ALIAS fehlt" }
+            keyPassword = requireNotNull(System.getenv("MITFAHRT_KEY_PASSWORD")) { "MITFAHRT_KEY_PASSWORD fehlt" }
+        }
     }
     buildFeatures { compose = true; buildConfig = true }
     buildTypes {
@@ -21,7 +30,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             // Installable preview; replace with a private release key before store publication.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseStore == null) "debug" else "releaseKey")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

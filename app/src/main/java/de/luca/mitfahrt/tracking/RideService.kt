@@ -114,9 +114,10 @@ class RideService : Service(), LocationListener {
             if (departure.cancelled) {
                 store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
             }
-            val updated = app.vrr.ride(departure).copy(gpsPassedIndex = ride.gpsPassedIndex)
-            if (store.state.value.ride?.departure?.key == ride.departure.key) {
-                store.setRide(updated)
+            val updated = app.vrr.ride(departure)
+            val current = store.state.value.ride
+            if (current?.departure?.key == ride.departure.key) {
+                store.setRide(updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex)))
                 if (departure.cancelled) store.update { it.copy(message = "Diese Fahrt wird als ausgefallen gemeldet.") }
             }
         } catch (e: CancellationException) { throw e
