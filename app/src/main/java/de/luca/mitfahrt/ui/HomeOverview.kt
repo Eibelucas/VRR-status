@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.luca.mitfahrt.data.*
@@ -23,7 +24,8 @@ import java.time.Instant
 @Composable
 fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, choosing: Boolean, choosingKey: String?,
     onSearch: () -> Unit, onLocation: () -> Unit, onRefresh: () -> Unit, onStop: (Stop) -> Unit,
-    onAllStops: () -> Unit, onRoute: (FrequentRoute) -> Unit, onDeparture: (Departure) -> Unit, onClearHistory: () -> Unit) {
+    onAllStops: () -> Unit, onRoute: (FrequentRoute) -> Unit, onDeparture: (Departure) -> Unit, onClearHistory: () -> Unit,
+    onRemoveRoute: (FrequentRoute) -> Unit) {
     var allRoutes by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val matches = if (home.status == NearbyStatus.READY) RouteHistory.suggestions(routes, home.stops, home.departures, now) else emptyList()
@@ -53,7 +55,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
                 if (matches.isEmpty() && !home.departuresLoading && !home.loading)
                     Text(if (home.error != null) "Abfahrten gerade nicht verfügbar. Unter Alle erneut laden."
                         else "Gerade keine passende Abfahrt in deiner Nähe.", color = Soft, fontSize = 13.sp, lineHeight = 19.sp)
-            } else routes.take(2).forEach { route -> HistoryRow(route) { onRoute(route) } }
+            } else routes.take(2).forEach { route -> HistoryRow(route, onRemove = { onRemoveRoute(route) }) { onRoute(route) } }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("In deiner Nähe", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -92,7 +94,11 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
             Text("Deine Strecken", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(16.dp))
             LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(routes, key = { it.key }) { route -> HistoryRow(route) { allRoutes = false; onRoute(route) } }
+                items(routes, key = { it.key }) { route ->
+                    HistoryRow(route, onRemove = { allRoutes = false; onRemoveRoute(route) }) {
+                        allRoutes = false; onRoute(route)
+                    }
+                }
             }
             TextButton(onClick = { confirmClear = true }) { Text("Streckenverlauf löschen", color = Soft) }
         }
@@ -104,17 +110,25 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
 }
 
 @Composable
-private fun HistoryRow(route: FrequentRoute, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Panel).clickable(onClick = onClick).padding(16.dp),
+private fun HistoryRow(route: FrequentRoute, onRemove: () -> Unit, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Panel),
         verticalAlignment = Alignment.CenterVertically) {
-        Text(route.visit.line, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold,
-            modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Lime).padding(horizontal = 10.dp, vertical = 8.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(shortName(route.visit.destination), fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Spacer(Modifier.height(4.dp))
-            Text("Ab ${shortName(route.visit.stop.name)}", color = Soft, fontSize = 12.sp)
+        Row(Modifier.weight(1f).clickable(onClick = onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(route.visit.line, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Lime).padding(horizontal = 10.dp, vertical = 8.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(shortName(route.visit.destination), fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Text("Ab ${shortName(route.visit.stop.name)}", color = Soft, fontSize = 12.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Outlined.ChevronRight, null, tint = Soft, modifier = Modifier.size(18.dp))
         }
-        Icon(Icons.Outlined.ChevronRight, null, tint = Soft)
+        IconButton(onClick = onRemove, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Outlined.DeleteOutline,
+                "Strecke ${route.visit.line} Richtung ${shortName(route.visit.destination)} löschen", tint = Soft)
+        }
     }
 }

@@ -17,8 +17,18 @@ data class TrackingState(
 
 class RideStore(context: Context) {
     private val prefs = context.getSharedPreferences("ride", Context.MODE_PRIVATE)
+    // Keep deleted journeys hidden when their active tracking session refreshes or resumes.
+    private var forgottenJourneys = runCatching {
+        JSONArray(prefs.getString("forgotten_journeys", "[]")).let { entries ->
+            (0 until entries.length()).mapNotNull { index ->
+                entries.optString(index).takeIf { it.isNotBlank() }
+            }.distinct().take(MAX_FORGOTTEN_JOURNEYS)
+        }
+    }.getOrDefault(emptyList())
     private val last = MutableStateFlow(runCatching {
-        prefs.getString("last_ride", null)?.let(RideCodec::decode)?.takeUnless { it.demo }
+        prefs.getString("last_ride", null)?.let(RideCodec::decode)?.takeUnless {
+            it.demo || it.departure.key in forgottenJourneys
+        }
     }.getOrNull())
     val lastRide = last.asStateFlow()
     private val mutable = MutableStateFlow(TrackingState(ride = runCatching {
@@ -28,21 +38,48 @@ class RideStore(context: Context) {
     }.getOrNull()))
     val state = mutable.asStateFlow()
     fun update(transform: (TrackingState) -> TrackingState) { mutable.value = transform(mutable.value) }
+    @Synchronized
     fun setRide(ride: Ride?, preserveStatus: Boolean = false) {
         update { it.copy(ride = ride, lastRefreshFailed = if (preserveStatus) it.lastRefreshFailed else false,
             message = if (preserveStatus) it.message else null) }
+        val savedRide = ride?.takeUnless { it.demo }
+        val encoded = savedRide?.let(RideCodec::encode)
+        val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys }
         prefs.edit().apply {
-            if (ride == null || ride.demo) remove("active") else putString("active", RideCodec.encode(ride))
-            if (ride != null && !ride.demo) {
-                last.value = ride
-                putString("last_ride", RideCodec.encode(ride))
-            }
+            if (encoded == null) remove("active") else putString("active", encoded)
+            if (rememberedRide != null) putString("last_ride", encoded)
         }.apply()
+        if (rememberedRide != null) last.value = rememberedRide
     }
+
+    @Synchronized
+    fun forgetLastRide(journeyKey: String): Ride? {
+        val ride = last.value?.takeIf { it.departure.key == journeyKey } ?: return null
+        forgottenJourneys = (listOf(journeyKey) + forgottenJourneys).distinct().take(MAX_FORGOTTEN_JOURNEYS)
+        prefs.edit().remove("last_ride")
+            .putString("forgotten_journeys", JSONArray(forgottenJourneys).toString()).apply()
+        last.value = null
+        return ride
+    }
+
+    @Synchronized
+    fun restoreLastRide(ride: Ride): Boolean {
+        // An old snackbar must not replace a newer trip or undo a later deletion.
+        if (ride.demo || last.value != null || forgottenJourneys.firstOrNull() != ride.departure.key) return false
+        val restored = mutable.value.ride?.takeIf { !it.demo && it.departure.key == ride.departure.key } ?: ride
+        forgottenJourneys = forgottenJourneys.filterNot { it == ride.departure.key }
+        prefs.edit().putString("last_ride", RideCodec.encode(restored))
+            .putString("forgotten_journeys", JSONArray(forgottenJourneys).toString()).apply()
+        last.value = restored
+        return true
+    }
+
     fun clear() {
         prefs.edit().remove("active").apply()
         mutable.value = TrackingState()
     }
+
+    private companion object { const val MAX_FORGOTTEN_JOURNEYS = 32 }
 }
 
 object RideCodec {

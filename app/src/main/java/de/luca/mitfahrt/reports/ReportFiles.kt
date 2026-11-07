@@ -6,6 +6,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -19,6 +21,22 @@ class ReportFiles(context: Context) {
     fun file(id: String): File {
         require(id.matches(Regex("[0-9a-f-]{36}"))) { "Ungültiger Bericht." }
         return File(directory, "Mitfahrt-$id.pdf")
+    }
+
+    /** Missing files are already deleted. On failure, still try the other file and return false. */
+    fun delete(id: String): Boolean {
+        val targets = listOf(file(id), File(directory, "$id.json"))
+        var success = true
+        for (target in targets) {
+            try {
+                Files.deleteIfExists(target.toPath())
+            } catch (_: IOException) {
+                success = false
+            } catch (_: SecurityException) {
+                success = false
+            }
+        }
+        return success
     }
 
     fun create(evidence: DelayEvidence): File {

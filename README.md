@@ -18,6 +18,14 @@ Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
 
+## Fahrten und Berichte löschen ab 0.13
+
+- **Fahrt → Deine Strecken → Alle:** Papierkorb entfernt eine gespeicherte Linie/Richtung. **Rückgängig** stellt sie wieder her.
+- **Berichte → Letzte Fahrt:** Papierkorb entfernt den gespeicherten Fahrtstand mit **Rückgängig**. Eine laufende Fahrt wird dabei weiter verfolgt.
+- **Berichte:** Papierkorb am Bericht öffnet eine Bestätigung; anschließend werden PDF und Berichtsdaten dauerhaft gelöscht.
+
+Gelöschte Verlaufseinträge kehren durch Live-Aktualisierung oder App-Neustart nicht sofort zurück. Neu gewählte Fahrten derselben Strecke können wieder gelernt werden.
+
 ## Bedienung ab 0.12
 
 Häufig genutzte Haltestellen lassen sich als **Favoriten** merken. Bis zu zwölf Favoriten und zwanzig zuletzt gewählte Haltestellen sind direkt auf der Startseite beziehungsweise in der Suche erreichbar. Plattformen derselben Haltestelle werden zusammengefasst. Gespeichert werden Haltestellenkennung, Name und gegebenenfalls öffentliche Haltestellenkoordinaten, keine Geräteposition oder alte Entfernung. Die Listen bleiben im privaten App-Speicher und sind vom Android-Backup ausgeschlossen.

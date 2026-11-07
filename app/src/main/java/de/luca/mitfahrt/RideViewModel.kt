@@ -26,7 +26,7 @@ data class AlternativesState(val forJourney: String? = null, val stops: List<Sto
 
 data class ReportsState(
     val entries: List<DelayEvidence> = emptyList(), val busy: Boolean = false,
-    val error: String? = null, val share: File? = null
+    val error: String? = null, val share: File? = null, val deletingId: String? = null
 )
 
 class RideViewModel(application: Application) : AndroidViewModel(application) {
@@ -120,6 +120,10 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun retryHome() { closeHome(); queryPoint = null; openHome() }
     fun clearRoutes() { app.routes.clear(); homeState.value = homeState.value.copy(departures = emptyList()) }
+    fun removeRoute(route: FrequentRoute): List<RouteVisit> = app.routes.remove(route.key)
+    fun restoreRoutes(visits: List<RouteVisit>) = app.routes.restore(visits)
+    fun forgetLastRide(ride: Ride): Ride? = app.store.forgetLastRide(ride.departure.key)
+    fun restoreLastRide(ride: Ride): Boolean = app.store.restoreLastRide(ride)
     fun clearActionMessage() { actionState.value = null }
     fun setExitTarget(index: Int?) {
         tracking.value.ride?.let { app.store.setRide(it.withExitTarget(index), preserveStatus = true) }
@@ -209,6 +213,24 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) { throw e
             } catch (_: Exception) {
                 reportState.value = reportState.value.copy(busy = false, error = "Der Bericht konnte nicht gespeichert werden.")
+            }
+        }
+    }
+
+    fun deleteReport(id: String) {
+        val state = reportState.value
+        if (state.busy || state.entries.none { it.id == id }) return
+        reportState.value = state.copy(busy = true, deletingId = id, error = null, share = null)
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { check(app.reports.delete(id)) }
+                reportState.value = reportState.value.copy(entries = reportState.value.entries.filterNot { it.id == id },
+                    busy = false, deletingId = null)
+                actionState.value = "Bericht gelöscht"
+            } catch (e: CancellationException) { throw e
+            } catch (_: Exception) {
+                reportState.value = reportState.value.copy(busy = false, deletingId = null,
+                    error = "Der Bericht konnte nicht gelöscht werden. Bitte erneut versuchen.")
             }
         }
     }

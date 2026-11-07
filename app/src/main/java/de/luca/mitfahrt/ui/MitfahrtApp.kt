@@ -89,6 +89,7 @@ fun MitfahrtApp(
     var now by remember { mutableStateOf(Instant.now()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var historyUndoJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     fun selectStop(stop: Stop) { keyboard?.hide(); focus.clearFocus(); vm.selectStop(stop); page = 1 }
@@ -99,9 +100,32 @@ fun MitfahrtApp(
             if (previous < 0 && !pinned) snackbar.showSnackbar("Du kannst bis zu 12 Haltestellen merken.")
             else {
                 val result = snackbar.showSnackbar(if (pinned) "Haltestelle gemerkt" else "Favorit entfernt",
-                    actionLabel = if (previous >= 0) "Rückgängig" else null)
+                    actionLabel = if (previous >= 0) "Rückgängig" else null, withDismissAction = previous >= 0,
+                    duration = if (previous >= 0) SnackbarDuration.Long else SnackbarDuration.Short)
                 if (result == SnackbarResult.ActionPerformed) vm.restoreFavorite(stop, previous)
             }
+        }
+    }
+    fun removeRoute(route: FrequentRoute) {
+        val removed = vm.removeRoute(route)
+        if (removed.isEmpty()) return
+        historyUndoJob?.cancel()
+        historyUndoJob = scope.launch {
+            if (snackbar.showSnackbar("Strecke aus Verlauf entfernt", actionLabel = "Rückgängig", withDismissAction = true,
+                    duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) vm.restoreRoutes(removed)
+        }
+    }
+    fun clearRouteHistory() {
+        historyUndoJob?.cancel()
+        historyUndoJob = null
+        vm.clearRoutes()
+    }
+    fun forgetLastRide(ride: Ride) {
+        val removed = vm.forgetLastRide(ride) ?: return
+        scope.launch {
+            if (snackbar.showSnackbar("Fahrt aus Verlauf entfernt", actionLabel = "Rückgängig", withDismissAction = true,
+                    duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed &&
+                !vm.restoreLastRide(removed)) snackbar.showSnackbar("Die Fahrt konnte nicht wiederhergestellt werden.")
         }
     }
     BackHandler(enabled = page != 0 && !showLiveMap) {
@@ -241,7 +265,7 @@ fun MitfahrtApp(
                                 onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome,
                                 onStop = ::selectStop,
                                 onAllStops = { vm.nearby(); page = 1 }, onRoute = { vm.selectRoute(it); page = 1 },
-                                onDeparture = vm::choose, onClearHistory = vm::clearRoutes)
+                                onDeparture = vm::choose, onClearHistory = ::clearRouteHistory, onRemoveRoute = ::removeRoute)
                         }
                         item {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -260,7 +284,8 @@ fun MitfahrtApp(
                     }
                 }
                 1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, savedStops, ::toggleFavorite)
-                2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport)
+                2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport,
+                    onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide)
                 else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration, alertPreferences, vm::setArrivalAlert, vm::setExitAlert, vm::setAlertLead)
             }
         }
@@ -736,13 +761,19 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
 
 @Composable
 private fun ReportsPage(state: ReportsState, lastRide: Ride?, modifier: Modifier,
-    onCreate: (Ride) -> Unit, onShare: (String) -> Unit) {
+    onCreate: (Ride) -> Unit, onShare: (String) -> Unit, onDeleteReport: (String) -> Unit, onDeleteRide: (Ride) -> Unit) {
+    var confirmDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item { Header("Berichte", "FÜR DEINE UNTERLAGEN", Icons.Outlined.Description) }
         if (lastRide != null) item {
             Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Letzte Fahrt", color = Soft, fontSize = 12.sp)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Letzte Fahrt", color = Soft, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { onDeleteRide(lastRide) }, enabled = !state.busy) {
+                            Icon(Icons.Outlined.DeleteOutline, "Gespeicherte letzte Fahrt löschen", tint = Soft)
+                        }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         LineBadge(lastRide.departure.line)
                         Spacer(Modifier.width(12.dp))
@@ -753,7 +784,7 @@ private fun ReportsPage(state: ReportsState, lastRide: Ride?, modifier: Modifier
                     }
                     Button(onClick = { onCreate(lastRide) }, enabled = !state.busy,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                        Text(if (state.busy) "Wird erstellt …" else "Bericht erstellen")
+                        Text(if (state.busy && state.deletingId == null) "Wird erstellt …" else "Bericht erstellen")
                     }
                 }
             }
@@ -764,19 +795,34 @@ private fun ReportsPage(state: ReportsState, lastRide: Ride?, modifier: Modifier
         items(state.entries, key = { it.id }) { report ->
             Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("${report.line} · ${shortName(report.stopName)}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${report.line} · ${shortName(report.stopName)}", fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { confirmDeleteId = report.id }, enabled = !state.busy) {
+                            if (state.deletingId == report.id) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Outlined.DeleteOutline, "Bericht für Linie ${report.line} löschen", tint = Soft)
+                        }
+                    }
                     Text("${reportDate(report.planned)} · ${report.event}", color = Soft, fontSize = 12.sp)
                     Text(report.delayText, color = if (report.delaySeconds > 0) Amber else Lime, fontSize = 14.sp)
                     if (report.personalArrivals.isNotEmpty()) Text("Eigene Ankunft im Bericht enthalten", color = Soft, fontSize = 12.sp)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("Privater VRR-Datenbericht", color = Soft, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { onShare(report.id) }) {
+                        TextButton(onClick = { onShare(report.id) }, enabled = !state.busy) {
                             Icon(Icons.Outlined.Share, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text("Teilen")
                         }
                     }
                 }
             }
         }
+    }
+    state.entries.firstOrNull { it.id == confirmDeleteId }?.let { report ->
+        AlertDialog(onDismissRequest = { confirmDeleteId = null }, title = { Text("Bericht löschen?") },
+            text = { Text("${report.line} · ${shortName(report.stopName)}\n${reportDate(report.planned)}\n\nDer PDF-Bericht wird dauerhaft gelöscht.") },
+            confirmButton = { TextButton(onClick = { confirmDeleteId = null; onDeleteReport(report.id) }, enabled = !state.busy) {
+                Text("Löschen", color = MaterialTheme.colorScheme.error)
+            } },
+            dismissButton = { TextButton(onClick = { confirmDeleteId = null }) { Text("Abbrechen") } })
     }
 }
 

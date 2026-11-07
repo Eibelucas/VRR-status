@@ -1,15 +1,9 @@
-## Mitfahrt 0.12.0
+## Mitfahrt 0.13.0
 
-- **Favoriten und zuletzt gewählte Haltestellen:** bis zu zwölf Haltestellen merken und über Startseite oder Suche schneller wieder öffnen. Favoriten und Verlauf bleiben lokal.
-- **Suche beim Tippen:** passende gespeicherte Haltestellen und neue Suchergebnisse, ohne jedes Mal erst auf Suchen tippen zu müssen.
-- **Hell, Dunkel oder System:** Darstellung unter **Einstellungen → Darstellung** wählen; die NEW-Farbfamilie bleibt erhalten.
-- **Vibrationshinweise einstellen:** Ankunft und Ausstieg getrennt ein- oder ausschalten. Für die Ankunft sind eine, zwei oder drei Minuten Vorlauf wählbar; voreingestellt bleibt eine Minute. Die Auswahl gilt für Handy und gekoppelte Uhr.
-- **Kompakter Schulweg:** Hin- und Rückweg umschalten, die nächste passende Abfahrt direkt verfolgen und weitere Abfahrten bei Bedarf öffnen.
-- **Klarere Fahrtansicht:** Ausstieg in einer filterbaren Liste auswählen, seltene Aktionen im Menü finden und einen Wechsel aus einer bereits gewählten Fahrt bestätigen.
-- **Aktuelle Gehzeit:** Bei Standortfreigabe wird die Entfernung auf der sichtbaren Suchseite weiter aktualisiert. Gehzeit und Erreichbarkeit bleiben Schätzungen.
-- **Ehrlicher Datenstand:** Eine alte Abfahrtsprognose wird durch einen neuen Fahrtverlauf nicht wieder frisch. Unabhängige aktuelle Prognosen für spätere Halte bleiben nutzbar.
-- **Vor Fahrtende nochmals prüfen:** Neue Verspätungen werden vor dem automatischen Beenden erneut abgefragt. Veraltete oder fehlgeschlagene Daten beenden die Fahrt nicht ungeprüft.
+- **Einzelne Strecken löschen:** Unter **Fahrt → Deine Strecken → Alle** den Papierkorb am Eintrag antippen. Mit **Rückgängig** lässt sich die Strecke wiederherstellen.
+- **Letzte Fahrt löschen:** Unter **Berichte → Letzte Fahrt** den Papierkorb verwenden. Auch hier gibt es **Rückgängig**. Die Entfernung bleibt nach Neustart und Live-Aktualisierung bestehen.
+- **Berichte löschen:** Jeder gespeicherte Bericht hat einen eigenen Papierkorb. Nach Bestätigung werden PDF und zugehörige Berichtsdaten aus Mitfahrt gelöscht. Das ist dauerhaft.
 
-**Beide Apps aktualisieren:** `Mitfahrt-0.12.0.apk` für das Handy und `Mitfahrt-Wear-0.12.0.apk` für die Uhr. Der Signaturschlüssel bleibt derselbe. [Watch-Anleitung](https://github.com/Eibelucas/VRR-status/blob/main/WATCH.md).
+Das Entfernen eines Verlaufseintrags beendet keine laufende Fahrt. Bereits gespeicherte Berichte werden separat verwaltet. Neue Fahrten derselben Strecke können später wieder im Verlauf erscheinen.
 
-Watch-Kachel, Ausstiegsalarm, Schulberichte und Vibrationstest bleiben verfügbar. Nicht-stören und Vibrationsstärke gelten weiterhin. Gehzeit und Fahrtfortschritt sind Schätzungen; der reale Ablauf auf A56 und Watch 5 Pro muss praktisch geprüft werden.
+Die Löschfunktionen betreffen die Handy-App. Auf dem Handy unter **Einstellungen → App-Updates** aktualisieren oder `Mitfahrt-0.13.0.apk` installieren. `Mitfahrt-Wear-0.13.0.apk` ist als passende Watch-Version ebenfalls verfügbar; eine vorhandene Watch-App ab 0.12 bleibt mit diesem Handy-Update kompatibel.

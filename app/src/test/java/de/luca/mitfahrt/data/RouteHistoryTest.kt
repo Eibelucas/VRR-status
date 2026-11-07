@@ -1,5 +1,11 @@
 package de.luca.mitfahrt.data
 
+import android.app.Application
+import android.content.Context
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.Instant
@@ -65,10 +71,87 @@ class RouteHistoryTest {
         assertFalse(encoded.contains("estimated"))
         assertEquals(visits, RouteHistory.decode(encoded.dropLast(1) + ",{},null]"))
     }
+    @Test fun `removing one route keeps its opposite direction and all unrelated visits`() {
+        val visits = visit(3)
+        val reverse = visits.first().copy(journey = "reverse", destination = "Hbf Europaplatz")
+        val (remaining, removed) = RouteHistory.remove(visits + reverse, visits.first().routeKey)
+        assertEquals(listOf(reverse), remaining)
+        assertEquals(visits, removed)
+        assertEquals(visits + reverse, RouteHistory.remove(visits + reverse, "unknown").first)
+    }
+    @Test fun `undo merges selections made since removal without replacing newer metadata`() {
+        val removed = visit(2)
+        val newerCopy = removed.first().copy(stop = Stop("new", "New name"), at = now)
+        val newJourney = removed.first().copy(journey = "new selection", at = now)
+        val merged = RouteHistory.restore(listOf(newerCopy, newJourney), removed, now)
+        assertEquals(3, merged.size)
+        assertEquals(newerCopy, merged.first { it.journey == newerCopy.journey })
+        assertTrue(newJourney in merged)
+        assertEquals(3, RouteHistory.frequent(merged, now).single().count)
+        assertEquals(merged, RouteHistory.restore(merged, removed, now))
+    }
     @Test fun `old routes expire from suggestions and storage is bounded`() {
         val old = visit().single().copy(at = now.minusSeconds(91 * 86400L))
         assertTrue(RouteHistory.frequent(listOf(old), now).isEmpty())
         val many = (1..220).map { visit().single().copy(journey = "journey$it", at = now.minusSeconds(it.toLong())) }
         assertEquals(200, RouteHistory.record(many, ride(), now).size)
+    }
+}
+
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = Application::class)
+class RouteHistoryStoreTest {
+    private val app: Application get() = RuntimeEnvironment.getApplication()
+    private fun ride(trip: String, destination: String = "Rheydt Hbf"): Ride {
+        val base = DemoRide.create(Instant.now())
+        return base.copy(demo = false, departure = base.departure.copy(lineId = "new:006:H", tripCode = trip,
+            destination = destination, stopId = "de:05116:23007:1:6"))
+    }
+
+    @Test fun `removed route stays removed after restart and resume but a new trip can relearn it`() {
+        val old = ride("old")
+        val store = RouteHistoryStore(app, null)
+        store.record(old)
+        val key = store.routes.value.single().key
+        val removed = store.remove(key)
+        assertEquals(1, removed.size)
+        assertTrue(store.routes.value.isEmpty())
+        val restarted = RouteHistoryStore(app, old)
+        assertTrue(restarted.routes.value.isEmpty())
+        restarted.record(old.copy(boarded = true, fetchedAt = Instant.now()))
+        assertTrue(restarted.routes.value.isEmpty())
+        restarted.record(ride("later"))
+        assertEquals(1, restarted.routes.value.single().count)
+        restarted.restore(removed)
+        assertEquals(2, restarted.routes.value.single().count)
+        assertEquals(2, RouteHistoryStore(app, old).routes.value.single().count)
+    }
+
+    @Test fun `single deletion keeps other direction and undo does not erase new records`() {
+        val out = ride("out")
+        val back = ride("back", "Hbf Europaplatz")
+        val store = RouteHistoryStore(app, null)
+        store.record(out); store.record(back)
+        val key = store.routes.value.first { it.visit.destination == "Rheydt Hbf" }.key
+        val removed = store.remove(key)
+        assertEquals("Hbf Europaplatz", store.routes.value.single().visit.destination)
+        store.record(ride("new out"))
+        store.restore(removed)
+        assertEquals(2, store.routes.value.size)
+        assertEquals(2, store.routes.value.first { it.key == key }.count)
+        assertEquals(1, store.routes.value.first { it.key != key }.count)
+        assertTrue(store.remove("unknown").isEmpty())
+    }
+
+    @Test fun `clearing history cannot immediately resurrect the current ride`() {
+        val current = ride("active")
+        val store = RouteHistoryStore(app, null)
+        store.record(current); store.clear()
+        val restarted = RouteHistoryStore(app, current)
+        restarted.record(current)
+        assertTrue(restarted.routes.value.isEmpty())
+        val journal = app.getSharedPreferences("route_history", Context.MODE_PRIVATE).getString("deleted_journeys", "")!!
+        assertFalse(journal.contains(current.departure.key))
     }
 }

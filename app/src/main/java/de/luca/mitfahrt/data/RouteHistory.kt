@@ -7,6 +7,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.util.Locale
+import java.security.MessageDigest
 
 data class RouteVisit(val journey: String, val lineId: String, val line: String, val destination: String,
     val stop: Stop, val at: Instant) {
@@ -32,6 +33,15 @@ object RouteHistory {
         .distinctBy { it.journey }.groupBy { it.routeKey }.values
         .map { FrequentRoute(it.maxBy { v -> v.at }, it.size) }
         .sortedWith(compareByDescending<FrequentRoute> { it.count }.thenByDescending { it.visit.at })
+
+    fun remove(visits: List<RouteVisit>, routeKey: String): Pair<List<RouteVisit>, List<RouteVisit>> =
+        visits.filterNot { it.routeKey == routeKey } to visits.filter { it.routeKey == routeKey }
+
+    /** Current records win: an undo must not replace newer selections or refreshed metadata. */
+    fun restore(visits: List<RouteVisit>, removed: List<RouteVisit>, now: Instant): List<RouteVisit> =
+        (visits + removed).distinctBy { it.journey }
+            .filter { it.at >= now.minusSeconds(90 * 86400L) && it.at <= now }
+            .sortedByDescending { it.at }.take(200)
 
     fun suggestions(routes: List<FrequentRoute>, stops: List<Stop>, departures: List<Departure>, now: Instant): List<RouteSuggestion> =
         routes.mapNotNull { route ->
@@ -60,6 +70,12 @@ object RouteHistory {
 class RouteHistoryStore(context: Context, previousRide: Ride?) {
     private val prefs = context.getSharedPreferences("route_history", Context.MODE_PRIVATE)
     private var visits = RouteHistory.decode(prefs.getString("visits", "[]") ?: "[]")
+    // Hashes only suppress re-recording removed trips on resume. A later bus has a new ID.
+    private var deletedJourneys = runCatching {
+        val array = JSONArray(prefs.getString("deleted_journeys", "[]") ?: "[]")
+        (0 until array.length()).mapNotNull { array.optString(it).takeIf { id -> id.matches(Regex("[0-9a-f]{64}")) } }
+            .distinct().takeLast(512)
+    }.getOrDefault(emptyList())
     private val mutable = MutableStateFlow(RouteHistory.frequent(visits, Instant.now()))
     val routes = mutable.asStateFlow()
     init {
@@ -72,13 +88,40 @@ class RouteHistoryStore(context: Context, previousRide: Ride?) {
             mutable.value = RouteHistory.frequent(visits, Instant.now())
         }
     }
-    fun record(ride: Ride) {
+    @Synchronized fun record(ride: Ride) {
+        if (journeyHash(ride.departure.key) in deletedJourneys) return
         visits = RouteHistory.record(visits, ride, Instant.now())
-        prefs.edit().putString("visits", RouteHistory.encode(visits)).apply()
+        persist()
+    }
+    @Synchronized fun remove(routeKey: String): List<RouteVisit> {
+        val (remaining, removed) = RouteHistory.remove(visits, routeKey)
+        if (removed.isEmpty()) return emptyList()
+        rememberRemoved(removed)
+        visits = remaining
+        persist()
+        return removed
+    }
+    @Synchronized fun restore(removed: List<RouteVisit>) {
+        if (removed.isEmpty()) return
+        visits = RouteHistory.restore(visits, removed, Instant.now())
+        val requested = removed.map { it.journey }.toSet()
+        val restored = visits.filter { it.journey in requested }.map { journeyHash(it.journey) }.toSet()
+        deletedJourneys = deletedJourneys.filterNot { it in restored }
+        persist()
+    }
+    @Synchronized fun clear() {
+        rememberRemoved(visits)
+        visits = emptyList()
+        persist()
+    }
+    private fun rememberRemoved(removed: List<RouteVisit>) {
+        deletedJourneys = (deletedJourneys + removed.map { journeyHash(it.journey) }).distinct().takeLast(512)
+    }
+    private fun persist() {
+        prefs.edit().putString("visits", RouteHistory.encode(visits))
+            .putString("deleted_journeys", JSONArray(deletedJourneys).toString()).apply()
         mutable.value = RouteHistory.frequent(visits, Instant.now())
     }
-    fun clear() {
-        visits = emptyList(); mutable.value = emptyList()
-        prefs.edit().putString("visits", "[]").apply()
-    }
+    private fun journeyHash(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 }
