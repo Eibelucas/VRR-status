@@ -69,6 +69,7 @@ object RouteHistory {
 
 class RouteHistoryStore(context: Context, previousRide: Ride?) {
     private val prefs = context.getSharedPreferences("route_history", Context.MODE_PRIVATE)
+    private val plans = RoutePlansStore(context)
     private var visits = RouteHistory.decode(prefs.getString("visits", "[]") ?: "[]")
     // Hashes only suppress re-recording removed trips on resume. A later bus has a new ID.
     private var deletedJourneys = runCatching {
@@ -80,7 +81,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?) {
     val routes = mutable.asStateFlow()
     init {
         if (!prefs.getBoolean("initialized", false)) {
-            previousRide?.takeUnless { it.demo }?.let { ride ->
+            previousRide?.takeUnless { it.demo || !plans.current().automaticLearning }?.let { ride ->
                 val now = Instant.now()
                 visits = RouteHistory.record(visits, ride, minOf(ride.trackingStartedAt ?: ride.departure.planned, now))
             }
@@ -89,6 +90,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?) {
         }
     }
     @Synchronized fun record(ride: Ride) {
+        if (!plans.current().automaticLearning) return
         if (journeyHash(ride.departure.key) in deletedJourneys) return
         visits = RouteHistory.record(visits, ride, Instant.now())
         persist()

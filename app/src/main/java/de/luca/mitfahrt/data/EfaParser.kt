@@ -9,6 +9,9 @@ internal fun JSONObject.str(key: String): String = optString(key).takeUnless { i
 internal fun JSONObject.instant(key: String): Instant? = str(key).takeIf { it.isNotBlank() }?.let {
     runCatching { Instant.parse(it) }.getOrNull()
 }
+internal fun canonicalStopId(value: String): String? = stopKey(value.trim()).takeIf { id ->
+    id.startsWith("de:") && id.split(':').let { parts -> parts.size == 3 && parts.all { it.isNotBlank() && it.none(Char::isWhitespace) } }
+}
 
 object EfaParser {
     private fun point(obj: JSONObject): GeoPoint? {
@@ -25,6 +28,50 @@ object EfaParser {
             val props = obj.optJSONObject("properties")
             Stop(id, obj.str("name"), point(obj), props?.takeIf { it.has("distance") }?.optInt("distance"))
         }.distinctBy { it.id }
+
+    /** Resolve only identities that the backend explicitly connects; names and ID digits are not aliases. */
+    fun resolveStop(root: JSONObject, original: Stop): Stop {
+        val requested = original.id.trim()
+        require(requested.isNotBlank()) { "Die Haltestelle hat keine gültige Kennung. Bitte erneut auswählen." }
+        val requestedCanonical = canonicalStopId(requested)
+        fun sameId(value: String): Boolean = value.trim() == requested ||
+            (requestedCanonical != null && canonicalStopId(value) == requestedCanonical)
+        fun explicitMatch(obj: JSONObject): Boolean = sameId(obj.str("id")) ||
+            obj.optJSONObject("properties")?.str("stopId")?.let(::sameId) == true
+        fun isStop(obj: JSONObject): Boolean = obj.str("type").let { it.isEmpty() || it == "stop" }
+
+        val locations = root.optJSONArray("locations")?.objects().orEmpty().filter { it.str("type") == "stop" }
+        val nodes = mutableListOf<JSONObject>()
+        val matches = linkedSetOf<String>()
+        locations.forEach { location ->
+            nodes.add(location)
+            val canonical = canonicalStopId(location.str("id"))
+            if (canonical != null && explicitMatch(location)) matches.add(canonical)
+            location.optJSONArray("assignedStops")?.objects().orEmpty().filter(::isStop).forEach { assigned ->
+                nodes.add(assigned)
+                if (explicitMatch(assigned)) {
+                    val assignedCanonical = canonicalStopId(assigned.str("id"))
+                    if (assignedCanonical != null) matches.add(assignedCanonical)
+                    else if (canonical != null && assigned.optJSONObject("properties")?.str("stopId")?.let(::sameId) == true)
+                        matches.add(canonical)
+                }
+            }
+        }
+        require(matches.isNotEmpty()) {
+            "Die Haltestelle konnte vom VRR nicht zugeordnet werden. Bitte erneut suchen und auswählen."
+        }
+        require(matches.size == 1) {
+            "Der VRR liefert mehrere passende Haltestellen. Bitte die Haltestelle erneut auswählen."
+        }
+        val id = matches.single()
+        val matchingNodes = nodes.filter { canonicalStopId(it.str("id")) == id }
+        val name = matchingNodes.firstNotNullOfOrNull { it.str("name").takeIf(String::isNotBlank) }
+            ?: original.name
+        val resolvedPoint = matchingNodes.firstNotNullOfOrNull(::point) ?: original.point?.takeIf {
+            it.lat.isFinite() && it.lon.isFinite() && it.lat in -90.0..90.0 && it.lon in -180.0..180.0
+        }
+        return Stop(id, name, resolvedPoint)
+    }
 
     fun departures(root: JSONObject, observedAt: Instant = Instant.now()): List<Departure> = root.optJSONArray("stopEvents")?.objects().orEmpty()
         .mapNotNull { event ->

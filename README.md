@@ -18,6 +18,14 @@ Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
 
+## Eigene Strecken und Zeiten ab 0.14
+
+Über **Fahrt → Deine Routen → Strecke hinzufügen/Verwalten** oder **Einstellungen → Deine Strecken** Start, Ziel und Namen vorab festlegen. Pro Richtung gibt es eigene Wochentage und Anzeigezeiten, zum Beispiel morgens 07:00–09:00 Hehn → Hbf und mittags 12:00–15:00 Hbf → Hehn. **Rückweg anlegen** übernimmt die vertauschten Haltestellen; Name und Zeiten lassen sich anschließend ändern.
+
+**Strecken automatisch merken** kann ausgeschaltet werden: keine neue Erfassung und keine gelernten Vorschläge auf der Startseite. Manuell gewählte Routen und Schulwege bleiben nutzbar. Die vorhandene Historie wird dabei nicht gelöscht.
+
+Im Editor gilt **Haltestelle** für alle passenden Buslinien ab Start, **Linie** für die angegebene Linie (z. B. 006). Das spätere Ziel wird vor einem Vorschlag im VRR-Fahrtverlauf geprüft. Pro Route lassen sich Anzeige, Zeitfenster und **Nur in Startnähe** steuern. Über **Fahrten anzeigen** bleibt eine Route auch außerhalb ihres Anzeigezeitfensters manuell erreichbar.
+
 ## Fahrten und Berichte löschen ab 0.13
 
 - **Fahrt → Deine Strecken → Alle:** Papierkorb entfernt eine gespeicherte Linie/Richtung. **Rückgängig** stellt sie wieder her.

@@ -1,9 +1,13 @@
-## Mitfahrt 0.13.0
+## Mitfahrt 0.14.0
 
-- **Einzelne Strecken löschen:** Unter **Fahrt → Deine Strecken → Alle** den Papierkorb am Eintrag antippen. Mit **Rückgängig** lässt sich die Strecke wiederherstellen.
-- **Letzte Fahrt löschen:** Unter **Berichte → Letzte Fahrt** den Papierkorb verwenden. Auch hier gibt es **Rückgängig**. Die Entfernung bleibt nach Neustart und Live-Aktualisierung bestehen.
-- **Berichte löschen:** Jeder gespeicherte Bericht hat einen eigenen Papierkorb. Nach Bestätigung werden PDF und zugehörige Berichtsdaten aus Mitfahrt gelöscht. Das ist dauerhaft.
+- **Nur eigene Strecken:** Unter **Einstellungen → Deine Strecken** lässt sich **Strecken automatisch merken** ausschalten. Dann werden keine neuen Strecken gelernt und die Startseite zeigt nur selbst gewählte Routen statt gelernter Vorschläge.
+- **Vorab einrichten:** Eigene Namen, Start und Ziel festlegen, ohne vorher mit dem Bus gefahren zu sein. Nach Haltestelle alle passenden Linien verwenden oder eine bestimmte Linie wählen.
+- **Eigene Zeiten pro Richtung:** Wochentage und Zeitfenster je Route, etwa **Zur Schule · Hehn → Hbf · 07:00–09:00** und **Nach Hause · Hbf → Hehn · 12:00–15:00**. Auch ganztägige und über Mitternacht laufende Fenster sind möglich.
+- **Rückweg anlegen:** Start und Ziel tauschen, eigenen Namen und andere Uhrzeiten vergeben. Jede Richtung ist unabhängig aktivierbar; die Anzeige kann optional auf die Nähe der Einstiegshaltestelle begrenzt werden.
+- **Passendes Ziel prüfen:** Bevor eine Abfahrt auf der Route vorgeschlagen wird, wird geprüft, ob sie den späteren Zielhalt bedient. Live-Abfragen bleiben regelmäßig aktiv; beim Start wird der Fahrtverlauf erneut geprüft.
+- **Jederzeit öffnen:** Gespeicherte Routen lassen sich unter **Verwalten → Fahrten anzeigen** auch außerhalb ihres Anzeigezeitfensters bewusst aufrufen.
+- **Hehn-Suche korrigiert:** Unterschiedliche VRR-Kennungen aus Suche und Abfahrtsmonitor werden über die vom VRR gelieferten Alias-Daten eindeutig aufgelöst.
 
-Das Entfernen eines Verlaufseintrags beendet keine laufende Fahrt. Bereits gespeicherte Berichte werden separat verwaltet. Neue Fahrten derselben Strecke können später wieder im Verlauf erscheinen.
+Das Ausschalten des Lernens löscht den bisherigen Verlauf nicht. Er wird ausgeblendet und kann bei erneutem Einschalten wieder verwendet werden. Die letzte Fahrt und Schulberichte bleiben separat verwaltet.
 
-Die Löschfunktionen betreffen die Handy-App. Auf dem Handy unter **Einstellungen → App-Updates** aktualisieren oder `Mitfahrt-0.13.0.apk` installieren. `Mitfahrt-Wear-0.13.0.apk` ist als passende Watch-Version ebenfalls verfügbar; eine vorhandene Watch-App ab 0.12 bleibt mit diesem Handy-Update kompatibel.
+Handy über **Einstellungen → App-Updates** aktualisieren oder `Mitfahrt-0.14.0.apk` installieren. `Mitfahrt-Wear-0.14.0.apk` ist ebenfalls verfügbar; vorhandene Watch-Versionen ab 0.12 bleiben kompatibel. Die neuen Einstellungen werden am Handy vorgenommen.

@@ -19,6 +19,17 @@ class VrrClient {
         )))
     }
 
+    suspend fun resolveStop(stop: Stop): Stop {
+        val canonical = canonicalStopId(stop.id)
+        val point = stop.point?.takeIf { it.lat.isFinite() && it.lon.isFinite() && it.lat in -90.0..90.0 && it.lon in -180.0..180.0 }
+        if (canonical != null && point != null) return stop.copy(id = canonical, point = point, distance = null)
+        require(stop.id.isNotBlank()) { "Die Haltestelle hat keine gültige Kennung. Bitte erneut auswählen." }
+        return EfaParser.resolveStop(request("XML_STOPFINDER_REQUEST", mapOf(
+            "locationServerActive" to "1", "type_sf" to "stop", "name_sf" to stop.id.trim(),
+            "anyObjFilter_sf" to "2", "reducedAnyPostcodeObjFilter_sf" to "64"
+        )), stop)
+    }
+
     suspend fun nearby(point: GeoPoint): List<Stop> = EfaParser.stops(request("XML_COORD_REQUEST", mapOf(
         "coord" to "${point.lon}:${point.lat}:WGS84[dd.ddddd]", "inclFilter" to "1",
         "type_1" to "STOP", "radius_1" to "700", "max" to "12"

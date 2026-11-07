@@ -74,6 +74,8 @@ fun MitfahrtApp(
     val arrivals by vm.arrivals.collectAsStateWithLifecycle()
     val home by vm.home.collectAsStateWithLifecycle()
     val routes by vm.routes.collectAsStateWithLifecycle()
+    val routePlans by vm.routePlans.collectAsStateWithLifecycle()
+    val planDepartures by vm.planDepartures.collectAsStateWithLifecycle()
     val schoolTrips by vm.schoolTrips.collectAsStateWithLifecycle()
     val savedStops by vm.savedStops.collectAsStateWithLifecycle()
     val alertPreferences by vm.alertPreferences.collectAsStateWithLifecycle()
@@ -86,10 +88,13 @@ fun MitfahrtApp(
     var showAll by rememberSaveable { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
     var showLiveMap by rememberSaveable { mutableStateOf(false) }
+    var showRoutePlans by rememberSaveable { mutableStateOf(false) }
+    var newRoutePlan by rememberSaveable { mutableStateOf(false) }
     var now by remember { mutableStateOf(Instant.now()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var historyUndoJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var planUndoJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     fun selectStop(stop: Stop) { keyboard?.hide(); focus.clearFocus(); vm.selectStop(stop); page = 1 }
@@ -128,13 +133,24 @@ fun MitfahrtApp(
                 !vm.restoreLastRide(removed)) snackbar.showSnackbar("Die Fahrt konnte nicht wiederhergestellt werden.")
         }
     }
-    BackHandler(enabled = page != 0 && !showLiveMap) {
+    fun removeRoutePlan(plan: RoutePlan) {
+        val removed = vm.removeRoutePlan(plan) ?: return
+        planUndoJob?.cancel()
+        planUndoJob = scope.launch {
+            if (snackbar.showSnackbar("Route entfernt", actionLabel = "Rückgängig", withDismissAction = true,
+                    duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed && !vm.restoreRoutePlan(removed))
+                snackbar.showSnackbar("Die Route konnte nicht wiederhergestellt werden.")
+        }
+    }
+    val nearbyForPlans = home.stops.takeIf { home.status == NearbyStatus.READY }.orEmpty()
+    val visiblePlans = routePlans.routes.filter { RoutePlans.active(it, now, nearbyForPlans) }.take(3)
+    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans) {
         keyboard?.hide(); focus.clearFocus()
         if (page == 1 && search.selectedStop != null) vm.backToStops() else page = 0
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(page, tracking.ride?.departure?.key, search.selectedStop?.id, lifecycle) {
-        if (page == 0 && tracking.ride == null || page == 1) {
+    LaunchedEffect(page, tracking.ride?.departure?.key, search.selectedStop?.id, showRoutePlans, lifecycle) {
+        if (!showRoutePlans && (page == 0 && tracking.ride == null || page == 1)) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 vm.openHome(lookupNearby = page == 0 || search.selectedStop == null)
                 try { kotlinx.coroutines.awaitCancellation() } finally { vm.closeHome() }
@@ -173,7 +189,14 @@ fun MitfahrtApp(
         }
     }
     MitfahrtTheme {
-        Scaffold(
+        if (showRoutePlans) RoutePlansScreen(routePlans, savedStops, nearbyForPlans,
+            onBack = { showRoutePlans = false }, onAutomaticLearning = vm::setAutomaticLearning,
+            onSave = vm::saveRoutePlan, onRemove = ::removeRoutePlan, searchStops = vm::findRouteStops,
+            snackbarHostState = snackbar, startNew = newRoutePlan,
+            resolveStop = vm::resolveRouteStop, onOpen = { plan ->
+                showRoutePlans = false; vm.selectRoutePlan(plan); page = 1
+            })
+        else Scaffold(
             containerColor = Ink,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
@@ -258,14 +281,18 @@ fun MitfahrtApp(
                             }
                         }
                     } else {
+                        item { PlannedRoutesCard(visiblePlans, routePlans.routes.size, planDepartures.departures,
+                            planDepartures.loading, now, search.choosing, onManage = { newRoutePlan = routePlans.routes.isEmpty(); showRoutePlans = true },
+                            onStart = vm::chooseRoutePlan, onOpen = { vm.selectRoutePlan(it); page = 1 }) }
+                        planDepartures.error?.let { message -> item { Text(message, color = Amber, fontSize = 13.sp) } }
                         item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
                         item { SavedStopsSection(savedStops, ::selectStop, ::toggleFavorite, vm::removeRecentStop, compact = true) }
                         item {
-                            HomeOverview(home, routes, now, search.loading, search.choosing,
+                            HomeOverview(home, if (routePlans.automaticLearning) routes else emptyList(), now, search.loading, search.choosing,
                                 onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome,
                                 onStop = ::selectStop,
                                 onAllStops = { vm.nearby(); page = 1 }, onRoute = { vm.selectRoute(it); page = 1 },
-                                onDeparture = vm::choose, onClearHistory = ::clearRouteHistory, onRemoveRoute = ::removeRoute)
+                                onDeparture = vm::chooseHomeDeparture, onClearHistory = ::clearRouteHistory, onRemoveRoute = ::removeRoute)
                         }
                         item {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -278,7 +305,7 @@ fun MitfahrtApp(
                             item { Text("Dein Bus?", fontSize = 21.sp, fontWeight = FontWeight.SemiBold) }
                             items(tracking.candidates, key = { it.key }) { departure ->
                                 DepartureRow(departure, now, search.choosing == departure.key,
-                                    enabled = !search.loading, showStop = true) { vm.choose(departure) }
+                                    enabled = !search.loading, showStop = true) { vm.chooseHomeDeparture(departure) }
                             }
                         }
                     }
@@ -286,7 +313,8 @@ fun MitfahrtApp(
                 1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, savedStops, ::toggleFavorite)
                 2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport,
                     onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide)
-                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration, alertPreferences, vm::setArrivalAlert, vm::setExitAlert, vm::setAlertLead)
+                else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration, alertPreferences, vm::setArrivalAlert, vm::setExitAlert, vm::setAlertLead,
+                    routePlans, vm::setAutomaticLearning, { newRoutePlan = false; showRoutePlans = true })
             }
         }
         if (showLiveMap) NewLiveMapScreen(onClose = { showLiveMap = false })
@@ -528,16 +556,18 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                     IconButton(onClick = vm::backToStops) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück zur Suche") }
                     Column(Modifier.weight(1f)) {
                         Text(shortName(stop.name), fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
-                        Text(search.routeFilter?.let { "${it.visit.line} → ${shortName(it.visit.destination)}" } ?: "NEW · Abfahrten", color = Soft, fontSize = 13.sp)
+                        Text(search.plannedRoute?.let { "${it.name} → ${shortName(it.destination.name)}" }
+                            ?: search.routeFilter?.let { "${it.visit.line} → ${shortName(it.visit.destination)}" } ?: "NEW · Abfahrten",
+                            color = Soft, fontSize = 13.sp)
                     }
                     IconToggleButton(checked = savedStops.isFavorite(stop), onCheckedChange = { onFavorite(stop) }) {
                         Icon(if (savedStops.isFavorite(stop)) Icons.Outlined.Star else Icons.Outlined.StarBorder,
                             if (savedStops.isFavorite(stop)) "Favorit entfernen" else "Haltestelle merken", tint = Lime)
                     }
-                    IconButton(onClick = { vm.selectStop(stop, search.routeFilter, search.schoolTrip) }, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Abfahrten aktualisieren") }
+                    IconButton(onClick = { search.plannedRoute?.let(vm::selectRoutePlan) ?: vm.selectStop(stop, search.routeFilter, search.schoolTrip) }, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Abfahrten aktualisieren") }
                 }
             }
-            if (search.routeFilter != null) item { TextButton(onClick = { vm.selectStop(stop) }) { Text("Alle Linien anzeigen") } }
+            if (search.routeFilter != null || search.plannedRoute != null) item { TextButton(onClick = { vm.selectStop(stop) }) { Text("Alle Linien anzeigen") } }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(JourneyOptions.walking(stop)?.label ?: "Gehzeit nicht verfügbar", color = Soft, fontSize = 13.sp, modifier = Modifier.weight(1f))
@@ -560,7 +590,8 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
             Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp)) {
                     Text(message, color = Amber, fontSize = 14.sp)
-                    TextButton(onClick = { if (search.selectedStop != null) vm.selectStop(search.selectedStop, search.routeFilter, search.schoolTrip) else vm.search() }) { Text("Erneut versuchen") }
+                    TextButton(onClick = { if (search.plannedRoute != null) vm.selectRoutePlan(search.plannedRoute)
+                        else if (search.selectedStop != null) vm.selectStop(search.selectedStop, search.routeFilter, search.schoolTrip) else vm.search() }) { Text("Erneut versuchen") }
                 }
             }
         } }
@@ -619,7 +650,8 @@ private fun LineBadge(line: String, dark: Boolean = false) {
 @Composable
 private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: UpdateState,
     onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit, hapticTest: de.luca.mitfahrt.alerts.HapticTestState, onHapticTest: () -> Unit,
-    alertPreferences: AlertPreferences, onArrival: (Boolean) -> Unit, onExit: (Boolean) -> Unit, onLead: (Int) -> Unit) {
+    alertPreferences: AlertPreferences, onArrival: (Boolean) -> Unit, onExit: (Boolean) -> Unit, onLead: (Int) -> Unit,
+    routePlans: RoutePlansState, onAutomaticLearning: (Boolean) -> Unit, onManageRoutes: () -> Unit) {
     val context = LocalContext.current
     val manager = context.getSystemService(NotificationManager::class.java)
     var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
@@ -634,6 +666,24 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item { Header("Einstellungen", "MITFAHRT", Icons.Outlined.Tune) }
+        item {
+            Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Deine Strecken", style = MaterialTheme.typography.titleLarge)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text("Strecken automatisch merken", fontSize = 15.sp)
+                            Text(if (routePlans.automaticLearning) "Häufige Strecken zusätzlich vorschlagen" else "Nur selbst gewählte Routen",
+                                color = Soft, fontSize = 12.sp)
+                        }
+                        Switch(checked = routePlans.automaticLearning, onCheckedChange = onAutomaticLearning)
+                    }
+                    OutlinedButton(onClick = onManageRoutes, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
+                        Text("Routen und Zeiten einrichten")
+                    }
+                }
+            }
+        }
         item { AppearanceCard() }
         item { AlertPreferencesCard(alertPreferences, onArrival, onExit, onLead) }
         item { TextButton(onClick = onIntro) { Icon(Icons.Outlined.HelpOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Einführung ansehen") } }

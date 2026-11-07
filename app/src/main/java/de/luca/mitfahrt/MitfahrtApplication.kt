@@ -14,6 +14,7 @@ class MitfahrtApplication : Application() {
     val reports by lazy { ReportFiles(this) }
     val arrivals by lazy { ArrivalStore(this) }
     val watch by lazy { WatchPublisher(this, store) }
+    val routePlans by lazy { de.luca.mitfahrt.data.RoutePlansStore(this) }
     val routes by lazy { RouteHistoryStore(this, store.lastRide.value) }
     val savedStops by lazy { de.luca.mitfahrt.data.SavedStopsStore(this) }
     val schoolTrips by lazy { de.luca.mitfahrt.data.SchoolTripStore(this) }

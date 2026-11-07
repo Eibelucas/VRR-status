@@ -7,6 +7,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
 import java.time.Instant
 
@@ -103,6 +104,9 @@ class RouteHistoryTest {
 @Config(sdk = [36], application = Application::class)
 class RouteHistoryStoreTest {
     private val app: Application get() = RuntimeEnvironment.getApplication()
+    @Before fun reset() {
+        listOf("route_history", "route_plans").forEach { app.getSharedPreferences(it, Context.MODE_PRIVATE).edit().clear().commit() }
+    }
     private fun ride(trip: String, destination: String = "Rheydt Hbf"): Ride {
         val base = DemoRide.create(Instant.now())
         return base.copy(demo = false, departure = base.departure.copy(lineId = "new:006:H", tripCode = trip,
@@ -153,5 +157,33 @@ class RouteHistoryStoreTest {
         assertTrue(restarted.routes.value.isEmpty())
         val journal = app.getSharedPreferences("route_history", Context.MODE_PRIVATE).getString("deleted_journeys", "")!!
         assertFalse(journal.contains(current.departure.key))
+    }
+
+    @Test fun `learning flag is read again for every record and turning it off preserves previous history`() {
+        val store = RouteHistoryStore(app, null)
+        store.record(ride("first"))
+        val settings = RoutePlansStore(app)
+        settings.setAutomaticLearning(false)
+        store.record(ride("while off"))
+        assertEquals(1, store.routes.value.single().count)
+        val restarted = RouteHistoryStore(app, ride("while off"))
+        restarted.record(ride("still off"))
+        assertEquals(1, restarted.routes.value.single().count)
+        RoutePlansStore(app).setAutomaticLearning(true)
+        store.record(ride("new real selection"))
+        assertEquals(2, store.routes.value.single().count)
+        assertEquals(2, RouteHistoryStore(app, null).routes.value.single().count)
+    }
+
+    @Test fun `disabled learning suppresses one time previous ride migration without resurrecting it later`() {
+        RoutePlansStore(app).setAutomaticLearning(false)
+        val previous = ride("previous")
+        assertTrue(RouteHistoryStore(app, previous).routes.value.isEmpty())
+        assertTrue(app.getSharedPreferences("route_history", Context.MODE_PRIVATE).getBoolean("initialized", false))
+        RoutePlansStore(app).setAutomaticLearning(true)
+        val enabled = RouteHistoryStore(app, previous)
+        assertTrue(enabled.routes.value.isEmpty())
+        enabled.record(ride("new selection"))
+        assertEquals(1, enabled.routes.value.single().count)
     }
 }
