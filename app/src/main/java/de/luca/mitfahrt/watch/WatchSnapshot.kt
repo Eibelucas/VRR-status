@@ -8,17 +8,21 @@ import java.time.Instant
 fun TrackingState.watchSnapshot(now: Instant = Instant.now()): WatchRide {
     val ride = ride ?: return WatchRide(now)
     val boarding = ride.boardingTime()
-    val live = if (!ride.boarded) boarding.live else ride.displayTarget().estimated != null
+    val liveBoarding = if (running && !lastRefreshFailed) ride.liveBoardingTime(now) else null
+    val live = if (!ride.boarded) liveBoarding != null else ride.displayTarget().estimated != null
     val boardingStop = ride.stops.getOrNull(ride.boardingIndex)
     val monitorOnly = !ride.boarded && boardingStop?.estimatedArrival == null && boardingStop?.estimatedDeparture == null && ride.departure.estimated != null
     val sourceAt = if (monitorOnly) minOf(ride.fetchedAt, ride.departure.observedAt ?: Instant.EPOCH) else ride.fetchedAt
     return WatchRide(sentAt = now, active = true, running = running, fetchedAt = sourceAt,
         line = ride.departure.line, destination = shortName(ride.displayTarget().name),
         nextStop = ride.nextStopToTarget(now)?.name?.let(::shortName) ?: "Ziel laut Fahrtverlauf",
-        boarded = ride.boarded, boardingAt = boarding.at, boardingIsArrival = boarding.isArrival,
+        boarded = ride.boarded,
+        boardingAt = if (ride.boarded || ride.demo) boarding.at else liveBoarding?.at,
+        boardingIsArrival = liveBoarding?.isArrival ?: boarding.isArrival,
         terminalAt = ride.displayTarget().effective(ride.offsetSeconds),
         source = when {
             ride.demo -> "Demo"
+            !ride.boarded && liveBoarding == null -> "Keine Live-Zeit"
             live -> "VRR live"
             ride.departure.estimated != null && ride.boarded -> "Geschätzt"
             else -> "Fahrplan"

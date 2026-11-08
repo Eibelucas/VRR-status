@@ -18,6 +18,7 @@ import de.luca.mitfahrt.data.RoutePlan
 import de.luca.mitfahrt.data.clockTime
 import de.luca.mitfahrt.data.countdownUntil
 import de.luca.mitfahrt.data.shortName
+import de.luca.mitfahrt.data.liveEstimate
 import java.time.Instant
 
 @Composable
@@ -71,7 +72,7 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
             Text(listOfNotNull(selectedLine?.let { "Linie $it" }, plan.window.label()).joinToString(" · "),
                 color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
             if (next != null) {
-                Text("Abfahrt in ${countdownUntil(next.effective, now)}", color = Lime,
+                Text(if (next.liveEstimate(now) != null) "Abfahrt in ${countdownUntil(next.effective, now)}" else "Fahrplan ${clockTime(next.planned)}", color = Lime,
                     fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
                 val forecast = when {
                     next.estimated == null -> "Fahrplan"
@@ -87,7 +88,7 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
                             color = Lime)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (busy) "Wird geprüft …" else "Diesen Bus")
+                    Text(if (busy) "Wird geprüft …" else "Fahrt verfolgen")
                 }
                 TextButton(onClick = { onOpen(plan) }, enabled = busyKey == null,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Fahrten anzeigen") }

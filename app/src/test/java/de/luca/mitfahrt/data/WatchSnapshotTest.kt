@@ -40,7 +40,40 @@ class WatchSnapshotTest {
             estimated = now.plusSeconds(50), observedAt = now.minusSeconds(180)))
         val snapshot = TrackingState(ride, running = true).watchSnapshot(now)
         assertTrue(snapshot.stale(now))
+        assertNull(snapshot.boardingAt)
+        assertEquals("Keine Live-Zeit", snapshot.source)
         assertFalse(de.luca.mitfahrt.shared.ArrivalAlert.due(snapshot, now))
+    }
+
+    @Test fun `fresh timetable is transmitted without a boarding countdown`() {
+        val ride = DemoRide.create(now).copy(demo = false, boarded = false)
+        val snapshot = TrackingState(ride, running = true).watchSnapshot(now)
+        assertNull(snapshot.boardingAt)
+        assertEquals("Keine Live-Zeit", snapshot.source)
+        assertFalse(snapshot.stale(now))
+        assertEquals(ride.fetchedAt, snapshot.fetchedAt)
+        assertEquals(snapshot, de.luca.mitfahrt.shared.WatchProtocol.decode(de.luca.mitfahrt.shared.WatchProtocol.encode(snapshot)))
+    }
+
+    @Test fun `failed or paused live waiting data never retains a boarding countdown`() {
+        val base = DemoRide.create(now)
+        val ride = base.copy(demo = false, boarded = false, departure = base.departure.copy(
+            estimated = now.plusSeconds(60), observedAt = now))
+        assertEquals(now.plusSeconds(60), TrackingState(ride, running = true).watchSnapshot(now).boardingAt)
+        listOf(TrackingState(ride, running = false), TrackingState(ride, running = true, lastRefreshFailed = true))
+            .forEach { state ->
+                val snapshot = state.watchSnapshot(now)
+                assertNull(snapshot.boardingAt)
+                assertEquals("Keine Live-Zeit", snapshot.source)
+                assertTrue(snapshot.stale(now))
+            }
+    }
+
+    @Test fun `cancelled boarding suppresses an otherwise fresh live forecast`() {
+        val base = DemoRide.create(now)
+        val ride = base.copy(demo = false, boarded = false, stops = base.stops.mapIndexed { i, stop ->
+            if (i == 0) stop.copy(estimatedArrival = now.plusSeconds(30), cancelled = true) else stop })
+        assertNull(TrackingState(ride, running = true).watchSnapshot(now).boardingAt)
     }
 
 }

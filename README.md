@@ -18,6 +18,14 @@ Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
 
+## Live-Busposition und Vorschau ab 0.15
+
+Während einer aktiven Wartefahrt zeigt **Busposition** aktuelle Daten aus der von [NEW verwendeten Livequelle](https://livebus.new.de/) auf einer nativen OpenStreetMap-Karte. Standortmeldungen werden nicht aus Fahrplanzeiten simuliert. Ohne einen eindeutigen aktuellen Abgleich zur VRR-Abfahrt wählt der Nutzer ein Linienfahrzeug ausdrücklich aus; diese Zuordnung bleibt als unbestätigt gekennzeichnet. Die Google-Maps-Schaltfläche öffnet den zuletzt gemeldeten Punkt extern. OpenStreetMap-Attribution, identifizierbarer User-Agent, interner HTTP-Kachelcache und pausierte Downloads außerhalb der sichtbaren Kartenansicht sind berücksichtigt.
+
+Ohne frische Live-Prognose wird eine absolute **Fahrplan**-Zeit angezeigt, aber kein Warte-Countdown oder darauf basierender Ankunftsalarm ausgelöst. Die Position eines Fahrzeugs ist keine Ankunftsprognose. Now Bar und Wear OS zeigen fehlende Live-Zeiten entsprechend an.
+
+Ein Tipp auf eine Abfahrt öffnet zunächst **Fahrt ansehen**. Erst **Fahrt verfolgen** speichert die aktive Fahrt. Automatische Favoriten- und Streckenvorschläge erscheinen erst nach drei bewussten Aufrufen; manuelles Aktualisieren und Hintergrundabfragen zählen nicht. Vorher werden nur begrenzte Hash-Zähler lokal gehalten. Ein Stern setzt weiterhin ausdrücklich einen Favoriten. **Strecken automatisch merken** deaktiviert auch neue Vorschlagszähler.
+
 ## Eigene Strecken und Zeiten ab 0.14
 
 Über **Fahrt → Deine Routen → Strecke hinzufügen/Verwalten** oder **Einstellungen → Deine Strecken** Start, Ziel und Namen vorab festlegen. Pro Richtung gibt es eigene Wochentage und Anzeigezeiten, zum Beispiel morgens 07:00–09:00 Hehn → Hbf und mittags 12:00–15:00 Hbf → Hehn. **Rückweg anlegen** übernimmt die vertauschten Haltestellen; Name und Zeiten lassen sich anschließend ändern.

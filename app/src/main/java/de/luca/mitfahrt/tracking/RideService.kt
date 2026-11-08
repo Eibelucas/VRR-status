@@ -14,6 +14,7 @@ import android.os.*
 import de.luca.mitfahrt.MitfahrtApplication
 import de.luca.mitfahrt.data.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import java.time.Instant
 import de.luca.mitfahrt.watch.watchSnapshot
 
@@ -27,6 +28,8 @@ class RideService : Service(), LocationListener {
     private lateinit var alertPreferences: AlertPreferencesStore
     private var loop: Job? = null
     private var observer: Job? = null
+    private var liveLoop: Job? = null
+    private val liveWake = Channel<Unit>(Channel.CONFLATED)
     private var lastWifiScan = 0L
     private var lastCandidates = 0L
     private var lastRideRefresh = 0L
@@ -52,6 +55,10 @@ class RideService : Service(), LocationListener {
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == REFRESH_LIVE) {
+            if (store.state.value.running && store.state.value.ride != null) liveWake.trySend(Unit)
+            return START_NOT_STICKY
+        }
         if (intent?.action == STOP) { store.clear(); stopSelf(); return START_NOT_STICKY }
         if (intent?.action == START_RIDE) {
             val ride = runCatching { RideCodec.decode(intent.getStringExtra("ride") ?: "") }.getOrNull()
@@ -75,11 +82,16 @@ class RideService : Service(), LocationListener {
             store.update { it.copy(running = false, monitoring = false, message = "Bitte Standortzugriff in den App-Einstellungen erlauben und erneut starten.") }
             stopSelf(); return START_NOT_STICKY
         }
-        if (intent?.action == START_RIDE) store.state.value.ride?.let { app.routes.record(it) }
         if (loop == null) {
             sessionStart = SystemClock.elapsedRealtime()
             startSensors()
             observer = scope.launch { store.state.collect { notifications.post(it) } }
+            liveLoop = scope.launch {
+                while (isActive) {
+                    refreshLiveBus()
+                    withTimeoutOrNull(15_000) { liveWake.receive() }
+                }
+            }
             loop = scope.launch {
                 while (isActive) {
                     val elapsed = SystemClock.elapsedRealtime()
@@ -135,8 +147,28 @@ class RideService : Service(), LocationListener {
                     delay(10_000)
                 }
             }
-        } else { readWifi() }
+        } else { readWifi(); liveWake.trySend(Unit) }
         return START_NOT_STICKY
+    }
+
+    private suspend fun refreshLiveBus() {
+        val before = store.state.value
+        val ride = before.ride ?: return
+        if (!before.running || ride.demo || ride.boarded || ride.departure.cancelled) return
+        val key = ride.departure.key
+        val revision = before.liveBus.revision
+        val input = before.liveBus.copy(journeyKey = key, loading = true, error = null)
+        fun applies(state: TrackingState): Boolean = state.running && state.ride?.departure?.key == key &&
+            state.ride?.boarded == false && state.liveBus.revision == revision
+        store.update { if (applies(it)) it.copy(liveBus = input) else it }
+        try {
+            val result = app.liveBusTracker.refresh(ride, input)
+            store.update { if (applies(it)) it.copy(liveBus = result) else it }
+        } catch (e: CancellationException) { throw e
+        } catch (_: Exception) {
+            store.update { if (applies(it)) it.copy(liveBus = input.copy(loading = false,
+                error = "NEW-Positionen gerade nicht erreichbar.")) else it }
+        }
     }
 
     private suspend fun refreshRide(ride: Ride) {
@@ -241,7 +273,7 @@ class RideService : Service(), LocationListener {
         val point = GeoPoint(location.latitude, location.longitude)
         store.update { it.copy(location = point, locationAt = Instant.now()) }
         val ride = store.state.value.ride ?: return
-        if (ride.demo || location.accuracy > 65) return
+        if (ride.demo || !ride.boarded || location.accuracy > 65) return
         // Confirm passing a stop only after approaching and leaving it; never jump to a parallel street.
         val upcoming = ride.stops.indices.filter { it >= ride.boardingIndex && it > ride.gpsPassedIndex }
             .take(4).minByOrNull { ride.stops[it].point?.distanceTo(point) ?: Double.MAX_VALUE }
@@ -277,6 +309,11 @@ class RideService : Service(), LocationListener {
         const val MONITOR = "de.luca.mitfahrt.MONITOR"
         const val START_RIDE = "de.luca.mitfahrt.START_RIDE"
         const val STOP = "de.luca.mitfahrt.STOP"
+        const val REFRESH_LIVE = "de.luca.mitfahrt.REFRESH_LIVE"
+        fun refreshLive(context: Context) {
+            val state = (context.applicationContext as MitfahrtApplication).store.state.value
+            if (state.running && state.ride != null) context.startService(Intent(context, RideService::class.java).setAction(REFRESH_LIVE))
+        }
         fun start(context: Context, ride: Ride? = null) {
             context.startForegroundService(Intent(context, RideService::class.java).apply {
                 action = if (ride == null) MONITOR else START_RIDE

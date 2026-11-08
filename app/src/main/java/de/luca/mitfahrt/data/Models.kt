@@ -29,6 +29,11 @@ data class Departure(
     val delayMinutes: Int get() = ((effective.epochSecond - planned.epochSecond) / 60).toInt()
 }
 
+/** A scheduled departure or an undated old prediction is not a live countdown. */
+fun Departure.liveEstimate(now: Instant): Instant? = estimated?.takeIf {
+    !cancelled && observedAt?.let { at -> now.epochSecond - at.epochSecond in -30..120 } == true
+}
+
 data class RideStop(
     val id: String, val name: String, val point: GeoPoint?,
     val arrival: Instant?, val departure: Instant?,
@@ -84,6 +89,15 @@ fun Ride.boardingTime(): BoardingTime {
         stop?.arrival != null -> BoardingTime(stop.arrival, true, false)
         else -> BoardingTime(stop?.departure ?: departure.planned, false, false)
     }
+}
+
+/** A fetched timetable or a vehicle coordinate is not a live boarding forecast. */
+fun Ride.liveBoardingTime(now: Instant): BoardingTime? {
+    if (demo || departure.cancelled || now.epochSecond - fetchedAt.epochSecond !in -30..120) return null
+    if (stops.getOrNull(boardingIndex)?.cancelled != false) return null
+    // Keep the source timestamp selected by boardingTime; a new trip fetch must not
+    // turn an old departure-monitor prediction into a fresh live time.
+    return boardingTime().takeIf { it.live && it.isFresh(now) }
 }
 
 fun countdownUntil(at: Instant, now: Instant): String {

@@ -17,6 +17,7 @@ data class FrequentRoute(val visit: RouteVisit, val count: Int) { val key get() 
 data class RouteSuggestion(val route: FrequentRoute, val stop: Stop, val departure: Departure)
 
 object RouteHistory {
+    const val MIN_SUGGESTION_VIEWS = 3
     fun record(visits: List<RouteVisit>, ride: Ride, now: Instant): List<RouteVisit> {
         if (ride.demo) return visits
         val d = ride.departure
@@ -67,63 +68,147 @@ object RouteHistory {
     }.distinctBy { it.journey }.sortedByDescending { it.at }.take(200) }.getOrDefault(emptyList())
 }
 
-class RouteHistoryStore(context: Context, previousRide: Ride?) {
+class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock: () -> Instant = Instant::now) {
+    private data class Observation(val route: String, val token: String, val at: Instant)
     private val prefs = context.getSharedPreferences("route_history", Context.MODE_PRIVATE)
     private val plans = RoutePlansStore(context)
     private var visits = RouteHistory.decode(prefs.getString("visits", "[]") ?: "[]")
-    // Hashes only suppress re-recording removed trips on resume. A later bus has a new ID.
+    // Unqualified previews retain no line, destination, stop or actual journey information.
+    private var observations = runCatching {
+        JSONArray(prefs.getString("view_counts", "[]") ?: "[]").objects().mapNotNull { value ->
+            runCatching {
+                Observation(value.getString("route"), value.getString("token"), Instant.parse(value.getString("at")))
+                    .takeIf { hashPattern.matches(it.route) && hashPattern.matches(it.token) }
+            }.getOrNull()
+        }.distinctBy { it.token }.sortedByDescending { it.at }.take(MAX_EVENTS)
+    }.getOrDefault(emptyList())
+    // Hashes suppress re-recording removed trips or views; a new deliberate view has a new token.
     private var deletedJourneys = runCatching {
         val array = JSONArray(prefs.getString("deleted_journeys", "[]") ?: "[]")
-        (0 until array.length()).mapNotNull { array.optString(it).takeIf { id -> id.matches(Regex("[0-9a-f]{64}")) } }
+        (0 until array.length()).mapNotNull { array.optString(it).takeIf(hashPattern::matches) }
             .distinct().takeLast(512)
     }.getOrDefault(emptyList())
-    private val mutable = MutableStateFlow(RouteHistory.frequent(visits, Instant.now()))
+    private var clearedAt = runCatching { prefs.getString("cleared_at", null)?.let(Instant::parse) }.getOrNull()
+    private val mutable = MutableStateFlow(RouteHistory.frequent(visits, clock()))
     val routes = mutable.asStateFlow()
     init {
         if (!prefs.getBoolean("initialized", false)) {
             previousRide?.takeUnless { it.demo || !plans.current().automaticLearning }?.let { ride ->
-                val now = Instant.now()
+                val now = clock()
                 visits = RouteHistory.record(visits, ride, minOf(ride.trackingStartedAt ?: ride.departure.planned, now))
             }
             prefs.edit().putBoolean("initialized", true).putString("visits", RouteHistory.encode(visits)).apply()
-            mutable.value = RouteHistory.frequent(visits, Instant.now())
+            mutable.value = RouteHistory.frequent(visits, clock())
         }
+        persist()
     }
+
+    /** Observe one explicit view. Background refreshes and preview-to-tracking reuse the same token. */
+    @Synchronized fun observe(ride: Ride, visitId: String) {
+        if (!plans.current().automaticLearning || visitId.isBlank() || visitId.length > 1024) return
+        val d = ride.departure
+        val boarding = ride.stops.getOrNull(ride.boardingIndex) ?: return
+        if (ride.demo || d.cancelled || boarding.cancelled || d.lineId.isBlank() || d.line.isBlank() ||
+            d.destination.isBlank() || d.stopId.isBlank() || d.stopName.isBlank()) return
+        val now = clock()
+        prune(now)
+        val token = journeyHash(visitId)
+        val eventId = "view/$token"
+        if (journeyHash(eventId) in deletedJourneys || visits.any { it.journey == eventId } ||
+            observations.any { it.token == token }) return
+        val route = RouteVisit(eventId, d.lineId, d.line, d.destination, Stop(stopKey(d.stopId), d.stopName), now)
+        val routeHash = journeyHash(route.routeKey)
+        val qualified = RouteHistory.frequent(visits, now).any {
+            it.key == route.routeKey && it.count >= RouteHistory.MIN_SUGGESTION_VIEWS
+        }
+        if (qualified) {
+            visits = RouteHistory.restore(visits, listOf(route), now)
+            observations = observations.filterNot { it.route == routeHash }
+        } else {
+            observations = observations + Observation(routeHash, token, now)
+            val pending = observations.filter { it.route == routeHash }
+            if (pending.size >= RouteHistory.MIN_SUGGESTION_VIEWS) {
+                // These are view events, not claims that the earlier bus journeys were taken.
+                visits = RouteHistory.restore(visits, pending.map { view ->
+                    route.copy(journey = "view/${view.token}", at = view.at)
+                }, now)
+                observations = observations.filterNot { it.route == routeHash }
+            }
+        }
+        persist(now)
+    }
+
+    /** Legacy actual-journey recording is kept for compatibility; previews use observe instead. */
     @Synchronized fun record(ride: Ride) {
         if (!plans.current().automaticLearning) return
         if (journeyHash(ride.departure.key) in deletedJourneys) return
-        visits = RouteHistory.record(visits, ride, Instant.now())
+        visits = RouteHistory.record(visits, ride, clock())
         persist()
     }
     @Synchronized fun remove(routeKey: String): List<RouteVisit> {
         val (remaining, removed) = RouteHistory.remove(visits, routeKey)
-        if (removed.isEmpty()) return emptyList()
+        val routeHash = journeyHash(routeKey)
+        val pending = observations.filter { it.route == routeHash }
+        if (removed.isEmpty() && pending.isEmpty()) return emptyList()
         rememberRemoved(removed)
+        rememberViewTokens(pending)
+        observations = observations.filterNot { it.route == routeHash }
         visits = remaining
         persist()
         return removed
     }
     @Synchronized fun restore(removed: List<RouteVisit>) {
         if (removed.isEmpty()) return
-        visits = RouteHistory.restore(visits, removed, Instant.now())
-        val requested = removed.map { it.journey }.toSet()
+        // An old Undo cannot reverse a later explicit clearing of the entire history.
+        val allowed = removed.filter { visit -> clearedAt?.let { visit.at > it } != false }
+        if (allowed.isEmpty()) return
+        visits = RouteHistory.restore(visits, allowed, clock())
+        val requested = allowed.map { it.journey }.toSet()
         val restored = visits.filter { it.journey in requested }.map { journeyHash(it.journey) }.toSet()
         deletedJourneys = deletedJourneys.filterNot { it in restored }
+        val restoredRoutes = visits.filter { it.journey in requested }.map { journeyHash(it.routeKey) }.toSet()
+        observations = observations.filterNot { it.route in restoredRoutes }
         persist()
     }
     @Synchronized fun clear() {
         rememberRemoved(visits)
+        rememberViewTokens(observations)
         visits = emptyList()
+        observations = emptyList()
+        clearedAt = clock()
         persist()
     }
     private fun rememberRemoved(removed: List<RouteVisit>) {
         deletedJourneys = (deletedJourneys + removed.map { journeyHash(it.journey) }).distinct().takeLast(512)
     }
-    private fun persist() {
-        prefs.edit().putString("visits", RouteHistory.encode(visits))
-            .putString("deleted_journeys", JSONArray(deletedJourneys).toString()).apply()
-        mutable.value = RouteHistory.frequent(visits, Instant.now())
+    private fun rememberViewTokens(removed: List<Observation>) {
+        deletedJourneys = (deletedJourneys + removed.map { journeyHash("view/${it.token}") }).distinct().takeLast(512)
+    }
+    private fun prune(now: Instant) {
+        val cutoff = now.minusSeconds(90 * 86400L)
+        visits = visits.filter { it.at in cutoff..now }.distinctBy { it.journey }
+        observations = observations.filter { it.at in cutoff..now }.distinctBy { it.token }
+        // Pending counters and materialized records share one storage bound.
+        val newest = (visits.map { it.journey to it.at } + observations.map { "view/${it.token}" to it.at })
+            .sortedByDescending { it.second }.take(MAX_EVENTS).map { it.first }.toSet()
+        visits = visits.filter { it.journey in newest }.sortedByDescending { it.at }
+        observations = observations.filter { "view/${it.token}" in newest }.sortedByDescending { it.at }
+    }
+    private fun persist(now: Instant = clock()) {
+        prune(now)
+        val counts = JSONArray(observations.map { observation -> JSONObject().apply {
+            put("route", observation.route); put("token", observation.token); put("at", observation.at.toString())
+        } })
+        prefs.edit().putString("visits", RouteHistory.encode(visits)).putString("view_counts", counts.toString())
+            .putString("deleted_journeys", JSONArray(deletedJourneys).toString())
+            .putString("cleared_at", clearedAt?.toString()).apply()
+        mutable.value = RouteHistory.frequent(visits, now)
     }
     private fun journeyHash(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    private companion object {
+        const val MAX_EVENTS = 200
+        val hashPattern = Regex("[0-9a-f]{64}")
+    }
 }

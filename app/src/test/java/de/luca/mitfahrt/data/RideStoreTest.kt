@@ -163,4 +163,32 @@ class RideStoreTest {
         assertEquals(refreshed, store.state.value.ride)
     }
 
+    @Test fun `public vehicle telemetry survives a same journey refresh but is never persisted`() {
+        val store = RideStore(app)
+        val original = ride()
+        store.setRide(original)
+        val vehicle = NewVehicle("2114", "006", "Schule", GeoPoint(51.18, 6.4), now)
+        val telemetry = LiveBusState(journeyKey = original.departure.key, revision = 4, vehicle = vehicle,
+            selectedVehicleId = vehicle.id, fetchedAt = now)
+        store.update { it.copy(liveBus = telemetry) }
+        store.setRide(original.copy(fetchedAt = now.plusSeconds(15)), preserveStatus = true)
+        assertEquals(telemetry, store.state.value.liveBus)
+        assertNull(RideStore(app).state.value.liveBus.vehicle)
+        assertFalse(app.getSharedPreferences("ride", Context.MODE_PRIVATE).getString("active", "")!!.contains("2114"))
+    }
+    @Test fun `switching journey or boarding clears the previous vehicle position`() {
+        val store = RideStore(app)
+        val original = ride()
+        store.setRide(original)
+        store.update { it.copy(liveBus = LiveBusState(original.departure.key, revision = 2, selectedVehicleId = "2114")) }
+        store.setRide(ride("another"))
+        assertNull(store.state.value.liveBus.selectedVehicleId)
+        assertEquals(ride("another").departure.key, store.state.value.liveBus.journeyKey)
+        store.update { it.copy(liveBus = it.liveBus.copy(selectedVehicleId = "2114")) }
+        store.setRide(ride("another").copy(boarded = true))
+        assertNull(store.state.value.liveBus.selectedVehicleId)
+        store.clear()
+        assertEquals(LiveBusState(), store.state.value.liveBus)
+    }
+
 }

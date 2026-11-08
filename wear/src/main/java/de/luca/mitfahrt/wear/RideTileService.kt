@@ -21,7 +21,6 @@ import de.luca.mitfahrt.shared.WatchRide
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import kotlin.math.ceil
 
 /** No polling or location access: render the latest phone snapshot already saved on the watch. */
 class RideTileService : TileService() {
@@ -52,16 +51,8 @@ class RideTileService : TileService() {
     private fun layout(ride: WatchRide?, now: Instant, expired: Boolean): LayoutElementBuilders.Layout {
         val current = ride?.takeIf { it.active }
         val stale = current != null && (expired || current.stale(now))
-        val target = current?.let { if (it.boarded) it.terminalAt else it.boardingAt }
-        val seconds = target?.let { (it.epochSecond - now.epochSecond).coerceAtLeast(0) }
-        val value = when {
-            current == null -> "Keine Fahrt"
-            current.cancelled -> "Fällt aus"
-            stale -> "–"
-            seconds == null -> "–"
-            !current.boarded && seconds == 0L -> "Erwartet"
-            else -> "${ceil(seconds / 60.0).toInt()} Min"
-        }
+        val display = current?.let { rideTimeDisplay(it, now, minutesOnly = true, expired = expired) }
+        val value = display?.value ?: "Keine Fahrt"
         val status = when {
             current == null -> "Am Handy Fahrt wählen"
             current.demo && stale -> "Demo · Daten veraltet"
@@ -75,9 +66,8 @@ class RideTileService : TileService() {
         }
         val detail = when {
             current == null -> "Mitfahrt öffnen"
-            current.boarded -> current.nextStop
-            current.boardingIsArrival -> "bis dein Bus kommt"
-            else -> "bis zur Abfahrt"
+            current.boarded && !stale && !current.cancelled -> current.nextStop
+            else -> display!!.detail
         }
         val open = ActionBuilders.LaunchAction.Builder().setAndroidActivity(ActionBuilders.AndroidActivity.Builder()
             .setPackageName(packageName).setClassName(WatchActivity::class.java.name).build()).build()

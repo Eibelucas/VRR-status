@@ -16,8 +16,8 @@ Die App ist noch nicht im Play Store. Auf dem Handy lässt sich die normale APK 
 
 Die beiden APKs stehen öffentlich unter [Releases](https://github.com/Eibelucas/VRR-status/releases/latest):
 
-- **Mitfahrt-0.14.0.apk** ist für Android-Handys.
-- **Mitfahrt-Wear-0.14.0.apk** ist ausschließlich für die Uhr.
+- **Mitfahrt-0.15.0.apk** ist für Android-Handys.
+- **Mitfahrt-Wear-0.15.0.apk** ist ausschließlich für die Uhr.
 
 Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Computer mit den offiziellen [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) übertragen. Für ADB über WLAN:
 
@@ -28,7 +28,7 @@ Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Comp
 ```sh
 adb pair UHR_IP:KOPPLUNGSPORT
 adb connect UHR_IP:VERBINDUNGSPORT
-adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.14.0.apk
+adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.15.0.apk
 ```
 
 Danach Debugging wieder ausschalten und Mitfahrt aus der App-Liste der Uhr öffnen. Die alltägliche Nutzung benötigt kein Debugging. Für spätere Watch-Updates dieselbe APK-Variante mit `install -r` installieren. Die In-App-Updatefunktion der Handy-App aktualisiert zunächst nur die Handy-App.
@@ -60,3 +60,7 @@ Den Ausstieg wählst du am Handy unter **Dein Ausstieg**. Danach beziehen sich R
 Auf dem Handy unter **Einstellungen → Vibrationshinweise** kannst du **Bus kommt** und **Ausstieg** unabhängig ein- oder ausschalten. Für **Bus kommt** sind eine, zwei oder drei Minuten Vorlauf möglich; voreingestellt bleibt eine Minute. Diese Einstellungen steuern auch die vom Handy an die gekoppelte Uhr gesendeten Hinweise. Die Uhr benötigt dafür keine getrennte Konfiguration. Schon ausgelöste Hinweise werden für dieselbe Fahrt nicht erneut abgespielt.
 
 **Vibration auf Handy & Uhr testen** bleibt unabhängig von diesen Schaltern verfügbar. Eine Empfangsbestätigung der Uhr bestätigt den Testaufruf, nicht die körperlich spürbare Stärke. Nicht-stören und die Vibrationsstärke auf beiden Geräten gelten weiterhin. Die Bedienung und Zustellung auf einer echten Watch 5 Pro müssen praktisch geprüft werden.
+
+## Fehlende Live-Zeiten ab 0.15
+
+Handy und Uhr zeigen ohne frische echte Ankunfts- oder Abfahrtsprognose **Keine Live-Zeit**. Fahrplanwerte allein lösen keinen Ankunftshinweis aus. Die Position des gewählten Linienfahrzeugs bleibt eine Handy-Kartenfunktion; daraus wird keine erfundene Ankunftszeit für die Uhr erzeugt.

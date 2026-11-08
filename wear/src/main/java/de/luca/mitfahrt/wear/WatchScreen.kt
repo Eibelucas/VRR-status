@@ -25,8 +25,6 @@ import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
-import kotlin.math.ceil
 
 private val Lime = Color(0xFFFF9BC7)
 private val Ink = Color(0xFF21132A)
@@ -103,24 +101,11 @@ private fun RideHero(ride: WatchRide, now: Instant) {
         Text("${ride.line} → ${ride.destination}", color = Color.White, style = MaterialTheme.typography.labelMedium,
             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(10.dp))
-        val target = if (ride.boarded) ride.terminalAt else ride.boardingAt
-        val seconds = target?.let { (it.epochSecond - now.epochSecond).coerceAtLeast(0) }
-        val value = when {
-            ride.cancelled -> "Fällt aus"
-            seconds == null -> "–"
-            ride.boarded -> "${ceil(seconds / 60.0).toInt()} Min"
-            seconds == 0L -> "Erwartet"
-            else -> "%d:%02d".format(Locale.ROOT, seconds / 60, seconds % 60)
-        }
-        Text(value, color = Color.White, fontSize = if (value.length > 7) 26.sp else 36.sp, fontWeight = FontWeight.Bold,
+        val display = rideTimeDisplay(ride, now)
+        Text(display.value, color = Color.White, fontSize = if (display.value.length > 7) 26.sp else 36.sp, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, maxLines = 1)
         Spacer(Modifier.height(4.dp))
-        Text(when {
-            ride.cancelled -> "Andere Fahrt wählen"
-            ride.boarded -> "bis zum Ziel"
-            ride.boardingIsArrival -> "bis dein Bus kommt"
-            else -> "bis zur Abfahrt"
-        }, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center)
+        Text(display.detail, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center)
     }
 }
 

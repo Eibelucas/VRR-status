@@ -3,7 +3,6 @@ package de.luca.mitfahrt.data
 import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import de.luca.mitfahrt.watch.watchSnapshot
 import java.time.Instant
 
 /** These controls gate both devices; the separate, explicit vibration test stays available. */
@@ -42,13 +41,10 @@ class AlertPreferencesStore(context: Context) {
 
 object ArrivalAlertPolicy {
     fun due(state: TrackingState, preferences: AlertPreferences, now: Instant): Boolean {
-        if (!preferences.arrivalEnabled) return false
-        val ride = state.ride ?: return false
-        if (ride.isStale(now)) return false
-        if (ride.stops.getOrNull(ride.boardingIndex)?.cancelled == true) return false
-        val snapshot = state.watchSnapshot(now)
-        return snapshot.active && !snapshot.boarded && !snapshot.demo && !snapshot.cancelled && !snapshot.stale(now) &&
-            snapshot.boardingAt?.let { it.epochSecond - now.epochSecond in 1..preferences.leadSeconds.toLong() } == true
+        if (!preferences.arrivalEnabled || !state.running || state.lastRefreshFailed) return false
+        val ride = state.ride?.takeUnless { it.boarded } ?: return false
+        val boarding = ride.liveBoardingTime(now) ?: return false
+        return boarding.at.epochSecond - now.epochSecond in 1..preferences.leadSeconds.toLong()
     }
     fun exitDue(state: TrackingState, preferences: AlertPreferences, now: Instant): Boolean =
         preferences.exitEnabled && ExitAlarm.due(state, now)

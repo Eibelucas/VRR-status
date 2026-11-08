@@ -12,7 +12,8 @@ data class TrackingState(
     val monitoring: Boolean = false, val wifi: WifiSignal = WifiSignal.NONE,
     val location: GeoPoint? = null, val locationAt: Instant? = null,
     val message: String? = null, val lastRefreshFailed: Boolean = false,
-    val candidates: List<Departure> = emptyList()
+    val candidates: List<Departure> = emptyList(),
+    val liveBus: LiveBusState = LiveBusState()
 )
 
 class RideStore(context: Context) {
@@ -41,7 +42,9 @@ class RideStore(context: Context) {
     @Synchronized
     fun setRide(ride: Ride?, preserveStatus: Boolean = false) {
         update { it.copy(ride = ride, lastRefreshFailed = if (preserveStatus) it.lastRefreshFailed else false,
-            message = if (preserveStatus) it.message else null) }
+            message = if (preserveStatus) it.message else null,
+            liveBus = if (it.ride?.departure?.key == ride?.departure?.key && it.ride?.boarded == ride?.boarded)
+                it.liveBus else LiveBusState(journeyKey = ride?.departure?.key)) }
         val savedRide = ride?.takeUnless { it.demo }
         val encoded = savedRide?.let(RideCodec::encode)
         val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys }

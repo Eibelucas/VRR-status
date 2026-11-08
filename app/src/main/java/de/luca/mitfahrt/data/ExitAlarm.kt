@@ -40,17 +40,16 @@ object ExitAlarm {
         val targetIndex = ride.exitTargetIndex() ?: return false
         val target = ride.stops[targetIndex]
         if (target.cancelled || ride.gpsPassedIndex >= targetIndex) return false
-        val targetAt = target.effective(ride.offsetSeconds) ?: return false
-        if (!targetAt.isAfter(now)) return false
-        // Extrapolated times must retain the original monitor's freshness.
-        if (target.estimated == null && ride.offsetSeconds != 0L &&
-            ride.departure.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } != true) return false
+        // A current explicit target forecast may establish that this warning is already late.
+        // A timetable cannot override an actually passed stop when the bus is delayed.
+        if (target.estimated?.isAfter(now) == false) return false
         val previous = (ride.boardingIndex until targetIndex).lastOrNull { !ride.stops[it].cancelled } ?: return false
-        if (ride.gpsPassedIndex >= previous) return true
-        val previousStop = ride.stops[previous]
-        if (previousStop.estimated == null && ride.offsetSeconds != 0L &&
-            ride.departure.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } != true) return false
-        return previousStop.effective(ride.offsetSeconds)?.let { !it.isAfter(now.plusSeconds(15)) } == true
+        if (ride.gpsPassedIndex >= previous &&
+            state.locationAt?.let { now.epochSecond - it.epochSecond in -30..90 } == true) return true
+        val previousAt = ride.stops[previous].estimated ?: return false
+        // A direct current forecast at the previous served stop is evidence. A fetched
+        // timetable or an offset copied from the boarding delay is not.
+        return previousAt.epochSecond - now.epochSecond in -120..15
     }
 
     fun id(ride: Ride): String? = ride.exitTargetIndex()?.let { index ->

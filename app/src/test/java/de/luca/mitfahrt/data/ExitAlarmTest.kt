@@ -11,11 +11,11 @@ class ExitAlarmTest {
         val base = DemoRide.create(now)
         val stops = (0..4).map { index ->
             val at = now.plusSeconds((index - 2) * 120L)
-            RideStop("de:05116:${100 + index}:1:1", "Stop $index", null, at, at)
+            RideStop("de:05116:${100 + index}:1:1", "Stop $index", null, at, at, estimatedArrival = at)
         }
         return base.copy(demo = false, boarded = true, stops = stops, boardingIndex = 0).withExitTarget(3)
     }
-    private fun state(ride: Ride = ride()) = TrackingState(ride = ride, running = true)
+    private fun state(ride: Ride = ride(), locationAt: Instant? = null) = TrackingState(ride = ride, running = true, locationAt = locationAt)
 
     @Test fun `alarm activates at the previous served stop and not while still approaching it`() {
         assertTrue(ExitAlarm.due(state(), now))
@@ -26,7 +26,7 @@ class ExitAlarmTest {
 
     @Test fun `GPS passing the previous stop may precede its forecast`() {
         val ride = ride().copy(gpsPassedIndex = 2, fetchedAt = now.minusSeconds(60))
-        assertTrue(ExitAlarm.due(state(ride), now.minusSeconds(60)))
+        assertTrue(ExitAlarm.due(state(ride, now.minusSeconds(60)), now.minusSeconds(60)))
         assertFalse(ExitAlarm.due(state(ride.copy(gpsPassedIndex = 3)), now))
     }
 
@@ -53,11 +53,12 @@ class ExitAlarmTest {
         ).forEach { assertFalse(ExitAlarm.due(it, now)) }
     }
 
-    @Test fun `old monitor estimates cannot be revived by a fresh trip fetch`() {
-        val r = ride().copy(gpsPassedIndex = 2).let { it.copy(departure = it.departure.copy(
-            estimated = it.departure.planned.plusSeconds(60), observedAt = now.minusSeconds(180))) }
-        assertFalse(ExitAlarm.due(state(r), now))
-        assertTrue(ExitAlarm.due(state(r.copy(departure = r.departure.copy(observedAt = now))), now))
+    @Test fun `fresh monitor delay never substitutes a missing previous stop forecast`() {
+        val r = ride().let { base -> base.copy(stops = base.stops.map { it.copy(estimatedArrival = null) },
+            departure = base.departure.copy(estimated = base.departure.planned.plusSeconds(60), observedAt = now)) }
+        assertFalse(ExitAlarm.due(state(r), now.plusSeconds(60)))
+        assertFalse(ExitAlarm.due(state(r.copy(departure = r.departure.copy(observedAt = now.minusSeconds(180)))), now))
+        assertTrue(ExitAlarm.due(state(r.copy(gpsPassedIndex = 2), now), now))
     }
 
     @Test fun `an exit target must be later than boarding and a cancelled stop cannot be selected`() {
@@ -107,10 +108,43 @@ class ExitAlarmTest {
     @Test fun `fresh target does not refresh an extrapolated previous stop`() {
         val r = ride().let { base -> base.copy(departure = base.departure.copy(
             estimated = base.departure.planned.plusSeconds(60), observedAt = now.minusSeconds(180)),
-            stops = base.stops.mapIndexed { i, stop -> if (i == 3) stop.copy(estimatedArrival = now.plusSeconds(120)) else stop }) }
+            stops = base.stops.mapIndexed { i, stop -> if (i == 3) stop.copy(estimatedArrival = now.plusSeconds(120)) else stop.copy(estimatedArrival = null) }) }
         assertFalse(ExitAlarm.due(state(r), now.plusSeconds(60)))
-        assertTrue(ExitAlarm.due(state(r.copy(gpsPassedIndex = 2)), now))
-        assertTrue(ExitAlarm.due(state(r.copy(departure = r.departure.copy(observedAt = now))), now.plusSeconds(60)))
+        assertTrue(ExitAlarm.due(state(r.copy(gpsPassedIndex = 2), now), now))
+        assertFalse(ExitAlarm.due(state(r.copy(departure = r.departure.copy(observedAt = now))), now.plusSeconds(60)))
+    }
+
+    @Test fun `a fresh timetable cannot trigger an exit warning without live or GPS evidence`() {
+        val timetable = ride().copy(stops = ride().stops.map { it.copy(estimatedArrival = null) })
+        assertFalse(ExitAlarm.due(state(timetable), now))
+        assertFalse(ExitAlarm.due(state(timetable.copy(gpsPassedIndex = 2)), now))
+        assertFalse(ExitAlarm.due(state(timetable.copy(gpsPassedIndex = 2), now.minusSeconds(91)), now))
+        assertFalse(ExitAlarm.due(state(timetable.copy(gpsPassedIndex = 2), now.plusSeconds(31)), now))
+        assertTrue(ExitAlarm.due(state(timetable.copy(gpsPassedIndex = 2), now), now))
+    }
+
+    @Test fun `actual GPS progress is not overruled by an already passed timetable target`() {
+        val r = ride().let { base -> base.copy(gpsPassedIndex = 2, stops = base.stops.mapIndexed { i, stop ->
+            stop.copy(estimatedArrival = null, arrival = if (i == 3) now.minusSeconds(60) else stop.arrival) }) }
+        assertTrue(ExitAlarm.due(state(r, now), now))
+        assertFalse(ExitAlarm.due(state(r.copy(stops = r.stops.mapIndexed { i, stop ->
+            if (i == 3) stop.copy(estimatedArrival = now.minusSeconds(1)) else stop }), now), now))
+    }
+
+    @Test fun `historic previous stop forecasts do not become a current warning`() {
+        val r = ride().copy(stops = ride().stops.mapIndexed { i, stop ->
+            if (i == 2) stop.copy(estimatedArrival = now.minusSeconds(121)) else stop })
+        assertFalse(ExitAlarm.due(state(r), now))
+    }
+
+    @Test fun `explicit same journey target selection keeps current boarding and GPS state`() {
+        val current = ride().copy(gpsPassedIndex = 1).withExitTarget(3)
+        val selected = current.copy(boarded = false, gpsPassedIndex = -1).withExitTarget(4)
+        val chosen = current.remapExitTargetFrom(selected)
+        assertEquals(4, chosen.exitTargetIndex())
+        assertEquals(current.boarded, chosen.boarded)
+        assertEquals(current.gpsPassedIndex, chosen.gpsPassedIndex)
+        assertEquals(current.fetchedAt, chosen.fetchedAt)
     }
 
 }

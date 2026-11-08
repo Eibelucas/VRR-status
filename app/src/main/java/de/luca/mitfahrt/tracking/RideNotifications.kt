@@ -51,22 +51,28 @@ class RideNotifications(private val context: Context) {
         }
         val waiting = !ride.boarded
         val boardingTime = ride.boardingTime()
+        val liveBoarding = if (state.running && !state.lastRefreshFailed) ride.liveBoardingTime(now) else null
+        val waitingTime = if (ride.demo) boardingTime else liveBoarding
         val next = ride.nextStopToTarget(now)
-        val remaining = if (waiting) minutesUntil(boardingTime.at, now) else ride.minutesToTarget(now)
+        val remaining = if (waiting) waitingTime?.let { minutesUntil(it.at, now) } else ride.minutesToTarget(now)
         val delay = DelayEvidence.timingFor(ride, ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex))
             ?: DelayEvidence.timingFor(ride, ride.boardingIndex)
         val stale = ride.isStale(now) || state.lastRefreshFailed || !state.running
         val timeSource = when {
             ride.demo -> "Demo"
             stale -> "Veraltet"
-            waiting -> if (boardingTime.live) "Live" else "Fahrplan"
+            waiting -> if (liveBoarding != null) "Live" else "Keine Live-Zeit"
             ride.displayTarget().estimated != null -> "Live"
             ride.departure.estimated != null -> "Geschätzt"
             else -> "Fahrplan"
         }
         val headline = if (waiting) {
-            if (ride.departure.cancelled) "Bus fällt aus" else if (!boardingTime.at.isAfter(now)) "Bus wird erwartet"
-            else "${if (boardingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(boardingTime.at, now)}"
+            when {
+                ride.departure.cancelled -> "Bus fällt aus"
+                waitingTime == null -> "Keine Live-Zeit · Fahrplan ${clockTime(ride.stops.getOrNull(ride.boardingIndex)?.planned ?: ride.departure.planned)}"
+                !waitingTime.at.isAfter(now) -> "Bus wird erwartet"
+                else -> "${if (waitingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(waitingTime.at, now)}"
+            }
         } else if (next == null) "Ziel laut Fahrtverlauf erreicht" else "Nächster Halt: ${shortName(next.name)}"
         val title = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.displayTarget().name)}"
         val text = listOfNotNull(headline,
@@ -74,8 +80,8 @@ class RideNotifications(private val context: Context) {
         builder.setContentTitle(title)
             .setContentText(text)
             .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
-        if (waiting && !ride.departure.cancelled && boardingTime.at.isAfter(now)) {
-            builder.setWhen(boardingTime.at.toEpochMilli()).setShowWhen(true)
+        if (waiting && !ride.departure.cancelled && waitingTime?.at?.isAfter(now) == true) {
+            builder.setWhen(waitingTime.at.toEpochMilli()).setShowWhen(true)
                 .setUsesChronometer(true).setChronometerCountDown(true)
         }
         if (Build.VERSION.SDK_INT >= 36) {
@@ -92,7 +98,7 @@ class RideNotifications(private val context: Context) {
                 "$headline\n" +
                     (if (waiting) "${shortName(ride.departure.stopName)} · $timeSource" else "${remaining?.let { "$it Min" } ?: "–"} bis ${shortName(ride.displayTarget().name)} · $timeSource") +
                     (delay?.let { "\n${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" } ?: "")))
-                .setProgress(100, (ride.progressToTarget(now) * 100).toInt(), false)
+                .setProgress(100, if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt(), false)
         }
         val notification = builder.build()
         if (Build.VERSION.SDK_INT >= 36 && !notification.hasPromotableCharacteristics()) {

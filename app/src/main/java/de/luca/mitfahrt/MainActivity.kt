@@ -153,7 +153,14 @@ class MainActivity : ComponentActivity() {
             fun selectRide(selected: Ride) {
                 val current = tracking.ride
                 if (current != null && current.departure.key != selected.departure.key) switchRideJson = RideCodec.encode(selected)
-                else begin(current?.takeIf { it.departure.key == selected.departure.key } ?: selected)
+                else {
+                    val existing = current?.takeIf { it.departure.key == selected.departure.key }
+                    val chosen = if (existing != null && selected.exitTargetStop() != null)
+                        existing.remapExitTargetFrom(selected) else existing ?: selected
+                    if (selected.exitTargetStop() != null && chosen.exitTargetStop() == null)
+                        notice = "Der Fahrtverlauf hat sich geändert. Bitte die Fahrt erneut öffnen."
+                    else begin(chosen)
+                }
             }
             LaunchedEffect(search.pendingRide) {
                 search.pendingRide?.let { selected -> selectRide(selected); vm.consumeRide() }

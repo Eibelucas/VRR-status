@@ -7,7 +7,7 @@ import java.time.Instant
 class BoardingCountdownTest {
     private val now = Instant.parse("2026-11-06T08:00:00Z")
     private fun ride() = DemoRide.create(now).copy(demo = false, boarded = false,
-        departure = DemoRide.create(now).departure.copy(estimated = now.plusSeconds(205)), trackingStartedAt = now)
+        departure = DemoRide.create(now).departure.copy(estimated = now.plusSeconds(205), observedAt = now), trackingStartedAt = now)
 
     @Test fun `countdown is minutes and seconds and never negative`() {
         assertEquals("3:25", countdownUntil(now.plusSeconds(205), now))
@@ -62,6 +62,44 @@ class BoardingCountdownTest {
         val r = ride().let { it.copy(departure = it.departure.copy(observedAt = now.plusSeconds(31))) }
         assertTrue(r.isStale(now))
         assertFalse(r.boardingTime().isFresh(now))
+    }
+
+    @Test fun `only an actual fresh forecast supplies a live boarding time`() {
+        val r = ride()
+        assertEquals(now.plusSeconds(205), r.liveBoardingTime(now)?.at)
+        val timetable = r.copy(departure = r.departure.copy(estimated = null))
+        assertNull(timetable.liveBoardingTime(now))
+        assertNull(r.copy(fetchedAt = now.minusSeconds(121)).liveBoardingTime(now))
+        assertNull(r.copy(fetchedAt = now.plusSeconds(31)).liveBoardingTime(now))
+        assertNull(r.copy(departure = r.departure.copy(observedAt = now.minusSeconds(121))).liveBoardingTime(now))
+        assertNull(r.copy(departure = r.departure.copy(observedAt = null)).liveBoardingTime(now))
+        assertNull(r.copy(departure = r.departure.copy(observedAt = now.plusSeconds(31))).liveBoardingTime(now))
+    }
+
+    @Test fun `fresh direct boarding forecast stays independent of an old monitor`() {
+        val r = ride().let { base -> base.copy(departure = base.departure.copy(observedAt = now.minusSeconds(300)),
+            stops = base.stops.mapIndexed { i, stop -> if (i == base.boardingIndex)
+                stop.copy(estimatedArrival = now.plusSeconds(75)) else stop }) }
+        assertEquals(now.plusSeconds(75), r.liveBoardingTime(now)?.at)
+        assertTrue(r.liveBoardingTime(now)!!.isArrival)
+    }
+
+    @Test fun `cancelled demo and invalid boarding stops never supply a real boarding forecast`() {
+        val r = ride()
+        assertNull(r.copy(demo = true).liveBoardingTime(now))
+        assertNull(r.copy(departure = r.departure.copy(cancelled = true)).liveBoardingTime(now))
+        assertNull(r.copy(stops = r.stops.mapIndexed { i, stop -> stop.copy(cancelled = i == r.boardingIndex) }).liveBoardingTime(now))
+        assertNull(r.copy(boardingIndex = r.stops.size).liveBoardingTime(now))
+    }
+
+    @Test fun `departure lists only expose countdown estimates with a current source`() {
+        val base = ride().departure.copy(estimated = now.plusSeconds(60), observedAt = now)
+        assertEquals(base.estimated, base.liveEstimate(now))
+        assertNull(base.copy(estimated = null).liveEstimate(now))
+        assertNull(base.copy(observedAt = null).liveEstimate(now))
+        assertNull(base.copy(observedAt = now.minusSeconds(121)).liveEstimate(now))
+        assertNull(base.copy(observedAt = now.plusSeconds(31)).liveEstimate(now))
+        assertNull(base.copy(cancelled = true).liveEstimate(now))
     }
 
 }

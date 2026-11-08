@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.Normalizer
+import java.security.MessageDigest
+import java.time.Instant
 import java.util.Locale
 
 data class SavedStopsState(val favorites: List<Stop> = emptyList(), val recent: List<Stop> = emptyList()) {
@@ -97,25 +99,139 @@ object SavedStops {
     }.getOrDefault(SavedStopsState())
 }
 
-class SavedStopsStore(context: Context) {
-    private val prefs = context.getSharedPreferences("saved_stops", Context.MODE_PRIVATE)
-    private val mutable = MutableStateFlow(SavedStops.decode(prefs.getString("state", "{}") ?: "{}"))
+class SavedStopsStore(context: Context, private val clock: () -> Instant = Instant::now) {
+    private val app = context.applicationContext
+    private val prefs = app.getSharedPreferences("saved_stops", Context.MODE_PRIVATE)
+    private val routePreferences = app.getSharedPreferences("route_plans", Context.MODE_PRIVATE)
+    private val plans = RoutePlansStore(app)
+    private data class Observation(val stopHash: String, val visits: List<String>, val at: Instant, val explicit: Boolean = false) {
+        val qualified: Boolean get() = explicit || visits.size >= MIN_OPENS
+    }
+    private var stored = SavedStops.decode(runCatching { prefs.getString("state", "{}") }.getOrNull() ?: "{}")
+    private var observations = readObservations()
+    private val mutable = MutableStateFlow(SavedStopsState())
     val state = mutable.asStateFlow()
+    private val learningListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "state" || key == null) synchronized(this) { publish() }
+    }
 
-    @Synchronized fun select(stop: Stop) { update(SavedStops.selected(mutable.value, stop)) }
+    init {
+        if (!runCatching { prefs.getBoolean("observations_initialized", false) }.getOrDefault(false)) {
+            // A legacy recent entry proves at most one opening, never repeated interest.
+            stored.recent.forEach { stop ->
+                val stopHash = hash(stopKey(stop.id))
+                if (observations.none { it.stopHash == stopHash }) observations = observations +
+                    Observation(stopHash, listOf(hash("legacy/$stopHash")), clock())
+            }
+        }
+        persist()
+        routePreferences.registerOnSharedPreferenceChangeListener(learningListener)
+    }
+
+    /** Browsing remembers no station details until three distinct explicit board openings. */
+    @Synchronized fun observe(stop: Stop, visitId: String) {
+        if (!plans.current().automaticLearning) { publish(); return }
+        if (visitId.isBlank() || visitId.length > 512) return
+        val clean = SavedStops.selected(SavedStopsState(), stop).recent.singleOrNull() ?: return
+        prune()
+        val stopHash = hash(clean.id)
+        val visitHash = hash(visitId)
+        val previous = observations.firstOrNull { it.stopHash == stopHash }
+        if (previous?.visits?.contains(visitHash) == true) { publish(); return }
+        val seen = Observation(stopHash, (previous?.visits.orEmpty() + visitHash).takeLast(MIN_OPENS), clock(),
+            previous?.explicit == true)
+        observations = listOf(seen) + observations.filterNot { it.stopHash == stopHash }
+        val refreshed = SavedStops.selected(stored, clean)
+        stored = if (seen.qualified) refreshed else stored.copy(favorites = refreshed.favorites)
+        persist()
+    }
+
+    /** Explicit compatibility API; automatic callers must use observe instead. */
+    @Synchronized fun select(stop: Stop) {
+        val updated = SavedStops.selected(stored, stop)
+        val clean = updated.recent.firstOrNull()?.takeIf { stopKey(it.id) == stopKey(stop.id) } ?: return
+        rememberExplicit(clean)
+        stored = updated
+        persist()
+    }
+
     /** Returns the actual saved state, including when the favorite limit has been reached. */
     @Synchronized fun toggleFavorite(stop: Stop): Boolean {
-        update(SavedStops.toggle(mutable.value, stop))
-        return mutable.value.isFavorite(stop)
+        stored = SavedStops.toggle(stored, stop)
+        persist()
+        return stored.isFavorite(stop)
     }
-    @Synchronized fun restoreFavorite(stop: Stop, index: Int) { update(SavedStops.restore(mutable.value, stop, index)) }
-    @Synchronized fun removeRecent(stop: Stop) { update(mutable.value.copy(recent = mutable.value.recent.filterNot { stopKey(it.id) == stopKey(stop.id) })) }
-    @Synchronized fun restoreRecent(stop: Stop, index: Int) { update(SavedStops.restoreRecent(mutable.value, stop, index)) }
-    @Synchronized fun clearRecent() { update(mutable.value.copy(recent = emptyList())) }
+    @Synchronized fun restoreFavorite(stop: Stop, index: Int) {
+        stored = SavedStops.restore(stored, stop, index)
+        persist()
+    }
+    @Synchronized fun removeRecent(stop: Stop) {
+        val id = stopKey(stop.id)
+        stored = stored.copy(recent = stored.recent.filterNot { stopKey(it.id) == id })
+        observations = observations.filterNot { it.stopHash == hash(id) }
+        persist()
+    }
+    @Synchronized fun restoreRecent(stop: Stop, index: Int) {
+        val updated = SavedStops.restoreRecent(stored, stop, index)
+        updated.recent.firstOrNull { stopKey(it.id) == stopKey(stop.id) }?.let(::rememberExplicit)
+        stored = updated
+        persist()
+    }
+    @Synchronized fun clearRecent() {
+        stored = stored.copy(recent = emptyList())
+        observations = emptyList()
+        persist()
+    }
 
-    private fun update(state: SavedStopsState) {
-        if (state == mutable.value) return
-        prefs.edit().putString("state", SavedStops.encode(state)).apply()
-        mutable.value = state
+    private fun rememberExplicit(stop: Stop) {
+        val id = hash(stopKey(stop.id))
+        val previous = observations.firstOrNull { it.stopHash == id }
+        observations = listOf(Observation(id, previous?.visits.orEmpty(), clock(), explicit = true)) +
+            observations.filterNot { it.stopHash == id }
+    }
+    private fun prune() {
+        val now = clock()
+        observations = observations.filter { it.at >= now.minusSeconds(MAX_AGE_SECONDS) && it.at <= now.plusSeconds(30) }
+            .distinctBy { it.stopHash }.sortedByDescending { it.at }.take(MAX_OBSERVATIONS)
+        val qualified = observations.filter { it.qualified }.map { it.stopHash }.toSet()
+        stored = stored.copy(recent = stored.recent.filter { hash(stopKey(it.id)) in qualified })
+    }
+    private fun publish() {
+        prune()
+        mutable.value = if (plans.current().automaticLearning) stored else stored.copy(recent = emptyList())
+    }
+    private fun persist() {
+        prune()
+        val data = JSONArray(observations.map { observed -> JSONObject().apply {
+            put("h", observed.stopHash); put("v", JSONArray(observed.visits)); put("t", observed.at.toEpochMilli())
+            if (observed.explicit) put("explicit", true)
+        } })
+        prefs.edit().putString("state", SavedStops.encode(stored)).putString("observations", data.toString())
+            .putBoolean("observations_initialized", true).apply()
+        publish()
+    }
+    private fun readObservations(): List<Observation> = runCatching {
+        JSONArray(prefs.getString("observations", "[]")).objects().mapNotNull { item ->
+            runCatching {
+                val id = item.getString("h").takeIf(HASH::matches) ?: return@mapNotNull null
+                val tokens = item.optJSONArray("v")?.let { values ->
+                    (0 until values.length()).mapNotNull { index -> values.optString(index).takeIf(HASH::matches) }
+                }.orEmpty().distinct().takeLast(MIN_OPENS)
+                val number = item.get("t") as? Number ?: return@mapNotNull null
+                val time = number.toLong()
+                if (number.toDouble() != time.toDouble()) return@mapNotNull null
+                Observation(id, tokens, Instant.ofEpochMilli(time), item.optBoolean("explicit", false))
+            }.getOrNull()
+        }.distinctBy { it.stopHash }.take(MAX_OBSERVATIONS)
+    }.getOrDefault(emptyList())
+
+    private fun hash(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
+
+    private companion object {
+        const val MIN_OPENS = 3
+        const val MAX_OBSERVATIONS = 100
+        const val MAX_AGE_SECONDS = 90 * 86400L
+        val HASH = Regex("[0-9a-f]{64}")
     }
 }

@@ -37,7 +37,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
         }
         if (routes.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Deine Strecken", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("Streckenvorschläge", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 TextButton(onClick = { allRoutes = true }) { Text("Alle") }
             }
             if (home.status == NearbyStatus.READY) {
@@ -91,7 +91,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
     }
     if (allRoutes) ModalBottomSheet(onDismissRequest = { allRoutes = false }, containerColor = Ink) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-            Text("Deine Strecken", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Streckenvorschläge", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(16.dp))
             LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(routes, key = { it.key }) { route ->

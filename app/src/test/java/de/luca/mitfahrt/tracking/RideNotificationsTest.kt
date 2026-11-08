@@ -29,7 +29,8 @@ class RideNotificationsTest {
         assertEquals(Notification.CATEGORY_NAVIGATION, notification.category)
     }
     @Test fun `waiting notification carries a real countdown to the reported boarding time`() {
-        val r = DemoRide.create(now).copy(boarded = false, departure = DemoRide.create(now).departure.copy(estimated = now.plusSeconds(180)))
+        val r = DemoRide.create(now).copy(demo = false, boarded = false, departure = DemoRide.create(now).departure.copy(
+            estimated = now.plusSeconds(180), observedAt = now))
         val notification = RideNotifications(context).build(TrackingState(ride = r, running = true), now)
         assertEquals(now.plusSeconds(180).toEpochMilli(), notification.`when`)
         assertTrue(notification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
@@ -83,4 +84,44 @@ class RideNotificationsTest {
         val channel = context.getSystemService(NotificationManager::class.java).getNotificationChannel(RideNotifications.CHANNEL)
         assertEquals(NotificationManager.IMPORTANCE_DEFAULT, channel.importance)
     }
+    @Test fun `waiting timetable keeps promotion but has no synthetic countdown`() {
+        val r = DemoRide.create(now).copy(demo = false, boarded = false)
+        val notification = RideNotifications(context).build(TrackingState(r, running = true), now)
+        assertTrue(notification.hasPromotableCharacteristics())
+        assertTrue(notification.extras.getBoolean("android.requestPromotedOngoing"))
+        assertFalse(notification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+        assertFalse(notification.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN))
+        val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+        assertTrue(text.contains("Keine Live-Zeit"))
+        assertTrue(text.contains("Fahrplan"))
+        assertFalse(text.contains("Bus wird erwartet"))
+    }
+
+    @Test fun `unreliable forecast is removed from waiting notification countdown`() {
+        val base = DemoRide.create(now)
+        val r = base.copy(demo = false, boarded = false, departure = base.departure.copy(
+            estimated = now.plusSeconds(180), observedAt = now))
+        val cases = listOf(TrackingState(r, running = false),
+            TrackingState(r, running = true, lastRefreshFailed = true),
+            TrackingState(r.copy(fetchedAt = now.minusSeconds(121)), running = true),
+            TrackingState(r.copy(departure = r.departure.copy(observedAt = now.minusSeconds(121))), running = true),
+            TrackingState(r.copy(departure = r.departure.copy(observedAt = now.plusSeconds(31))), running = true))
+        cases.forEach { state ->
+            val notification = RideNotifications(context).build(state, now)
+            assertFalse(notification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+            val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+            assertTrue(text.contains("Keine Live-Zeit"))
+            assertFalse(text.contains("3:00"))
+        }
+    }
+
+    @Test fun `cancelled boarding never gets a waiting chronometer`() {
+        val base = DemoRide.create(now)
+        val r = base.copy(demo = false, boarded = false, stops = base.stops.mapIndexed { i, stop ->
+            if (i == 0) stop.copy(estimatedArrival = now.plusSeconds(180), cancelled = true) else stop })
+        val notification = RideNotifications(context).build(TrackingState(r, running = true), now)
+        assertFalse(notification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+        assertTrue(notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("Keine Live-Zeit"))
+    }
+
 }
