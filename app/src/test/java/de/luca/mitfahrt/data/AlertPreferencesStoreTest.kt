@@ -29,4 +29,17 @@ class AlertPreferencesStoreTest {
         app.getSharedPreferences("journey_alert_options", Context.MODE_PRIVATE).edit().putInt("lead_seconds", 999).apply()
         assertEquals(60, AlertPreferencesStore(app).current().leadSeconds)
     }
+
+    @Test fun `customization screen changes update existing simple alert controls`() {
+        val app: Application = RuntimeEnvironment.getApplication()
+        val controls = AlertPreferencesStore(app)
+        val customization = AppSettingsStore(app)
+        customization.set("alert_arrival", "false")
+        customization.set("alert_exit", "false")
+        customization.set("alert_leads", "300,120")
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(AlertPreferences(false, false, 120), controls.state.value)
+        controls.close()
+        customization.close()
+    }
 }

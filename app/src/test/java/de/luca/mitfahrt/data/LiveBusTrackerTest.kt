@@ -64,7 +64,7 @@ class LiveBusTrackerTest {
         assertEquals(7L, selected.revision)
     }
 
-    @Test fun `selection rejects stale wrong line unknown identity different journey and boarded rides`() {
+    @Test fun `selection rejects stale wrong line unknown identity different journey and demo rides`() {
         val r = ride()
         val item = bus()
         val current = state(r, item)
@@ -72,7 +72,6 @@ class LiveBusTrackerTest {
         assertNull(LiveBusTracker.select(r, state(r, item.copy(line = "017")), item.copy(line = "017"), start))
         assertNull(LiveBusTracker.select(r, current, item, start.plusSeconds(91)))
         assertNull(LiveBusTracker.select(r, current.copy(journeyKey = "other"), item, start))
-        assertNull(LiveBusTracker.select(r.copy(boarded = true), current, item, start))
         assertNull(LiveBusTracker.select(r.copy(demo = true), current, item, start))
     }
 
@@ -224,10 +223,26 @@ class LiveBusTrackerTest {
         assertEquals(2, calls)
     }
 
-    @Test fun `demo boarded and cancelled rides do not fetch vehicle positions`() = runBlocking {
+    @Test fun `on board selection remains explicit and refreshes the same actual vehicle`() = runBlocking {
+        val r = ride().copy(boarded = true)
+        val observed = bus(at = start.plusSeconds(15)).copy(point = GeoPoint(51.197, 6.443))
+        var individualCalls = 0
+        val tracker = LiveBusTracker({ error("manual selection uses individual source") }, {
+            individualCalls++; observed
+        }, { start.plusSeconds(15) })
+        val selected = LiveBusTracker.select(r, state(r), bus(), start)!!
+        val refreshed = tracker.refresh(r, selected)
+        assertEquals(1, individualCalls)
+        assertEquals(observed, refreshed.vehicle)
+        assertEquals("2114", refreshed.selectedVehicleId)
+        assertFalse(refreshed.confirmed)
+        assertEquals(start.plusSeconds(30), r.departure.estimated)
+    }
+
+    @Test fun `demo and cancelled rides do not fetch vehicle positions`() = runBlocking {
         val tracker = LiveBusTracker({ error("must not fetch") }, { error("must not fetch") }, { start })
         val r = ride()
-        for (disabled in listOf(r.copy(demo = true), r.copy(boarded = true), r.copy(departure = r.departure.copy(cancelled = true)))) {
+        for (disabled in listOf(r.copy(demo = true), r.copy(departure = r.departure.copy(cancelled = true)))) {
             val result = tracker.refresh(disabled, state(r))
             assertNull(result.vehicle)
             assertTrue(result.candidates.isEmpty())

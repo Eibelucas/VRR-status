@@ -30,9 +30,11 @@ class VrrClient {
         )), stop)
     }
 
-    suspend fun nearby(point: GeoPoint): List<Stop> = EfaParser.stops(request("XML_COORD_REQUEST", mapOf(
+    suspend fun nearby(point: GeoPoint): List<Stop> = nearbyWithin(point, 700)
+
+    suspend fun nearbyWithin(point: GeoPoint, radius: Int): List<Stop> = EfaParser.stops(request("XML_COORD_REQUEST", mapOf(
         "coord" to "${point.lon}:${point.lat}:WGS84[dd.ddddd]", "inclFilter" to "1",
-        "type_1" to "STOP", "radius_1" to "700", "max" to "12"
+        "type_1" to "STOP", "radius_1" to radius.coerceIn(100, 3000).toString(), "max" to "30"
     ))).sortedBy { it.distance ?: Int.MAX_VALUE }
 
     suspend fun departures(stop: Stop): List<Departure> = EfaParser.departures(request("XML_DM_REQUEST", mapOf(

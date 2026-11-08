@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.graphics.Color
 import android.graphics.drawable.Icon
 import de.luca.mitfahrt.R
+import de.luca.mitfahrt.data.AppSettingsStore
 
 object NowBarSupport {
     const val PROMOTION_SETTINGS = "android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS"
@@ -35,6 +36,10 @@ object NowBarSupport {
         manufacturer.equals("samsung", true) && sdk >= 36 && canPromote && enabled
 
     fun extras(context: Context, title: String, text: String, chip: String, progress: Int): Bundle {
+        val settings = AppSettingsStore(context)
+        val enabled = settings.current().bool("nowbar_enabled", true)
+        settings.close()
+        if (!enabled) return Bundle().apply { putBoolean("android.requestPromotedOngoing", false) }
         val manager = context.getSystemService(NotificationManager::class.java)
         val allowed = Build.VERSION.SDK_INT >= 36 && manager.canPostPromotedNotifications()
         return notificationExtras(context.packageName, Build.MANUFACTURER, Build.VERSION.SDK_INT, allowed, samsungEnabled(context),
@@ -69,7 +74,11 @@ object NowBarSupport {
 
     fun status(context: Context): String {
         val manager = context.getSystemService(NotificationManager::class.java)
+        val settings = AppSettingsStore(context)
+        val enabled = settings.current().bool("nowbar_enabled", true)
+        settings.close()
         return when {
+            !enabled -> "Now Bar ist in Mitfahrt ausgeschaltet."
             !manager.areNotificationsEnabled() -> "Benachrichtigungen sind ausgeschaltet."
             manager.getNotificationChannel(RideNotifications.CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE -> "Fahrt-Benachrichtigungen sind ausgeschaltet."
             Build.VERSION.SDK_INT < 36 -> "Live-Updates benötigen Android 16 oder neuer."

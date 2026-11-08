@@ -61,7 +61,7 @@ fun NewLiveMapScreen(onClose: () -> Unit) {
                     IconButton(onClick = { error = null; loading = true; retry++ }) { Icon(Icons.Outlined.Refresh, "Karte neu laden") }
                     IconButton(onClick = { openBrowser() }) { Icon(Icons.Outlined.OpenInBrowser, "Im Browser öffnen") }
                 }
-                if (loading && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (loading && error == null) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                 Box(Modifier.fillMaxWidth().weight(1f)) {
                     if (lifecycle.isAtLeast(Lifecycle.State.STARTED) && error == null) key(retry) {
                         AndroidView(

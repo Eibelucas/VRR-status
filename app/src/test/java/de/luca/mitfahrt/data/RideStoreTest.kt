@@ -176,7 +176,7 @@ class RideStoreTest {
         assertNull(RideStore(app).state.value.liveBus.vehicle)
         assertFalse(app.getSharedPreferences("ride", Context.MODE_PRIVATE).getString("active", "")!!.contains("2114"))
     }
-    @Test fun `switching journey or boarding clears the previous vehicle position`() {
+    @Test fun `switching journeys clears vehicle selection and boarding preserves it with a new revision`() {
         val store = RideStore(app)
         val original = ride()
         store.setRide(original)
@@ -185,8 +185,10 @@ class RideStoreTest {
         assertNull(store.state.value.liveBus.selectedVehicleId)
         assertEquals(ride("another").departure.key, store.state.value.liveBus.journeyKey)
         store.update { it.copy(liveBus = it.liveBus.copy(selectedVehicleId = "2114")) }
+        val previousRevision = store.state.value.liveBus.revision
         store.setRide(ride("another").copy(boarded = true))
-        assertNull(store.state.value.liveBus.selectedVehicleId)
+        assertEquals("2114", store.state.value.liveBus.selectedVehicleId)
+        assertEquals(previousRevision + 1, store.state.value.liveBus.revision)
         store.clear()
         assertEquals(LiveBusState(), store.state.value.liveBus)
     }

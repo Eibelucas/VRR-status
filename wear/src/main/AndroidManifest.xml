@@ -14,6 +14,14 @@
         </activity>
         <service android:name=".WatchDataService" android:exported="true">
             <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/library/v1" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/command-result/v1" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/haptic-test/v1" />
             </intent-filter>
@@ -25,6 +33,15 @@
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/arrival-alert/v1" />
             </intent-filter>
+        </service>
+        <service android:name=".RideComplicationService" android:exported="true"
+            android:label="Mitfahrt · Busstatus" android:icon="@drawable/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.watchface.complications.datasource.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="SHORT_TEXT,LONG_TEXT" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="60" />
         </service>
         <service android:name=".RideTileService" android:exported="true"
             android:label="Fahrtstatus" android:icon="@drawable/ic_launcher"

@@ -13,10 +13,14 @@ data class TrackingState(
     val location: GeoPoint? = null, val locationAt: Instant? = null,
     val message: String? = null, val lastRefreshFailed: Boolean = false,
     val candidates: List<Departure> = emptyList(),
-    val liveBus: LiveBusState = LiveBusState()
+    val liveBus: LiveBusState = LiveBusState(),
+    val pendingArrivalStopId: String? = null,
+    val pendingArrivalAt: Instant? = null,
+    val wifiBusDetected: Boolean = false
 )
 
 class RideStore(context: Context) {
+    private val settings = AppSettingsStore(context)
     private val prefs = context.getSharedPreferences("ride", Context.MODE_PRIVATE)
     // Keep deleted journeys hidden when their active tracking session refreshes or resumes.
     private var forgottenJourneys = runCatching {
@@ -28,7 +32,8 @@ class RideStore(context: Context) {
     }.getOrDefault(emptyList())
     private val last = MutableStateFlow(runCatching {
         prefs.getString("last_ride", null)?.let(RideCodec::decode)?.takeUnless {
-            it.demo || it.departure.key in forgottenJourneys
+            it.demo || it.departure.key in forgottenJourneys || !settings.current().bool("history_enabled", true) ||
+                expired(it, settings.current().int("history_days", 0))
         }
     }.getOrNull())
     val lastRide = last.asStateFlow()
@@ -43,16 +48,21 @@ class RideStore(context: Context) {
     fun setRide(ride: Ride?, preserveStatus: Boolean = false) {
         update { it.copy(ride = ride, lastRefreshFailed = if (preserveStatus) it.lastRefreshFailed else false,
             message = if (preserveStatus) it.message else null,
-            liveBus = if (it.ride?.departure?.key == ride?.departure?.key && it.ride?.boarded == ride?.boarded)
-                it.liveBus else LiveBusState(journeyKey = ride?.departure?.key)) }
+            pendingArrivalStopId = if (it.ride?.departure?.key == ride?.departure?.key) it.pendingArrivalStopId else null,
+            pendingArrivalAt = if (it.ride?.departure?.key == ride?.departure?.key) it.pendingArrivalAt else null,
+            liveBus = if (it.ride?.departure?.key == ride?.departure?.key)
+                it.liveBus.copy(revision = it.liveBus.revision + if (it.ride?.boarded != ride?.boarded) 1 else 0)
+                else LiveBusState(journeyKey = ride?.departure?.key)) }
         val savedRide = ride?.takeUnless { it.demo }
         val encoded = savedRide?.let(RideCodec::encode)
-        val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys }
+        val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys || !settings.current().bool("history_enabled", true) }
         prefs.edit().apply {
             if (encoded == null) remove("active") else putString("active", encoded)
             if (rememberedRide != null) putString("last_ride", encoded)
+            if (!settings.current().bool("history_enabled", true)) remove("last_ride")
         }.apply()
         if (rememberedRide != null) last.value = rememberedRide
+        if (!settings.current().bool("history_enabled", true)) last.value = null
     }
 
     @Synchronized
@@ -68,7 +78,7 @@ class RideStore(context: Context) {
     @Synchronized
     fun restoreLastRide(ride: Ride): Boolean {
         // An old snackbar must not replace a newer trip or undo a later deletion.
-        if (ride.demo || last.value != null || forgottenJourneys.firstOrNull() != ride.departure.key) return false
+        if (ride.demo || !settings.current().bool("history_enabled", true) || last.value != null || forgottenJourneys.firstOrNull() != ride.departure.key) return false
         val restored = mutable.value.ride?.takeIf { !it.demo && it.departure.key == ride.departure.key } ?: ride
         forgottenJourneys = forgottenJourneys.filterNot { it == ride.departure.key }
         prefs.edit().putString("last_ride", RideCodec.encode(restored))
@@ -81,6 +91,17 @@ class RideStore(context: Context) {
         prefs.edit().remove("active").apply()
         mutable.value = TrackingState()
     }
+
+    fun applyPrivacy() {
+        val current = last.value
+        if (!settings.current().bool("history_enabled", true) || current?.let { expired(it, settings.current().int("history_days", 0)) } == true) {
+            prefs.edit().remove("last_ride").apply()
+            last.value = null
+        }
+    }
+
+    private fun expired(ride: Ride, days: Int): Boolean = days > 0 &&
+        Instant.now().epochSecond - ride.fetchedAt.epochSecond > days.toLong() * 86_400
 
     private companion object { const val MAX_FORGOTTEN_JOURNEYS = 32 }
 }

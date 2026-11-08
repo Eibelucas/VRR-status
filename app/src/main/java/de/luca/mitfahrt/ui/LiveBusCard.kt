@@ -17,7 +17,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import de.luca.mitfahrt.data.LiveBusState
+import de.luca.mitfahrt.data.AppSettingsStore
 import de.luca.mitfahrt.data.NewVehicle
 import de.luca.mitfahrt.data.Ride
 import de.luca.mitfahrt.data.Stop
@@ -33,7 +35,10 @@ import kotlin.math.roundToInt
 @Composable
 fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVehicle) -> Unit,
     onClear: () -> Unit, onRefresh: () -> Unit) {
-    if (ride.demo || ride.boarded || ride.departure.cancelled || state.journeyKey != ride.departure.key) return
+    val context = LocalContext.current
+    val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
+    if (ride.demo || ride.departure.cancelled || state.journeyKey != ride.departure.key ||
+        !settings.bool(if (ride.boarded) "map_onboard" else "map_waiting", true)) return
     var chooseVehicle by rememberSaveable(ride.departure.key) { mutableStateOf(false) }
     val boarding = ride.stops.getOrNull(ride.boardingIndex)?.let { Stop(it.id, it.name, it.point) }
     val candidates = state.candidates.filter { it.isFresh(now) }.distinctBy { it.id }
@@ -55,12 +60,18 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                 color = Amber, fontSize = 12.sp, lineHeight = 18.sp)
             if (current.destination.isNotBlank()) Text("${if (current.directionReliable) "Richtung" else "Anzeige am Bus"} ${shortName(current.destination)}",
                 color = Soft, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val pathCurrent = current.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
             WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
-                current.observedAt, now)
+                current.observedAt, now,
+                routePoints = if (pathCurrent && current.routeStops.size > 1) current.routeStops.map { it.point }
+                    else ride.stops.mapNotNull { it.point },
+                routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
+                otherVehicles = candidates, selectedVehicleId = current.id,
+                onSelectVehicle = onSelect)
             Text("Quelle: NEW · ${vehicleAge(current.observedAt, now)}", color = Soft, fontSize = 12.sp)
-            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
-            Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Outlined.DirectionsBus, null, tint = Lime)
                     Text(when {
@@ -80,7 +91,7 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                         !state.loading && state.error == null -> Text("NEW meldet gerade keine zuordenbare Position.",
                             color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
                     }
-                    if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                     if (candidates.isEmpty()) OutlinedButton(onClick = onRefresh, enabled = !state.loading,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Erneut laden") }
                 }
@@ -104,7 +115,7 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
             Text("Fahrzeug auswählen", style = MaterialTheme.typography.headlineSmall)
             Text("Linie und Richtung vergleichen. Die Abfahrt ist damit nicht bestätigt.",
                 color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
-            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(candidates, key = { it.id }) { vehicle ->
                     VehicleChoiceRow(vehicle, boarding, now, state.selectedVehicleId == vehicle.id) {

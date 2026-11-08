@@ -28,7 +28,7 @@ fun SchoolTripCard(trips: List<SchoolTrip>, home: HomeState, now: Instant, busy:
     val next = if (home.status == NearbyStatus.READY) RouteHistory.suggestions(listOf(trip.route()), home.stops,
         home.departures.filter { d -> home.stops.firstOrNull { stopKey(it.id) == stopKey(d.stopId) }?.let {
             JourneyOptions.reachability(it, d, now).isPossible } == true }, now).firstOrNull() else null
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+    AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.School, null, tint = Lime)
@@ -67,7 +67,7 @@ fun ExitTargetCard(ride: Ride, exitEnabled: Boolean, onTarget: (Int?) -> Unit, o
     var query by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     val target = ride.exitTargetStop()
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+    AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (exitEnabled) Icons.Outlined.NotificationsActive else Icons.Outlined.NotificationsOff, null, tint = Lime)
             Spacer(Modifier.width(12.dp))
@@ -128,7 +128,7 @@ fun AlternativesCard(ride: Ride, state: AlternativesState, now: Instant, onRefre
             Text("Andere Verbindung", fontWeight = FontWeight.SemiBold, fontSize = 20.sp, modifier = Modifier.weight(1f))
             IconButton(onClick = onRefresh, enabled = !state.loading) { Icon(Icons.Outlined.Refresh, "Alternativen aktualisieren", tint = Lime) }
         }
-        if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         state.error?.let { Text(it, color = Amber, fontSize = 13.sp) }
         options.forEach { option ->
             DepartureRow(option.departure, now, false, true, showStop = true, distance = option.stop.distance) { onChoose(option.departure) }

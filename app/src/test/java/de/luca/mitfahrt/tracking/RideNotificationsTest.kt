@@ -124,4 +124,27 @@ class RideNotificationsTest {
         assertTrue(notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("Keine Live-Zeit"))
     }
 
+    @Test fun `disabling Now Bar retains foreground notification without requesting promotion`() {
+        val settings = AppSettingsStore(context)
+        settings.set("nowbar_enabled", "false")
+        val notification = RideNotifications(context).build(TrackingState(DemoRide.create(now), running = true), now)
+        assertFalse(notification.extras.getBoolean("android.requestPromotedOngoing"))
+        assertTrue(notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
+        assertNotNull(notification.contentIntent)
+        settings.close()
+    }
+
+    @Test fun `private lockscreen hides the route and selected actions replace defaults`() {
+        val settings = AppSettingsStore(context)
+        settings.set("lockscreen_details", "false")
+        settings.set("notification_actions", "map,stop")
+        val ride = DemoRide.create(now).copy(demo = false, boarded = false)
+        val notification = RideNotifications(context).build(TrackingState(ride, running = true), now)
+        assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility)
+        assertNotNull(notification.publicVersion)
+        assertEquals("Mitfahrt", notification.publicVersion.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals(listOf("Karte", "Beenden"), notification.actions.map { it.title.toString() })
+        settings.close()
+    }
+
 }

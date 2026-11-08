@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -25,23 +26,26 @@ import java.time.Instant
 fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, choosing: Boolean, choosingKey: String?,
     onSearch: () -> Unit, onLocation: () -> Unit, onRefresh: () -> Unit, onStop: (Stop) -> Unit,
     onAllStops: () -> Unit, onRoute: (FrequentRoute) -> Unit, onDeparture: (Departure) -> Unit, onClearHistory: () -> Unit,
-    onRemoveRoute: (FrequentRoute) -> Unit) {
+    onRemoveRoute: (FrequentRoute) -> Unit, showNearby: Boolean = true, showRoutes: Boolean = true,
+    showSearch: Boolean = true) {
+    val context = LocalContext.current
+    val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
     var allRoutes by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val matches = if (home.status == NearbyStatus.READY) RouteHistory.suggestions(routes, home.stops, home.departures, now) else emptyList()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel).clickable(onClick = onSearch).padding(18.dp),
+        if (showSearch) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel).clickable(onClick = onSearch).padding(18.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, null, tint = Lime)
             Spacer(Modifier.width(12.dp)); Text("Haltestelle suchen", color = Soft)
         }
-        if (routes.isNotEmpty()) {
+        if (showRoutes && routes.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Streckenvorschläge", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 TextButton(onClick = { allRoutes = true }) { Text("Alle") }
             }
             if (home.status == NearbyStatus.READY) {
-                if (home.departuresLoading && matches.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (home.departuresLoading && matches.isEmpty()) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                 matches.take(3).forEach { match -> key(match.route.key) {
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         DepartureRow(match.departure, now, choosingKey == match.departure.key, !choosing,
@@ -57,12 +61,13 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
                         else "Gerade keine passende Abfahrt in deiner Nähe.", color = Soft, fontSize = 13.sp, lineHeight = 19.sp)
             } else routes.take(2).forEach { route -> HistoryRow(route, onRemove = { onRemoveRoute(route) }) { onRoute(route) } }
         }
+        if (showNearby) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("In deiner Nähe", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             IconButton(onClick = onRefresh, enabled = !home.loading) { Icon(Icons.Outlined.Refresh, "Haltestellen aktualisieren", tint = Lime) }
         }
         if (home.status != NearbyStatus.READY) {
-            Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(when (home.status) {
                         NearbyStatus.NO_PERMISSION -> "Haltestellen automatisch finden"
@@ -70,7 +75,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
                         NearbyStatus.UNAVAILABLE -> "Standort gerade nicht verfügbar"
                         else -> "Standort wird gesucht …"
                     }, fontWeight = FontWeight.SemiBold)
-                    if (home.status == NearbyStatus.LOCATING) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (home.status == NearbyStatus.LOCATING) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                     else Button(onClick = onLocation) { Text(when (home.status) {
                         NearbyStatus.NO_PERMISSION -> "Standort erlauben"
                         NearbyStatus.LOCATION_OFF -> "Standort öffnen"
@@ -80,13 +85,20 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
             }
         }
         if (home.approximate) Text("Ungefährer Standort", color = Soft, fontSize = 12.sp)
-        if (home.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (home.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         home.error?.let { Text(it, color = Amber, fontSize = 13.sp) }
-        home.stops.take(3).forEach { stop -> key(stop.id) { StopRow(stop) { onStop(stop) } } }
+        home.stops.take(3).forEach { stop -> key(stop.id) {
+            StopRow(stop) { onStop(stop) }
+            home.departures.filter { stopKey(it.stopId) == stopKey(stop.id) }
+                .take(settings.int("departure_count", 5).coerceIn(1, 15)).forEach { departure -> key(departure.key) {
+                    DepartureRow(departure, now, choosingKey == departure.key, !choosing) { onDeparture(departure) }
+                } }
+        } }
         if (home.status == NearbyStatus.READY && home.stops.isEmpty() && !home.loading && home.error == null)
-            Text("Keine Haltestelle im Umkreis von 700 m gefunden.", color = Soft, fontSize = 14.sp)
+            Text("Keine passende Haltestelle im eingestellten Umkreis gefunden.", color = Soft, fontSize = 14.sp)
         if (home.stops.size > 3) TextButton(onClick = onAllStops, modifier = Modifier.fillMaxWidth()) {
             Text("Alle Haltestellen")
+        }
         }
     }
     if (allRoutes) ModalBottomSheet(onDismissRequest = { allRoutes = false }, containerColor = Ink) {

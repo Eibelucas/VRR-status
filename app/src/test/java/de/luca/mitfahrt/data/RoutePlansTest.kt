@@ -158,6 +158,56 @@ class RoutePlansTest {
             assertTrue(RoutePlans.decode(JSONObject().put("routes", JSONArray().put(row)).toString()).routes.isEmpty())
         }
     }
+
+    @Test fun `multiple windows cover separate school periods including overnight rollover`() {
+        val route = plan().copy(nearbyOnly = false, windows = listOf(
+            RouteWindow(setOf(1), 420, 540), RouteWindow(setOf(1), 720, 900), RouteWindow(setOf(5), 1320, 120)))
+        assertTrue(RoutePlans.active(route, Instant.parse("2026-11-02T06:30:00Z"), emptyList()))
+        assertFalse(RoutePlans.active(route, Instant.parse("2026-11-02T09:00:00Z"), emptyList()))
+        assertTrue(RoutePlans.active(route, Instant.parse("2026-11-02T12:00:00Z"), emptyList()))
+        assertTrue(RoutePlans.active(route, Instant.parse("2026-11-07T00:30:00Z"), emptyList()))
+        assertFalse(RoutePlans.active(route, Instant.parse("2026-11-07T01:00:00Z"), emptyList()))
+    }
+
+    @Test fun `manual routes and school breaks affect suggestions without blocking deliberate lookup`() {
+        val route = plan().copy(nearbyOnly = false, schoolOnly = true)
+        assertFalse(RoutePlans.active(route, now, emptyList(), schoolPaused = true))
+        assertFalse(RoutePlans.active(route, now, emptyList(), freeDates = setOf("2026-11-06")))
+        assertTrue(RoutePlans.active(route.copy(schoolOnly = false), now, emptyList(), schoolPaused = true))
+        assertFalse(RoutePlans.active(route.copy(excludedDates = setOf("2026-11-06")), now, emptyList()))
+        assertFalse(RoutePlans.active(route.copy(manualOnly = true), now, emptyList()))
+        assertEquals(listOf(departure()), RoutePlans.candidates(route.copy(manualOnly = true), emptyList(), listOf(departure()), now))
+    }
+
+    @Test fun `multiple allowed lines retain normalization and reject unrelated services`() {
+        val route = plan().copy(match = RouteMatch.LINE, line = "006", allowedLines = setOf("006", " SB 81 "))
+        val six = departure("6", 60)
+        val sb = departure("SB81", 120)
+        assertEquals(listOf(six, sb), RoutePlans.candidates(route, emptyList(), listOf(departure("60"), sb, six, departure("SB8")), now))
+    }
+
+    @Test fun `extended route settings roundtrip while legacy windows retain defaults`() {
+        val route = plan().copy(origin = origin.copy(distance = null), windows = listOf(RouteWindow(setOf(1, 3), 420, 540),
+            RouteWindow(setOf(5), 720, 900)), allowedLines = setOf("006", "SB81"), color = "#AABBCC", icon = "school",
+            walkingMinutes = 12, bufferMinutes = 4, schoolOnly = true, manualOnly = true,
+            excludedDates = setOf("2026-12-24", "2026-12-25"), alternateRouteId = "back-up", order = 3)
+        assertEquals(route, RoutePlans.decode(RoutePlans.encode(RoutePlansState(routes = listOf(route)))).routes.single())
+        assertEquals(listOf(RouteWindow()), plan().effectiveWindows())
+    }
+
+    @Test fun `invalid extended schedules and dates cannot fall back to broad default windows`() {
+        val original = JSONObject(RoutePlans.encode(RoutePlansState(routes = listOf(plan())))).getJSONArray("routes").getJSONObject(0)
+        listOf(
+            "windows" to "anytime",
+            "windows" to JSONArray().put(JSONObject().put("days", JSONArray(listOf(1.5))).put("startMinute", 420).put("endMinute", 540)),
+            "windows" to JSONArray().put(JSONObject().put("days", JSONArray(listOf(1))).put("startMinute", "morning")),
+            "excludedDates" to JSONArray(listOf("tomorrow")), "excludedDates" to "2026-11-06",
+            "walkingMinutes" to -1, "bufferMinutes" to 31, "color" to "#oops", "alternateRouteId" to "school"
+        ).forEach { (key, value) ->
+            val row = JSONObject(original.toString()).put(key, value)
+            assertTrue("Accepted invalid $key: $value", RoutePlans.decode(JSONObject().put("routes", JSONArray().put(row)).toString()).routes.isEmpty())
+        }
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -211,5 +261,36 @@ class RoutePlansStoreTest {
         assertFalse(store.restore(removed))
         assertEquals("New name", store.current().routes.first { it.id == "school" }.name)
         assertNull(store.remove("unknown"))
+    }
+
+    @Test fun `reordering and hiding today persist without changing another route`() {
+        val store = RoutePlansStore(app)
+        listOf("school", "home", "sport").forEach { store.save(plan(it)) }
+        assertTrue(store.move("sport", -1))
+        assertEquals(listOf("school", "sport", "home"), RoutePlansStore(app).current().routes.map { it.id })
+        assertFalse(store.move("school", -1))
+        assertFalse(store.move("missing", 1))
+        val today = Instant.parse("2026-11-08T10:00:00Z")
+        assertTrue(store.setTodayHidden("school", true, today))
+        assertEquals(setOf("2026-11-08"), RoutePlansStore(app).current().routes.first { it.id == "school" }.excludedDates)
+        assertTrue(store.current().routes.first { it.id == "home" }.excludedDates.isEmpty())
+        assertTrue(store.setTodayHidden("school", false, today))
+        assertTrue(store.current().routes.first { it.id == "school" }.excludedDates.isEmpty())
+    }
+
+    @Test fun `route template import is atomic and retains learning choice and unrelated routes`() {
+        val store = RoutePlansStore(app)
+        store.setAutomaticLearning(false)
+        store.save(plan("school")); store.save(plan("home"))
+        val before = store.current()
+        assertFalse(store.importMerge(listOf(plan("school").copy(name = "Should not save"), plan("bad").copy(walkingMinutes = 999))))
+        assertEquals(before, store.current())
+        assertFalse(store.importMerge(listOf(plan("duplicate"), plan("duplicate"))))
+        assertEquals(before, store.current())
+        assertTrue(store.importMerge(listOf(plan("school").copy(name = "New school name"), plan("sport"))))
+        val imported = RoutePlansStore(app).current()
+        assertFalse(imported.automaticLearning)
+        assertEquals(listOf("school", "home", "sport"), imported.routes.map { it.id })
+        assertEquals("New school name", imported.routes.first().name)
     }
 }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
@@ -63,8 +64,23 @@ data class RoutePlan(
     val line: String = "",
     val window: RouteWindow = RouteWindow(),
     val enabled: Boolean = true,
-    val nearbyOnly: Boolean = true
-)
+    val nearbyOnly: Boolean = true,
+    /** Empty preserves the legacy single-window representation. */
+    val windows: List<RouteWindow> = emptyList(),
+    val allowedLines: Set<String> = emptySet(),
+    val color: String = "new",
+    val icon: String = "bus",
+    val walkingMinutes: Int = 5,
+    val bufferMinutes: Int = 2,
+    val schoolOnly: Boolean = false,
+    val manualOnly: Boolean = false,
+    val excludedDates: Set<String> = emptySet(),
+    val alternateRouteId: String? = null,
+    val order: Int = 0
+) {
+    fun effectiveWindows(): List<RouteWindow> = windows.ifEmpty { listOf(window) }
+    fun lineLabel(): String = (allowedLines.ifEmpty { setOf(line) }).filter { it.isNotBlank() }.joinToString(", ")
+}
 
 data class RoutePlansState(val automaticLearning: Boolean = true, val routes: List<RoutePlan> = emptyList())
 
@@ -72,19 +88,28 @@ object RoutePlans {
     const val MAX_ROUTES = 24
     const val MAX_NAME_LENGTH = 80
     const val MAX_LINE_LENGTH = 30
+    const val MAX_WINDOWS = 12
+    const val MAX_LINES = 12
+    val COLORS = listOf("new", "blue", "violet", "orange", "pink", "teal", "red", "yellow")
+    val ICONS = listOf("bus", "school", "home", "work", "sport", "star")
+    fun validColor(value: String): Boolean = value in COLORS || value.matches(Regex("#[0-9a-fA-F]{6}"))
 
-    fun active(plan: RoutePlan, now: Instant, nearbyStops: List<Stop>): Boolean =
-        plan.enabled && plan.window.active(now) &&
+    fun active(plan: RoutePlan, now: Instant, nearbyStops: List<Stop>, schoolPaused: Boolean = false,
+        freeDates: Set<String> = emptySet()): Boolean =
+        plan.enabled && !plan.manualOnly && plan.effectiveWindows().any { it.active(now) } &&
+            now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate().toString().let { date ->
+                date !in plan.excludedDates && (!plan.schoolOnly || !schoolPaused && date !in freeDates)
+            } &&
             (!plan.nearbyOnly || nearbyStops.any { stopKey(it.id) == stopKey(plan.origin.id) })
 
     /** These are boarding candidates only; the trip must still be checked for the chosen target. */
     @Suppress("UNUSED_PARAMETER") // Kept alongside nearby-stop callers; manual opening also works away from the origin.
     fun candidates(plan: RoutePlan, stops: List<Stop>, departures: List<Departure>, now: Instant): List<Departure> {
         val clean = clean(plan) ?: return emptyList()
-        val line = normalizeLine(clean.line)
+        val lines = (clean.allowedLines.ifEmpty { setOf(clean.line) }).map(::normalizeLine).toSet()
         return departures.asSequence().filter { departure ->
             stopKey(departure.stopId) == clean.origin.id && !departure.cancelled &&
-                (clean.match == RouteMatch.STOP || normalizeLine(departure.line) == line) &&
+                (clean.match == RouteMatch.STOP || normalizeLine(departure.line) in lines) &&
                 departure.effective >= now && departure.effective <= now.plusSeconds(3600) &&
                 departure.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } == true
         }.distinctBy { it.key }.sortedBy { it.effective }.toList()
@@ -108,11 +133,20 @@ object RoutePlans {
         val id = plan.id.trim()
         val name = plan.name.trim()
         val line = plan.line.trim()
+        val lines = plan.allowedLines.map { it.trim() }.toSet()
+        val alternate = plan.alternateRouteId?.trim()?.takeIf { it.isNotEmpty() }
         if (id.isEmpty() || id.length > 128 || name.isEmpty() || name.length > MAX_NAME_LENGTH ||
-            line.length > MAX_LINE_LENGTH || (plan.match == RouteMatch.LINE && normalizeLine(line).isEmpty()) ||
-            origin.id == destination.id || !plan.window.valid()) return null
+            line.length > MAX_LINE_LENGTH || lines.size > MAX_LINES || lines.any { it.isBlank() || it.length > MAX_LINE_LENGTH } ||
+            (plan.match == RouteMatch.LINE && normalizeLine(line).isEmpty() && lines.isEmpty()) ||
+            origin.id == destination.id || !plan.window.valid() || plan.windows.size > MAX_WINDOWS ||
+            plan.windows.any { !it.valid() } || !validColor(plan.color) || plan.icon !in ICONS ||
+            plan.walkingMinutes !in 0..60 || plan.bufferMinutes !in 0..30 || plan.order !in -1000..1000 ||
+            plan.excludedDates.size > 365 || plan.excludedDates.any { runCatching { LocalDate.parse(it).toString() != it }.getOrDefault(true) } ||
+            alternate == id || (alternate != null && alternate.length > 128)) return null
         return plan.copy(id = id, name = name, origin = origin, destination = destination, line = line,
-            window = plan.window.copy(days = plan.window.days.toSortedSet()))
+            window = plan.window.copy(days = plan.window.days.toSortedSet()),
+            windows = plan.windows.distinct().map { it.copy(days = it.days.toSortedSet()) },
+            allowedLines = lines, excludedDates = plan.excludedDates.toSortedSet(), alternateRouteId = alternate)
     }
 
     fun encode(state: RoutePlansState): String = JSONObject().apply {
@@ -123,6 +157,13 @@ object RoutePlans {
                 put("origin", stopJson(plan.origin)); put("destination", stopJson(plan.destination))
                 put("match", plan.match.name); put("line", plan.line)
                 put("enabled", plan.enabled); put("nearbyOnly", plan.nearbyOnly)
+                if (plan.windows.isNotEmpty()) put("windows", JSONArray(plan.windows.map(::windowJson)))
+                if (plan.allowedLines.isNotEmpty()) put("allowedLines", JSONArray(plan.allowedLines.sorted()))
+                put("color", plan.color); put("icon", plan.icon)
+                put("walkingMinutes", plan.walkingMinutes); put("bufferMinutes", plan.bufferMinutes)
+                put("schoolOnly", plan.schoolOnly); put("manualOnly", plan.manualOnly)
+                put("excludedDates", JSONArray(plan.excludedDates.sorted())); put("alternateRouteId", plan.alternateRouteId)
+                put("order", plan.order)
                 put("window", JSONObject().apply {
                     put("days", JSONArray(plan.window.days.sorted()))
                     put("startMinute", plan.window.startMinute); put("endMinute", plan.window.endMinute)
@@ -130,6 +171,10 @@ object RoutePlans {
             }
         }))
     }.toString()
+
+    private fun windowJson(window: RouteWindow): JSONObject = JSONObject().apply {
+        put("days", JSONArray(window.days.sorted())); put("startMinute", window.startMinute); put("endMinute", window.endMinute)
+    }
 
     private fun stopJson(stop: Stop): JSONObject = JSONObject().apply {
         put("id", stop.id); put("name", stop.name)
@@ -162,11 +207,30 @@ object RoutePlans {
                         value.toInt()
                     }.toSet()
                 } ?: (1..7).toSet()
+                fun windows(): List<RouteWindow> = if (!item.has("windows")) emptyList() else item.getJSONArray("windows").let { array ->
+                    (0 until array.length()).map { index ->
+                        val value = array.getJSONObject(index)
+                        val selectedDays = value.getJSONArray("days").let { d ->
+                            (0 until d.length()).map { i ->
+                                val n = d.get(i) as? Number ?: error("Invalid weekday")
+                                require(n.toDouble() == n.toInt().toDouble()); n.toInt()
+                            }.toSet()
+                        }
+                        RouteWindow(selectedDays, integer(value, "startMinute", 0), integer(value, "endMinute", 0))
+                    }
+                }
+                fun strings(key: String): Set<String> = if (!item.has(key)) emptySet() else item.getJSONArray(key).let { array ->
+                    (0 until array.length()).map { array.getString(it) }.toSet()
+                }
                 clean(RoutePlan(item.getString("id"), item.getString("name"), stop("origin"), stop("destination"),
                     RouteMatch.valueOf(item.optString("match", RouteMatch.STOP.name)), item.optString("line", ""),
                     RouteWindow(days, window?.let { integer(it, "startMinute", 0) } ?: 0,
                         window?.let { integer(it, "endMinute", 0) } ?: 0),
-                    item.optBoolean("enabled", true), item.optBoolean("nearbyOnly", true)))
+                    item.optBoolean("enabled", true), item.optBoolean("nearbyOnly", true),
+                    windows(), strings("allowedLines"), item.optString("color", "new"), item.optString("icon", "bus"),
+                    integer(item, "walkingMinutes", 5), integer(item, "bufferMinutes", 2),
+                    item.optBoolean("schoolOnly", false), item.optBoolean("manualOnly", false), strings("excludedDates"),
+                    item.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, integer(item, "order", 0)))
             }.getOrNull()
         }.distinctBy { it.id }.take(MAX_ROUTES)
         RoutePlansState(json.optBoolean("automaticLearning", true), routes)
@@ -208,6 +272,37 @@ class RoutePlansStore(context: Context) {
         if (current.routes.any { it.id == clean.id } || current.routes.size >= RoutePlans.MAX_ROUTES) return false
         update(current.copy(routes = current.routes + clean))
         return true
+    }
+
+    @Synchronized fun move(id: String, delta: Int): Boolean {
+        val current = current()
+        val routes = current.routes.sortedBy { it.order }.toMutableList()
+        val from = routes.indexOfFirst { it.id == id }
+        if (from < 0) return false
+        val to = (from + delta).coerceIn(0, routes.lastIndex)
+        if (from == to) return false
+        routes.add(to, routes.removeAt(from))
+        update(current.copy(routes = routes.mapIndexed { index, route -> route.copy(order = index) }))
+        return true
+    }
+
+    @Synchronized fun importMerge(plans: List<RoutePlan>): Boolean {
+        if (plans.size > RoutePlans.MAX_ROUTES) return false
+        val clean = plans.map { RoutePlans.clean(it) ?: return false }
+        if (clean.distinctBy { it.id }.size != clean.size) return false
+        val current = current()
+        val byId = clean.associateBy { it.id }
+        val merged = current.routes.map { byId[it.id] ?: it } + clean.filter { imported -> current.routes.none { it.id == imported.id } }
+        if (merged.size > RoutePlans.MAX_ROUTES) return false
+        update(current.copy(routes = merged.sortedBy { it.order }))
+        return true
+    }
+
+    @Synchronized fun setTodayHidden(id: String, hidden: Boolean, now: Instant = Instant.now()): Boolean {
+        val plan = current().routes.firstOrNull { it.id == id } ?: return false
+        val date = now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate().toString()
+        val dates = if (hidden) plan.excludedDates + date else plan.excludedDates - date
+        return save(plan.copy(excludedDates = dates))
     }
 
     private fun read(): RoutePlansState = RoutePlans.decode(runCatching { prefs.getString("state", "{}") }.getOrNull() ?: "{}")

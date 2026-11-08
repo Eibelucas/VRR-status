@@ -22,7 +22,7 @@ class LiveBusTracker(
         journeyKey = key
         val base = previous.takeIf { it.journeyKey == key }
             ?: LiveBusState(journeyKey = key, revision = previous.revision)
-        if (ride.demo || ride.boarded || ride.departure.cancelled) {
+        if (ride.demo || ride.departure.cancelled) {
             fleet = null
             return@withLock LiveBusState(journeyKey = key, revision = base.revision)
         }
@@ -91,7 +91,7 @@ class LiveBusTracker(
     companion object {
         /** A click selects telemetry, not proof that this vehicle operates the chosen departure. */
         fun select(ride: Ride, state: LiveBusState, vehicle: NewVehicle, now: Instant): LiveBusState? {
-            if (ride.demo || ride.boarded || ride.departure.cancelled || state.journeyKey != ride.departure.key) return null
+            if (ride.demo || ride.departure.cancelled || state.journeyKey != ride.departure.key) return null
             val current = state.candidates.firstOrNull { it.id == vehicle.id } ?: return null
             if (!NewVehicleMatcher.matchesCandidate(ride, current, now)) return null
             return state.copy(vehicle = current, selectedVehicleId = current.id, confirmed = false,

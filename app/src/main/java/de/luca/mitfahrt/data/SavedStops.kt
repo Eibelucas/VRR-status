@@ -103,12 +103,13 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
     private val app = context.applicationContext
     private val prefs = app.getSharedPreferences("saved_stops", Context.MODE_PRIVATE)
     private val routePreferences = app.getSharedPreferences("route_plans", Context.MODE_PRIVATE)
+    private val customizationPreferences = app.getSharedPreferences(AppSettingsStore.PREFERENCES, Context.MODE_PRIVATE)
     private val plans = RoutePlansStore(app)
-    private data class Observation(val stopHash: String, val visits: List<String>, val at: Instant, val explicit: Boolean = false) {
-        val qualified: Boolean get() = explicit || visits.size >= MIN_OPENS
-    }
+    private val settings = AppSettingsStore(app)
+    private data class Observation(val stopHash: String, val visits: List<String>, val at: Instant, val explicit: Boolean = false)
     private var stored = SavedStops.decode(runCatching { prefs.getString("state", "{}") }.getOrNull() ?: "{}")
     private var observations = readObservations()
+    private var muted = readMuted()
     private val mutable = MutableStateFlow(SavedStopsState())
     val state = mutable.asStateFlow()
     private val learningListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -126,11 +127,12 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
         }
         persist()
         routePreferences.registerOnSharedPreferenceChangeListener(learningListener)
+        customizationPreferences.registerOnSharedPreferenceChangeListener(learningListener)
     }
 
     /** Browsing remembers no station details until three distinct explicit board openings. */
     @Synchronized fun observe(stop: Stop, visitId: String) {
-        if (!plans.current().automaticLearning) { publish(); return }
+        if (!learningEnabled()) { publish(); return }
         if (visitId.isBlank() || visitId.length > 512) return
         val clean = SavedStops.selected(SavedStopsState(), stop).recent.singleOrNull() ?: return
         prune()
@@ -138,11 +140,11 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
         val visitHash = hash(visitId)
         val previous = observations.firstOrNull { it.stopHash == stopHash }
         if (previous?.visits?.contains(visitHash) == true) { publish(); return }
-        val seen = Observation(stopHash, (previous?.visits.orEmpty() + visitHash).takeLast(MIN_OPENS), clock(),
+        val seen = Observation(stopHash, (previous?.visits.orEmpty() + visitHash).takeLast(MAX_OPENS), clock(),
             previous?.explicit == true)
         observations = listOf(seen) + observations.filterNot { it.stopHash == stopHash }
         val refreshed = SavedStops.selected(stored, clean)
-        stored = if (seen.qualified) refreshed else stored.copy(favorites = refreshed.favorites)
+        stored = if (qualified(seen)) refreshed else stored.copy(favorites = refreshed.favorites)
         persist()
     }
 
@@ -183,6 +185,29 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
         persist()
     }
 
+    /** Settings changes take effect immediately, while manually pinned stations remain untouched. */
+    @Synchronized fun refresh() { persist() }
+    @Synchronized fun mute(stop: Stop, days: Int = 0) {
+        val until = if (days <= 0) Instant.parse("9999-12-31T23:59:59Z") else clock().plusSeconds(days.coerceAtMost(3650) * 86400L)
+        muted = (muted + (hash(stopKey(stop.id)) to until)).entries.toList().takeLast(100).associate { it.toPair() }
+        persist()
+    }
+    @Synchronized fun clearMuted() { muted = emptyMap(); persist() }
+    private fun threshold() = settings.current().int("suggestion_threshold", 3).coerceIn(3, MAX_OPENS)
+    private fun qualified(observation: Observation) = observation.explicit || observation.visits.size >= threshold()
+    private fun learningEnabled() = plans.current().automaticLearning && settings.current().bool("learn_stops", true)
+    private fun retentionSeconds(): Long {
+        val days = settings.current().int("history_days", 30).coerceIn(0, 3650)
+        // Pending counters stay bounded and expire even when the user keeps explicit history forever.
+        return (if (days == 0) 90 else days.coerceAtMost(90)) * 86400L
+    }
+    private fun readMuted(): Map<String, Instant> = runCatching {
+        val json = JSONObject(prefs.getString("muted", "{}") ?: "{}")
+        json.keys().asSequence().filter(HASH::matches).take(100).mapNotNull { key ->
+            runCatching { key to Instant.parse(json.getString(key)) }.getOrNull()
+        }.toMap()
+    }.getOrDefault(emptyMap())
+
     private fun rememberExplicit(stop: Stop) {
         val id = hash(stopKey(stop.id))
         val previous = observations.firstOrNull { it.stopHash == id }
@@ -191,14 +216,17 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
     }
     private fun prune() {
         val now = clock()
-        observations = observations.filter { it.at >= now.minusSeconds(MAX_AGE_SECONDS) && it.at <= now.plusSeconds(30) }
+        observations = observations.filter { it.at >= now.minusSeconds(retentionSeconds()) && it.at <= now.plusSeconds(30) }
             .distinctBy { it.stopHash }.sortedByDescending { it.at }.take(MAX_OBSERVATIONS)
-        val qualified = observations.filter { it.qualified }.map { it.stopHash }.toSet()
+        val qualified = observations.filter(::qualified).map { it.stopHash }.toSet()
         stored = stored.copy(recent = stored.recent.filter { hash(stopKey(it.id)) in qualified })
     }
     private fun publish() {
         prune()
-        mutable.value = if (plans.current().automaticLearning) stored else stored.copy(recent = emptyList())
+        val now = clock()
+        muted = muted.filterValues { it > now }
+        mutable.value = if (learningEnabled()) stored.copy(recent = stored.recent.filterNot { hash(stopKey(it.id)) in muted })
+            else stored.copy(recent = emptyList())
     }
     private fun persist() {
         prune()
@@ -207,6 +235,7 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
             if (observed.explicit) put("explicit", true)
         } })
         prefs.edit().putString("state", SavedStops.encode(stored)).putString("observations", data.toString())
+            .putString("muted", JSONObject(muted.mapValues { it.value.toString() }).toString())
             .putBoolean("observations_initialized", true).apply()
         publish()
     }
@@ -216,7 +245,7 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
                 val id = item.getString("h").takeIf(HASH::matches) ?: return@mapNotNull null
                 val tokens = item.optJSONArray("v")?.let { values ->
                     (0 until values.length()).mapNotNull { index -> values.optString(index).takeIf(HASH::matches) }
-                }.orEmpty().distinct().takeLast(MIN_OPENS)
+                }.orEmpty().distinct().takeLast(MAX_OPENS)
                 val number = item.get("t") as? Number ?: return@mapNotNull null
                 val time = number.toLong()
                 if (number.toDouble() != time.toDouble()) return@mapNotNull null
@@ -229,9 +258,8 @@ class SavedStopsStore(context: Context, private val clock: () -> Instant = Insta
         .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
 
     private companion object {
-        const val MIN_OPENS = 3
+        const val MAX_OPENS = 10
         const val MAX_OBSERVATIONS = 100
-        const val MAX_AGE_SECONDS = 90 * 86400L
         val HASH = Regex("[0-9a-f]{64}")
     }
 }

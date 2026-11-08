@@ -1,6 +1,8 @@
 package de.luca.mitfahrt.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.*
@@ -8,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,15 +64,19 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
         !departure.cancelled && departure.effective >= now &&
             departure.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } == true
     }.minByOrNull { it.effective }
-    val selectedLine = plan.line.orEmpty().trim().takeIf { plan.match == RouteMatch.LINE && it.isNotEmpty() }
+    val selectedLine = plan.lineLabel().takeIf { it.isNotEmpty() }
     val busy = next != null && next.key == busyKey
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+    AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(plan.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(routeIcon(plan.icon), null, tint = routeColor(plan.color),
+                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(routeColor(plan.color).copy(alpha = .12f)).padding(7.dp))
+                Text(plan.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
             Text("${shortName(plan.origin.name)} → ${shortName(plan.destination.name)}",
                 color = Soft, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(selectedLine?.let { "Linie $it" }, plan.window.label()).joinToString(" · "),
+            Text(listOfNotNull(selectedLine?.let { "Linie $it" }, plan.effectiveWindows().joinToString(" / ") { it.label() }).joinToString(" · "),
                 color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
             if (next != null) {
                 Text(if (next.liveEstimate(now) != null) "Abfahrt in ${countdownUntil(next.effective, now)}" else "Fahrplan ${clockTime(next.planned)}", color = Lime,
@@ -84,7 +91,7 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
                 Button(onClick = { onStart(plan, next) }, enabled = busyKey == null,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
                     if (busy) {
-                        CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp,
+                        AppCircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp,
                             color = Lime)
                         Spacer(Modifier.width(8.dp))
                     }
@@ -93,7 +100,7 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
                 TextButton(onClick = { onOpen(plan) }, enabled = busyKey == null,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Fahrten anzeigen") }
             } else {
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
+                if (loading) AppLinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
                 Text(when {
                     loading -> "Abfahrten werden geladen …"
                     departures.isNotEmpty() -> "Keine aktuellen Abfahrten."

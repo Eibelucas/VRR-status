@@ -34,8 +34,15 @@ import de.luca.mitfahrt.tracking.RideNotifications
 import de.luca.mitfahrt.updates.UpdateViewModel
 
 class MainActivity : ComponentActivity() {
+    private val entryIntent = kotlinx.coroutines.flow.MutableStateFlow<Intent?>(null)
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        entryIntent.value = intent
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        entryIntent.value = intent
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
@@ -47,6 +54,10 @@ class MainActivity : ComponentActivity() {
             val tracking by vm.tracking.collectAsStateWithLifecycle()
             val search by vm.search.collectAsStateWithLifecycle()
             val context = LocalContext.current
+            val launchRequest by entryIntent.collectAsStateWithLifecycle()
+            val settings by vm.settings.collectAsStateWithLifecycle()
+            LaunchedEffect(launchRequest) { launchRequest?.let(vm::handleLaunchIntent) }
+            LaunchedEffect(Unit) { updates.checkOnOpen() }
             val setup = remember { context.getSharedPreferences("first_time_setup", MODE_PRIVATE) }
             var showIntro by rememberSaveable { mutableStateOf(!setup.getBoolean("completed", false)) }
             var locationAllowed by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
@@ -68,6 +79,7 @@ class MainActivity : ComponentActivity() {
                 notificationsAllowed = context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
             }
             fun requestNearbyLocation() {
+                if (vm.settingsStore.current().string("location_mode", "active") == "off") return
                 when {
                     context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED -> {
                         if (setup.getBoolean("location_requested", false) && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_COARSE_LOCATION))
@@ -134,7 +146,7 @@ class MainActivity : ComponentActivity() {
                 pendingRideJson = ride?.let(RideCodec::encode)
                 pendingAction = if (ride == null) "monitor" else "ride"
                 val required = buildList {
-                    if (!tracking.running && ride?.demo != true && (ride == null ||
+                    if (vm.settingsStore.current().string("location_mode", "active") != "off" && !tracking.running && ride?.demo != true && (ride == null ||
                             context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED)) {
                         add(Manifest.permission.ACCESS_COARSE_LOCATION)
                         add(Manifest.permission.ACCESS_FINE_LOCATION)

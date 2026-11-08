@@ -18,6 +18,7 @@ import androidx.concurrent.futures.CallbackToFutureAdapter
 import com.google.common.util.concurrent.ListenableFuture
 import de.luca.mitfahrt.shared.WatchProtocol
 import de.luca.mitfahrt.shared.WatchRide
+import de.luca.mitfahrt.shared.WatchTile
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -25,16 +26,25 @@ import java.time.format.DateTimeFormatter
 /** No polling or location access: render the latest phone snapshot already saved on the watch. */
 class RideTileService : TileService() {
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> {
-        val snapshot = (application as WatchApplication).store.ride.value
+        val store = (application as WatchApplication).store
+        val snapshot = store.ride.value
+        val library = store.library.value
+        val selectedMode = library.settings["watch_tile"] in setOf("route", "stop")
+        val selection = library.tile
         val now = Instant.now()
         val timeline = TimelineBuilders.Timeline.Builder()
             // Indefinite fallback takes over even if no later process/update request runs.
             .addTimelineEntry(TimelineBuilders.TimelineEntry.Builder()
-                .setLayout(layout(snapshot, now, expired = true)).build())
-        for (window in rideTileWindows(snapshot, now)) {
+                .setLayout(layout(snapshot, now, expired = true, selection, selectedMode)).build())
+        val windows = if (selectedMode) {
+            val expires = selection?.fetchedAt?.plusSeconds(120)
+            if (selection != null && expires != null && expires > now && now.epochSecond - selection.fetchedAt.epochSecond >= -30)
+                listOf(RideTileWindow(now.toEpochMilli(), expires.toEpochMilli())) else emptyList()
+        } else rideTileWindows(snapshot, now)
+        for (window in windows) {
             timeline.addTimelineEntry(TimelineBuilders.TimelineEntry.Builder()
                 .setValidity(TimelineBuilders.TimeInterval.Builder().setStartMillis(window.startMillis).setEndMillis(window.endMillis).build())
-                .setLayout(layout(snapshot, Instant.ofEpochMilli(window.startMillis), expired = false)).build())
+                .setLayout(layout(snapshot, Instant.ofEpochMilli(window.startMillis), expired = false, selection, selectedMode)).build())
         }
         return immediate(TileBuilders.Tile.Builder().setResourcesVersion("1")
             .setTileTimeline(timeline.build()).setFreshnessIntervalMillis(60_000).build())
@@ -48,12 +58,19 @@ class RideTileService : TileService() {
         RideTileUpdates.request(this, force = true)
     }
 
-    private fun layout(ride: WatchRide?, now: Instant, expired: Boolean): LayoutElementBuilders.Layout {
-        val current = ride?.takeIf { it.active }
-        val stale = current != null && (expired || current.stale(now))
+    private fun layout(ride: WatchRide?, now: Instant, expired: Boolean, selection: WatchTile? = null,
+        selectedMode: Boolean = false): LayoutElementBuilders.Layout {
+        val current = ride?.takeIf { it.active && !selectedMode }
+        val stale = if (selectedMode) selection != null && (expired || now.epochSecond - selection.fetchedAt.epochSecond !in -30..120)
+            else current != null && (expired || current.stale(now))
         val display = current?.let { rideTimeDisplay(it, now, minutesOnly = true, expired = expired) }
-        val value = display?.value ?: "Keine Fahrt"
-        val status = when {
+        val value = if (selectedMode) selection?.at?.atZone(ZoneId.of("Europe/Berlin"))?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "Keine Abfahrt"
+            else display?.value ?: "Keine Fahrt"
+        val status = if (selectedMode) when {
+            selection == null -> "Auswahl am Handy prüfen"
+            stale -> "Daten veraltet"
+            else -> "${if (selection.live) "Live" else "Fahrplan"} · Stand ${selection.fetchedAt.atZone(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("HH:mm"))}"
+        } else when {
             current == null -> "Am Handy Fahrt wählen"
             current.demo && stale -> "Demo · Daten veraltet"
             current.demo -> "Demofahrt"
@@ -64,7 +81,8 @@ class RideTileService : TileService() {
                 "Stand ${it.atZone(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("HH:mm"))}"
             }).joinToString(" · ")
         }
-        val detail = when {
+        val detail = if (selectedMode) selection?.let { listOf(it.line, it.destination).filter(String::isNotBlank).joinToString(" → ") }?.ifEmpty { "Aktualisieren" }
+            ?: "Mitfahrt öffnen" else when {
             current == null -> "Mitfahrt öffnen"
             current.boarded && !stale && !current.cancelled -> current.nextStop
             else -> display!!.detail
@@ -78,6 +96,7 @@ class RideTileService : TileService() {
             .addContent(space(8f))
         if (current != null) column.addContent(text("${current.line} → ${current.destination}", 13f, WHITE, lines = 1))
             .addContent(space(6f))
+        if (selectedMode) column.addContent(text(selection?.title ?: "Gespeicherte Auswahl", 13f, WHITE, lines = 1)).addContent(space(6f))
         val card = LayoutElementBuilders.Column.Builder().setWidth(DimensionBuilders.expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
             .setModifiers(ModifiersBuilders.Modifiers.Builder()

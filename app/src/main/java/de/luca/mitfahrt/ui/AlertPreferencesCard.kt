@@ -13,7 +13,7 @@ import de.luca.mitfahrt.data.AlertPreferences
 @Composable
 fun AlertPreferencesCard(preferences: AlertPreferences, onArrival: (Boolean) -> Unit,
     onExit: (Boolean) -> Unit, onLeadSeconds: (Int) -> Unit) {
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+    AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Vibrationshinweise", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
             AlertSwitch("Bus kommt", "Vor dem Einsteigen · Handy und Uhr", preferences.arrivalEnabled, onArrival)
@@ -27,7 +27,7 @@ fun AlertPreferencesCard(preferences: AlertPreferences, onArrival: (Boolean) -> 
                 }
             }
             AlertSwitch("Ausstieg", "Einen Halt vor deinem gewählten Ziel", preferences.exitEnabled, onExit)
-            Text("Ein Hinweis je Fahrt. Nicht stören und Vibrationsstärke gelten weiterhin.",
+            Text("Weitere Vorwarnungen, Geräte und Muster unter Anpassen. Nicht stören gilt weiterhin.",
                 color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
         }
     }

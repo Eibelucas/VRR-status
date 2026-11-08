@@ -72,6 +72,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
     private data class Observation(val route: String, val token: String, val at: Instant)
     private val prefs = context.getSharedPreferences("route_history", Context.MODE_PRIVATE)
     private val plans = RoutePlansStore(context)
+    private val settings = AppSettingsStore(context)
     private var visits = RouteHistory.decode(prefs.getString("visits", "[]") ?: "[]")
     // Unqualified previews retain no line, destination, stop or actual journey information.
     private var observations = runCatching {
@@ -93,7 +94,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
     val routes = mutable.asStateFlow()
     init {
         if (!prefs.getBoolean("initialized", false)) {
-            previousRide?.takeUnless { it.demo || !plans.current().automaticLearning }?.let { ride ->
+            previousRide?.takeUnless { it.demo || !learningEnabled() }?.let { ride ->
                 val now = clock()
                 visits = RouteHistory.record(visits, ride, minOf(ride.trackingStartedAt ?: ride.departure.planned, now))
             }
@@ -105,7 +106,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
 
     /** Observe one explicit view. Background refreshes and preview-to-tracking reuse the same token. */
     @Synchronized fun observe(ride: Ride, visitId: String) {
-        if (!plans.current().automaticLearning || visitId.isBlank() || visitId.length > 1024) return
+        if (!learningEnabled() || visitId.isBlank() || visitId.length > 1024) return
         val d = ride.departure
         val boarding = ride.stops.getOrNull(ride.boardingIndex) ?: return
         if (ride.demo || d.cancelled || boarding.cancelled || d.lineId.isBlank() || d.line.isBlank() ||
@@ -118,16 +119,18 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
             observations.any { it.token == token }) return
         val route = RouteVisit(eventId, d.lineId, d.line, d.destination, Stop(stopKey(d.stopId), d.stopName), now)
         val routeHash = journeyHash(route.routeKey)
-        val qualified = RouteHistory.frequent(visits, now).any {
-            it.key == route.routeKey && it.count >= RouteHistory.MIN_SUGGESTION_VIEWS
-        }
+        // Explicitly qualified previews continue counting when the display threshold rises.
+        // One or two old actual journeys must never stand in for three deliberate previews.
+        val existing = visits.filter { it.routeKey == route.routeKey }
+        val qualified = existing.count { it.journey.startsWith("view/") } >= RouteHistory.MIN_SUGGESTION_VIEWS ||
+            existing.count { !it.journey.startsWith("view/") } >= threshold()
         if (qualified) {
             visits = RouteHistory.restore(visits, listOf(route), now)
             observations = observations.filterNot { it.route == routeHash }
         } else {
             observations = observations + Observation(routeHash, token, now)
             val pending = observations.filter { it.route == routeHash }
-            if (pending.size >= RouteHistory.MIN_SUGGESTION_VIEWS) {
+            if (pending.size >= threshold()) {
                 // These are view events, not claims that the earlier bus journeys were taken.
                 visits = RouteHistory.restore(visits, pending.map { view ->
                     route.copy(journey = "view/${view.token}", at = view.at)
@@ -140,7 +143,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
 
     /** Legacy actual-journey recording is kept for compatibility; previews use observe instead. */
     @Synchronized fun record(ride: Ride) {
-        if (!plans.current().automaticLearning) return
+        if (!learningEnabled()) return
         if (journeyHash(ride.departure.key) in deletedJourneys) return
         visits = RouteHistory.record(visits, ride, clock())
         persist()
@@ -178,6 +181,15 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
         clearedAt = clock()
         persist()
     }
+    @Synchronized fun refresh() { persist() }
+    private fun threshold() = settings.current().int("suggestion_threshold", 3).coerceIn(3, 10)
+    private fun learningEnabled() = plans.current().automaticLearning && settings.current().bool("learn_routes", true) &&
+        settings.current().bool("history_enabled", true)
+    private fun retentionSeconds(): Long {
+        val days = settings.current().int("history_days", 30).coerceIn(0, 3650)
+        return (if (days == 0) 90 else days.coerceAtMost(90)) * 86400L
+    }
+
     private fun rememberRemoved(removed: List<RouteVisit>) {
         deletedJourneys = (deletedJourneys + removed.map { journeyHash(it.journey) }).distinct().takeLast(512)
     }
@@ -185,7 +197,7 @@ class RouteHistoryStore(context: Context, previousRide: Ride?, private val clock
         deletedJourneys = (deletedJourneys + removed.map { journeyHash("view/${it.token}") }).distinct().takeLast(512)
     }
     private fun prune(now: Instant) {
-        val cutoff = now.minusSeconds(90 * 86400L)
+        val cutoff = now.minusSeconds(retentionSeconds())
         visits = visits.filter { it.at in cutoff..now }.distinctBy { it.journey }
         observations = observations.filter { it.at in cutoff..now }.distinctBy { it.token }
         // Pending counters and materialized records share one storage bound.

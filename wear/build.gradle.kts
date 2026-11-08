@@ -44,6 +44,7 @@ dependencies {
     implementation(project(":shared"))
     implementation("androidx.concurrent:concurrent-futures:1.2.0")
     implementation("androidx.wear.tiles:tiles:1.6.2")
+    implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1")
     implementation("androidx.wear.protolayout:protolayout:1.4.2")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.activity:activity-compose:1.10.1")

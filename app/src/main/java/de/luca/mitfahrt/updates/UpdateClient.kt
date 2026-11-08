@@ -4,7 +4,10 @@ import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import de.luca.mitfahrt.BuildConfig
+import de.luca.mitfahrt.data.AppSettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -19,7 +22,9 @@ import java.security.MessageDigest
 
 class NoPublishedUpdate : IOException()
 
-class UpdateClient(private val context: Context) {
+class UpdateClient(private val context: Context) : java.io.Closeable {
+    private val settings = AppSettingsStore(context)
+    override fun close() { settings.close() }
     suspend fun check(): UpdateInfo = withContext(Dispatchers.IO) {
         val connection = connection(UpdateInfo.MANIFEST_URL)
         try {
@@ -44,6 +49,7 @@ class UpdateClient(private val context: Context) {
     }
 
     suspend fun download(update: UpdateInfo, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
+        requireDownloadNetwork()
         val folder = File(context.cacheDir, "updates")
         check(folder.isDirectory || folder.mkdirs()) { "Download konnte nicht gespeichert werden." }
         val file = File(folder, "Mitfahrt-${update.versionCode}.apk")
@@ -57,6 +63,7 @@ class UpdateClient(private val context: Context) {
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
                     currentCoroutineContext().ensureActive()
+                    requireDownloadNetwork()
                     val read = input.read(buffer)
                     if (read < 0) break
                     count += read
@@ -72,6 +79,38 @@ class UpdateClient(private val context: Context) {
             folder.listFiles().orEmpty().filter { it != file }.forEach { it.delete() }
             file
         } finally { connection.disconnect(); partial.delete() }
+    }
+
+    /** Human-readable release notes are optional; APK identity and checksum checks remain mandatory. */
+    suspend fun changes(update: UpdateInfo): String? = withContext(Dispatchers.IO) {
+        if (!settings.current().bool("update_show_changes", true)) return@withContext null
+        val connection = connection("https://api.github.com/repos/Eibelucas/VRR-status/releases/tags/v${update.versionName}")
+        try {
+            if (connection.responseCode != 200) return@withContext null
+            val bytes = connection.inputStream.use { input ->
+                val out = ByteArrayOutputStream()
+                val buffer = ByteArray(4096)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (out.size() + read > 131_072) return@withContext null
+                    out.write(buffer, 0, read)
+                }
+                out.toByteArray()
+            }
+            JSONObject(bytes.toString(Charsets.UTF_8)).optString("body").trim().take(12_000).ifBlank { null }
+        } finally { connection.disconnect() }
+    }
+
+    private fun requireDownloadNetwork() {
+        if (!settings.current().bool("update_wifi_only", false)) return
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val network = connectivity?.activeNetwork
+        val capabilities = network?.let { connectivity.getNetworkCapabilities(it) }
+        check(capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+            "Updates werden nur über WLAN geladen. Verbinde dich mit WLAN oder ändere die Update-Einstellung."
+        }
     }
 
     @Suppress("DEPRECATION")

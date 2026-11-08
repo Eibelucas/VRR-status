@@ -24,5 +24,6 @@ class MitfahrtApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         runCatching { watch.start() }
+        runCatching { de.luca.mitfahrt.updates.UpdateScheduler.schedule(this) }
     }
 }

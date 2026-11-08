@@ -5,15 +5,17 @@ import org.json.JSONObject
 import java.time.Instant
 import java.util.UUID
 
-/** User confirmation at device time, not a verified GPS or vehicle observation. */
-data class ArrivalMark(val id: String, val stopId: String, val stopName: String, val at: Instant) {
+/** Local device observation, never a confirmation by the vehicle operator. */
+data class ArrivalMark(val id: String, val stopId: String, val stopName: String, val at: Instant,
+    val method: String = "manual") {
     fun json(): JSONObject = JSONObject().apply {
-        put("id", id); put("stopId", stopId); put("stopName", stopName); put("at", at.toString())
+        put("id", id); put("stopId", stopId); put("stopName", stopName); put("at", at.toString()); put("method", method)
     }
 
     companion object {
         fun create(stop: Stop, now: Instant = Instant.now()) = ArrivalMark(UUID.randomUUID().toString(), stop.id, stop.name, now)
-        fun decode(j: JSONObject) = ArrivalMark(j.getString("id"), j.getString("stopId"), j.getString("stopName"), Instant.parse(j.getString("at")))
+        fun decode(j: JSONObject) = ArrivalMark(j.getString("id"), j.getString("stopId"), j.getString("stopName"), Instant.parse(j.getString("at")),
+            j.optString("method", "manual").takeIf { it == "manual" || it == "location" } ?: "manual")
         fun decodeList(value: JSONArray?): List<ArrivalMark> = value?.objects().orEmpty()
             .mapNotNull { runCatching { decode(it) }.getOrNull() }
 

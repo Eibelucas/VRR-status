@@ -11,8 +11,9 @@ object RideRefreshPolicy {
         return boarding?.estimatedArrival == null && boarding?.estimatedDeparture == null
     }
 
-    fun needsRefresh(ride: Ride, elapsedSinceRefresh: Long, lastCompletionCheck: Instant?, now: Instant): Boolean =
-        !ride.demo && (elapsedSinceRefresh >= 30_000 || ride.complete(now) &&
+    fun needsRefresh(ride: Ride, elapsedSinceRefresh: Long, lastCompletionCheck: Instant?, now: Instant,
+        intervalMillis: Long = 30_000): Boolean =
+        !ride.demo && (elapsedSinceRefresh >= intervalMillis.coerceIn(15_000, 120_000) || ride.complete(now) &&
             ride.terminal.effective(ride.offsetSeconds) != lastCompletionCheck)
 
     fun canFinish(state: TrackingState, lastCompletionCheck: Instant?, now: Instant): Boolean {
