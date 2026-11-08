@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Defaults for the initial and preview layout; configured widgets set their colors at runtime. -->
+    <color name="mitfahrt_widget_surface">#FFFFFFFF</color>
+    <color name="mitfahrt_widget_text">#FF22262F</color>
+    <color name="mitfahrt_widget_muted">#FF62636D</color>
+    <color name="mitfahrt_widget_accent">#FFB40055</color>
+    <color name="mitfahrt_widget_on_accent">#FFFFFFFF</color>
+</resources>
