@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mitfahrt_widget_surface">#FF271D2C</color>
+    <color name="mitfahrt_widget_text">#FFF8F2F8</color>
+    <color name="mitfahrt_widget_muted">#FFCBC0CE</color>
+    <color name="mitfahrt_widget_accent">#FFFF9BC7</color>
+    <color name="mitfahrt_widget_on_accent">#FF18131D</color>
+</resources>

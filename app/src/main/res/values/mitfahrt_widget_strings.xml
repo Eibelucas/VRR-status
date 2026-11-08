@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mitfahrt_widget_label">Mitfahrt</string>
+    <string name="mitfahrt_widget_description">Abfahrten einer Haltestelle, einer gespeicherten Route oder deine aktuelle Fahrt</string>
+    <string name="mitfahrt_widget_loading">Lädt …</string>
+    <string name="mitfahrt_widget_refresh">Aktualisieren</string>
+    <string name="mitfahrt_widget_open_map">Live-Karte öffnen</string>
+    <string name="mitfahrt_widget_preview_title">Hardterbroich Markt</string>
+    <string name="mitfahrt_widget_preview_status">Stand 14:28</string>
+</resources>

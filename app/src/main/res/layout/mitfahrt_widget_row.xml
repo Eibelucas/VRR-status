@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mitfahrt_widget_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/mitfahrt_widget_button"
+    android:gravity="center_vertical"
+    android:minHeight="38dp"
+    android:orientation="horizontal"
+    android:paddingTop="3dp"
+    android:paddingBottom="3dp">
+
+    <FrameLayout
+        android:id="@+id/mitfahrt_widget_row_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:minWidth="36dp">
+
+        <ImageView
+            android:id="@+id/mitfahrt_widget_row_badge_bg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:scaleType="fitXY"
+            android:src="@drawable/mitfahrt_widget_badge"
+            android:tint="@color/mitfahrt_widget_accent" />
+
+        <TextView
+            android:id="@+id/mitfahrt_widget_row_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:maxLines="1"
+            android:paddingStart="6dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="2dp"
+            android:textColor="@color/mitfahrt_widget_on_accent"
+            android:textSize="13sp" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/mitfahrt_widget_row_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/mitfahrt_widget_text"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/mitfahrt_widget_row_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/mitfahrt_widget_muted"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/mitfahrt_widget_row_times"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:gravity="end"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/mitfahrt_widget_row_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:textColor="@color/mitfahrt_widget_text"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/mitfahrt_widget_row_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:textColor="@color/mitfahrt_widget_muted"
+            android:textSize="11sp" />
+    </LinearLayout>
+</LinearLayout>
