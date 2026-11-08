@@ -1,0 +1,9 @@
+{
+  "applicationId": "de.luca.mitfahrt",
+  "versionCode": 15,
+  "versionName": "0.15.0",
+  "minSdk": 29,
+  "apkAssetName": "Mitfahrt-0.15.0.apk",
+  "size": 3307308,
+  "sha256": "3989b6d5f238556dfd445465d70792724621f1156481dcbdf4b5a65900a7b328"
+}
