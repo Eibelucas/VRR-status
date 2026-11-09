@@ -305,12 +305,12 @@ private fun PagingButton(label: String, loading: Boolean, enabled: Boolean, onCl
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun JourneyRow(journey: TripJourney, now: Instant, onClick: () -> Unit) {
-    val transfers = TripTransfers.assess(journey)
+    val transfers = TripTransfers.assess(journey, now)
     val risk = transfers.minByOrNull { it.slackSeconds }?.risk
     val departure = journey.departure
     val arrival = journey.arrival
-    val liveDeparture = journey.transit.firstOrNull()?.origin?.estimatedDeparture != null
-    val liveArrival = journey.transit.lastOrNull()?.destination?.estimatedArrival != null
+    val liveDeparture = now.epochSecond - journey.fetchedAt.epochSecond in -30..120 && journey.transit.firstOrNull()?.origin?.estimatedDeparture != null
+    val liveArrival = now.epochSecond - journey.fetchedAt.epochSecond in -30..120 && journey.transit.lastOrNull()?.destination?.estimatedArrival != null
     val summary = buildString {
         append("Ab ${clockTime(departure)} an ${clockTime(arrival)}, ")
         journey.durationSeconds?.let { append("${durationLabel(it)}, ") }
@@ -355,8 +355,8 @@ internal fun JourneyRow(journey: TripJourney, now: Instant, onClick: () -> Unit)
                 Spacer(Modifier.width(6.dp))
                 Text(warnings.joinToString(" · "), color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
-            if (now.epochSecond - journey.fetchedAt.epochSecond > 180)
-                Text("Stand ${clockTime(journey.fetchedAt)}", color = Soft, fontSize = 11.sp)
+            if (now.epochSecond - journey.fetchedAt.epochSecond !in -30..120)
+                Text("Veralteter Datenstand · ${clockTime(journey.fetchedAt)}", color = Soft, fontSize = 11.sp)
         }
     }
 }

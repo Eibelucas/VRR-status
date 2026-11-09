@@ -37,7 +37,8 @@ fun JourneyDetailsScreen(journey: TripJourney, results: TripResultsState, now: I
     onAccompany: () -> Unit, accompanyBusy: Boolean, routeFor: (String) -> RoutePlan?, onSaveRoute: (RoutePlan) -> Unit,
     destinationSaved: Boolean, onSaveDestination: (() -> Unit)?) {
     BackHandler(onBack = onBack)
-    val transfers = remember(journey) { TripTransfers.assess(journey) }
+    val transfers = TripTransfers.assess(journey, now)
+    val fresh = now.epochSecond - journey.fetchedAt.epochSecond in -30..120
     var routeName by remember { mutableStateOf<String?>(null) }
     val canSaveRoute = remember(journey) { routeFor("") != null }
     val trackable = journey.transit.firstOrNull()?.asDeparture(journey.fetchedAt) != null
@@ -48,16 +49,16 @@ fun JourneyDetailsScreen(journey: TripJourney, results: TripResultsState, now: I
                 Column(Modifier.weight(1f)) {
                     Text("Verbindung ansehen", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     Text(listOfNotNull("VRR", "Stand ${clockTime(journey.fetchedAt)}",
-                        if (journey.realtime) "mit Live-Daten" else "nur Fahrplan").joinToString(" · "), color = Soft, fontSize = 12.sp)
+                        when { !fresh -> "veralteter Datenstand"; journey.realtime -> "mit Live-Daten"; else -> "nur Fahrplan" }).joinToString(" · "), color = Soft, fontSize = 12.sp)
                 }
             }
             LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item { DetailSummary(journey) }
+                item { DetailSummary(journey, fresh) }
                 item { JourneyMapCard(journey) }
                 journey.legs.forEachIndexed { index, leg ->
                     item(key = "leg/$index") {
                         when (leg.kind) {
-                            LegKind.TRANSIT -> TransitLegCard(leg)
+                            LegKind.TRANSIT -> TransitLegCard(leg, fresh)
                             LegKind.WALK -> WalkLegRow(leg, isFirst = index == 0, isLast = index == journey.legs.lastIndex)
                             LegKind.OTHER -> if (leg.productName.isNotBlank()) Text(leg.productName, color = Soft, fontSize = 13.sp)
                         }
@@ -66,8 +67,8 @@ fun JourneyDetailsScreen(journey: TripJourney, results: TripResultsState, now: I
                         item(key = "transfer/$index") { TransferNote(transfer, journey.legs[transfer.toLeg]) }
                     }
                 }
-                if (results.query?.let { now.epochSecond - journey.fetchedAt.epochSecond > 180 } == true) item {
-                    Text("Diese Angaben sind älter als drei Minuten. Aktualisieren in der Liste.", color = Amber, fontSize = 12.sp)
+                if (results.query?.let { now.epochSecond - journey.fetchedAt.epochSecond > 120 } == true) item {
+                    Text("Diese Angaben sind älter als zwei Minuten. Aktualisieren in der Liste.", color = Amber, fontSize = 12.sp)
                 }
             }
             Column(Modifier.fillMaxWidth().background(Panel).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -103,13 +104,13 @@ fun JourneyDetailsScreen(journey: TripJourney, results: TripResultsState, now: I
 }
 
 @Composable
-private fun DetailSummary(journey: TripJourney) {
+private fun DetailSummary(journey: TripJourney, fresh: Boolean) {
     AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
-                TimeText(journey.departure, journey.plannedDeparture, journey.transit.firstOrNull()?.origin?.estimatedDeparture != null, 26)
+                TimeText(journey.departure, journey.plannedDeparture, fresh && journey.transit.firstOrNull()?.origin?.estimatedDeparture != null, 26)
                 Text("  →  ", color = Soft, fontSize = 20.sp)
-                TimeText(journey.arrival, journey.plannedArrival, journey.transit.lastOrNull()?.destination?.estimatedArrival != null, 26)
+                TimeText(journey.arrival, journey.plannedArrival, fresh && journey.transit.lastOrNull()?.destination?.estimatedArrival != null, 26)
             }
             Text(listOfNotNull(journey.durationSeconds?.let(::durationLabel),
                 if (journey.interchanges == 0) "direkt" else "${journey.interchanges} ${if (journey.interchanges == 1) "Umstieg" else "Umstiege"}",
@@ -159,7 +160,7 @@ private fun JourneyMapCard(journey: TripJourney) {
 }
 
 @Composable
-private fun TransitLegCard(leg: TripLeg) {
+private fun TransitLegCard(leg: TripLeg, fresh: Boolean) {
     var expanded by rememberSaveable(leg.tripCode, leg.origin.id) { mutableStateOf(false) }
     AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -170,10 +171,10 @@ private fun TransitLegCard(leg: TripLeg) {
                     Text("Richtung ${shortName(leg.direction).ifBlank { "unbekannt" }}", fontWeight = FontWeight.SemiBold,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(listOfNotNull(leg.productName.takeIf { it.isNotBlank() }, if (leg.isNew) "NEW" else leg.operatorCode.takeIf { it.isNotBlank() },
-                        if (leg.realtime) "Live" else "Fahrplan").joinToString(" · "), color = Soft, fontSize = 12.sp)
+                        when { !fresh -> "veralteter Datenstand"; leg.realtime -> "Live"; else -> "Fahrplan" }).joinToString(" · "), color = Soft, fontSize = 12.sp)
                 }
             }
-            StopTimeRow(leg.origin, departure = true)
+            StopTimeRow(leg.origin, departure = true, fresh = fresh)
             if (leg.intermediate.isNotEmpty()) {
                 TextButton(onClick = { expanded = !expanded }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, Modifier.size(18.dp))
@@ -187,11 +188,11 @@ private fun TransitLegCard(leg: TripLeg) {
                         Text(shortName(stop.name), fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis,
                             color = if (stop.cancelled) Amber else Paper)
                         Text(clockTime(stop.departure ?: stop.arrival), fontSize = 13.sp,
-                            color = if (stop.estimatedDeparture != null || stop.estimatedArrival != null) Lime else Soft)
+                            color = if (fresh && (stop.estimatedDeparture != null || stop.estimatedArrival != null)) Lime else Soft)
                     }
                 }
             }
-            StopTimeRow(leg.destination, departure = false)
+            StopTimeRow(leg.destination, departure = false, fresh = fresh)
             if (leg.cancelled) Text("Fällt laut VRR aus", color = Amber, fontWeight = FontWeight.SemiBold)
             leg.notices.forEach { notice ->
                 Row(verticalAlignment = Alignment.Top) {
@@ -205,11 +206,11 @@ private fun TransitLegCard(leg: TripLeg) {
 }
 
 @Composable
-private fun StopTimeRow(stop: TripStopTime, departure: Boolean) {
+private fun StopTimeRow(stop: TripStopTime, departure: Boolean, fresh: Boolean) {
     val planned = if (departure) stop.plannedDeparture else stop.plannedArrival
     val estimated = if (departure) stop.estimatedDeparture else stop.estimatedArrival
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(78.dp)) { TimeText(estimated ?: planned, planned, estimated != null, 17) }
+        Box(Modifier.width(78.dp)) { TimeText(estimated ?: planned, planned, fresh && estimated != null, 17) }
         Column(Modifier.weight(1f)) {
             Text(shortName(stop.name), fontWeight = FontWeight.Medium, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 color = if (stop.cancelled) Amber else Paper)

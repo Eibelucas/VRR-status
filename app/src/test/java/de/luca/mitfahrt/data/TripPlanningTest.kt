@@ -229,4 +229,21 @@ class TripPlanningTest {
         assertEquals(T0.plusSeconds(70 * 60), journey.arrival)
         assertEquals(T0.plusSeconds(60), journey.departure)
     }
+    @Test fun `recorded live VRR places and departure arrival journeys parse correctly`() {
+        fun sample(name: String) = org.json.JSONObject(javaClass.classLoader!!.getResource("planner-live-$name.json")!!.readText())
+        assertTrue(TripParser.places(sample("places")).any { it.kind == PlaceKind.STOP && it.id == "de:05116:23007" })
+        for (mode in listOf("dep", "arr")) {
+            val journeys = TripParser.journeys(sample(mode), java.time.Instant.now())
+            assertTrue(journeys.isNotEmpty())
+            assertTrue(journeys.any { it.legs.count { leg -> leg.kind == LegKind.TRANSIT } >= 2 })
+            assertTrue(journeys.flatMap { it.legs }.any { it.path.size > 2 })
+            assertTrue(journeys.flatMap { it.legs }.any { it.line == "025" })
+        }
+    }
+
+    @Test fun `old forecasts cannot generate a current transfer warning`() {
+        val journey = TripParser.journeys(TripFixtures.root(TripFixtures.busAndTrain()), TripFixtures.T0).single()
+        assertTrue(TripTransfers.assess(journey, TripFixtures.T0.plusSeconds(121)).isEmpty())
+    }
+
 }

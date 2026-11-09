@@ -701,7 +701,11 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         companionNextJob = viewModelScope.launch {
             val ride = runCatching { app.vrr.ride(departure) }.getOrElse { if (it is CancellationException) throw it; null }
             // Only keep it while the same journey and leg are still accompanied.
-            if (companion.value?.nextLeg?.tripCode == departure.tripCode) companionNextState.value = ride
+            val active = companion.value
+            if (active?.journey?.key == current.journey.key && active.startedAt == current.startedAt &&
+                active.legIndex == current.legIndex && active.nextLeg?.asDeparture(active.journey.fetchedAt)?.key == departure.key) {
+                companionNextState.value = ride
+            }
         }
     }
     fun clearError() { mutable.value = mutable.value.copy(error = null) }

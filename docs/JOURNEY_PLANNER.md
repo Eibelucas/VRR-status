@@ -1,6 +1,6 @@
 # Verbindungssuche, Startseite und Navigation
 
-Stand: 09.11.2026, Branch `claude/home-and-journey-planner`. Teilumsetzung – siehe Abschnitt 6 „Lücken“.
+Stand: 09.11.2026, integriert für Mitfahrt 0.18.0. Teilumsetzung – siehe Abschnitt 8 „Lücken“.
 
 ## 1. Datenquelle
 
@@ -9,9 +9,11 @@ Kein API-Schlüssel, keine Zugangsdaten. Jede Anfrage sendet `outputFormat=rapid
 `coordOutputFormat=WGS84[dd.ddddd]` (Koordinaten kommen als `[Breite, Länge]`).
 
 Grundlage der Parameter: Mentz „EFA JSON API Training 2.9“ (veröffentlicht über MobiData BW) und die
-für den VRR bekannten EFA-Clients. Eine Live-Prüfung der Verbindungssuche gegen `openservice.vrr.de`
-war in der Entwicklungsumgebung **nicht möglich** (Netzwerk gesperrt). Die Tests arbeiten mit
-synthetischen Antworten nach dokumentiertem Feldaufbau (`TripFixtures.kt`), nicht mit Aufzeichnungen.
+für den VRR bekannten EFA-Clients. Bei der Integration wurde die öffentliche Schnittstelle live mit Hehn Kirche → Mönchengladbach Hbf
+geprüft: Ortsuche sowie Abfahrts- und Ankunftssuche lieferten echte Verbindungen (u. a. 025 → 007)
+und Streckenkoordinaten. Aufgezeichnete öffentliche Antworten liegen als `planner-live-*.json` vor und
+werden zusätzlich zu den synthetischen Antworten (`TripFixtures.kt`) im Parser-Regressionscheck verwendet.
+Das bestätigt die geprüften Anfragen, nicht sämtliche Filterkombinationen oder Fahrten im Verbund.
 
 ### 1.1 Orte suchen – `XML_STOPFINDER_REQUEST`
 | Parameter | Wert | Zweck |
@@ -155,8 +157,7 @@ Watch, Ausstiegsalarm, GPS-Haltestellen). `JourneyCompanion` (in `journey_compan
   andere Betreiber liest die Verfolgung die Abfahrtstafel **ohne** NEW-Filter (`departures(newOnly = false)`).
 
 ## 8. Lücken und Einschränkungen (ehrlich)
-- Live-Prüfung gegen `openservice.vrr.de` war hier nicht möglich; Parameter folgen der EFA-Dokumentation. Abweichungen der
-  VRR-Instanz (z. B. Produktklassen-Nummern für `exclMOT_*`, Koordinateneingabe `type_origin=coord`) sind möglich.
+- Ortsuche sowie Abfahrts-/Ankunfts-Verbindungssuche wurden live geprüft. Weitere Filterkombinationen (z. B. `exclMOT_*`, Koordinateneingabe) sind noch nicht vollständig gegen die VRR-Instanz geprüft.
 - **Umstiegspuffer** (Mindestumstiegszeit) bietet die Schnittstelle nicht dokumentiert an → kein Schalter. Nur
   Gehgeschwindigkeit (`changeSpeed`) beeinflusst Umstiegszeiten.
 - **Aufenthalt am Zwischenziel** nicht dokumentiert → nur „über“ ohne Aufenthaltsdauer.
@@ -168,7 +169,7 @@ Watch, Ausstiegsalarm, GPS-Haltestellen). `JourneyCompanion` (in `journey_compan
 - Begleitung über mehrere Abschnitte nutzt die Einzelfahrt-Verfolgung je Abschnitt; jede gestartete Fahrt erscheint wie
   bisher einzeln im Fahrtenarchiv. Vorschau und Suche schreiben nichts ins Archiv.
 - Karte: Fußwege und Fahrten ohne `leg.coords` erscheinen nur als Punkte.
-- Kein Android-SDK in der Entwicklungsumgebung: Oberfläche nicht im Emulator geprüft, keine Screenshots.
+- Oberfläche mit Android-SDK und Robolectric gerendert, jedoch nicht auf einem Emulator oder echten Gerät bedient.
 
 ## 9. Tatsächlich durchgeführte Prüfungen (09.11.2026)
 - **GitHub Actions „Android“** (workflow_dispatch auf diesem Branch, Lauf 42595922438): `:shared:test`,
@@ -184,7 +185,12 @@ Watch, Ausstiegsalarm, GPS-Haltestellen). `JourneyCompanion` (in `journey_compan
   (Robolectric) und `PlannerScreenshotTest` (Robolectric, rendert Startseite hell/dunkel, ohne Routen, Ergebnisse,
   Details, In der Nähe mit/ohne Standort).
 - **Screenshots:** `PlannerScreenshotTest` legt PNGs mit synthetischen Daten unter `app/build/reports/screenshots/`
-  ab; sie sind im CI-Artefakt `android-reports` enthalten. Aus der Entwicklungsumgebung ließ sich das Artefakt nicht
-  herunterladen, die Bilder wurden daher hier **nicht angesehen**.
-- **Nicht geprüft:** Emulator/Gerät, echte VRR-Antworten der Verbindungssuche, Bedienung mit TalkBack, echte Fahrt mit
+  ab; sie sind im CI-Artefakt `android-reports` enthalten. Bei der Integration wurden Startseite und Verbindungskarten lokal angesehen.
+- **Nicht geprüft:** Emulator/Gerät, alle Filterkombinationen, Bedienung mit TalkBack, echte Fahrt mit
   Umstieg, Watch-Hardware.
+
+## Integrationskorrekturen 0.18.0
+
+- Prognosen werden nach zwei Minuten nicht mehr als aktuell markiert; Anschlusswarnungen aus alten Suchantworten entfallen.
+- Spät eintreffende Anschlussabfragen werden nur für dieselbe begleitete Verbindung und denselben Abschnitt übernommen.
+- Startseite und Verbindungskarten wurden anhand der Robolectric-Renderings visuell geprüft. Dies ersetzt keinen Bedienungstest auf Galaxy und Watch.

@@ -57,7 +57,7 @@ fun CompanionCard(companion: JourneyCompanion, phase: CompanionPhase, tracked: R
             }
             if (nextLeg != null && phase != CompanionPhase.FINISHED) {
                 val planned = nextLeg.origin.plannedDeparture
-                val live = nextBoarding?.estimatedDeparture
+                val live = nextBoarding?.estimatedDeparture?.takeIf { next?.let { now.epochSecond - it.fetchedAt.epochSecond in -30..120 } == true }
                 Text(buildString {
                     append(if (phase == CompanionPhase.TRANSFER) "Weiter mit " else "Danach ")
                     append(nextLeg.line.ifBlank { nextLeg.lineName })

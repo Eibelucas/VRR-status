@@ -231,3 +231,11 @@ Bei einer ausgefallenen Fahrt vor dem Einsteigen erscheinen aktuelle direkte Alt
 ## Watch-Kachel und Vibrationstest
 
 [Einrichtung der Kachel und Vibrationstest](WATCH.md). Die neue Watch-App benötigt ein separates APK-Update auf mindestens 0.11; die Handy-Updatefunktion installiert weiterhin nur die Handy-App. Die Tests prüfen Gehzeitgrenzen, aktuelle Alternativen, Schleifen/Umleitungen, gespeicherte Schulwege, Zielzeiten, Haptikprotokoll und zeitliche Gültigkeit der Kachel. Der echte Ablauf auf A56 und Watch 5 Pro bleibt praktisch zu prüfen.
+
+### Startseite und Verbindungen ab 0.18
+
+„Wohin?“ öffnet die allgemeine VRR-Verbindungssuche mit Bus, Bahn, Fußwegen und Umstiegen.
+Passende gespeicherte Routen erscheinen darunter; ohne Treffer entfällt der Abschnitt.
+Nahe Haltestellen und NEW-Abfahrten stehen im eigenen Tab **In der Nähe**.
+Suche und Vorschau starten keine Begleitung und speichern keine Route automatisch.
+Details zu Datenquelle, Suchoptionen, Echtzeit und verbleibenden Lücken: [Verbindungssuche](docs/JOURNEY_PLANNER.md).

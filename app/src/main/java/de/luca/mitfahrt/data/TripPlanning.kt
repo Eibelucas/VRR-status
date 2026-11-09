@@ -208,7 +208,8 @@ object TripTransfers {
      * Only judged when both the arriving and the departing trip carry a live forecast.
      * Planned-only times give no reliable basis, so no statement is made for them.
      */
-    fun assess(journey: TripJourney): List<TransferAssessment> {
+    fun assess(journey: TripJourney, now: Instant? = null): List<TransferAssessment> {
+        if (now != null && now.epochSecond - journey.fetchedAt.epochSecond !in -30..120) return emptyList()
         val transit = journey.legs.withIndex().filter { it.value.kind == LegKind.TRANSIT }
         return transit.zipWithNext().mapNotNull { (incoming, outgoing) ->
             val arrival = incoming.value.destination.estimatedArrival ?: return@mapNotNull null
