@@ -11,6 +11,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class VrrClient {
+    private val tripCoords = object : LinkedHashMap<String, List<GeoPoint>>(8, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<GeoPoint>>?): Boolean = size > 8
+    }
+
     suspend fun search(query: String): List<Stop> {
         val name = query.replace(Regex("^Mönchengladbach[, ]*", RegexOption.IGNORE_CASE), "").trim()
         return EfaParser.stops(request("XML_STOPFINDER_REQUEST", mapOf(
@@ -43,13 +47,30 @@ class VrrClient {
     )))
 
     suspend fun ride(departure: Departure): Ride {
+        val root = request("XML_TRIPSTOPTIMES_REQUEST", tripParameters(departure))
+        val ride = EfaParser.ride(root, departure)
+        // VRR may include the trip's path as leg.coords; keep it for the map, never stop points.
+        EfaShapeParser.coords(root, departure)?.let { synchronized(tripCoords) { tripCoords[departure.key] = it } }
+        return ride
+    }
+
+    /**
+     * Path of exactly this trip, if VRR publishes one. Uses the coordinates of the last trip
+     * response, otherwise one stop-sequence request. Returns null when VRR has no path.
+     */
+    suspend fun tripPath(departure: Departure): List<GeoPoint>? {
+        synchronized(tripCoords) { tripCoords[departure.key] }?.let { return it }
+        return EfaShapeParser.coords(request("XML_STOPSEQCOORD_REQUEST", tripParameters(departure)), departure)
+    }
+
+    private fun tripParameters(departure: Departure): Map<String, String> {
         val date = departure.planned.atZone(ZoneId.of("Europe/Berlin"))
-        return EfaParser.ride(request("XML_TRIPSTOPTIMES_REQUEST", mapOf(
+        return mapOf(
             "line" to departure.lineId, "stopID" to departure.stopId, "tripCode" to departure.tripCode,
             "date" to date.format(DateTimeFormatter.ofPattern("yyyyMMdd")),
             "time" to date.format(DateTimeFormatter.ofPattern("HHmm")),
             "tStOTType" to "ALL", "useRealtime" to "1"
-        )), departure)
+        )
     }
 
     private suspend fun request(endpoint: String, parameters: Map<String, String>): JSONObject = withContext(Dispatchers.IO) {

@@ -43,6 +43,8 @@ import de.luca.mitfahrt.data.AppSettings
 import de.luca.mitfahrt.data.AppSettingsStore
 import de.luca.mitfahrt.data.GeoPoint
 import de.luca.mitfahrt.data.NewVehicle
+import de.luca.mitfahrt.data.RouteShape
+import de.luca.mitfahrt.data.RouteShapeSource
 import de.luca.mitfahrt.data.Stop
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourcePolicy
@@ -60,10 +62,28 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** Real observations only. A line between stops shows their sequence, never an inferred road/GPS path. */
+/** Overlay data for the map. Built only from verified geometry and real observations. */
+data class MapRoute(
+    /** Verified line geometry; null means no line is drawn at all. */
+    val shape: RouteShape? = null,
+    val target: Stop? = null,
+    /** Section of the line the rider uses (boarding to target), as offsets on [shape]. */
+    val sectionFrom: Double? = null,
+    val sectionTo: Double? = null,
+    /** Part of the section already travelled, drawn muted. */
+    val passedTo: Double? = null,
+    /** NEW position projected onto the line; only when close and heading the same way. */
+    val projected: GeoPoint? = null,
+    /** NEW reports positions away from the line: shown raw, never pulled back. */
+    val offRoute: Boolean = false,
+    /** Fresh phone position, shown on the device only. */
+    val phone: GeoPoint? = null
+)
+
+/** Real observations only. Stops are never joined into a pretend street route. */
 @Composable
 fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, positionAt: Instant,
-    now: Instant, modifier: Modifier = Modifier, routePoints: List<GeoPoint> = emptyList(),
+    now: Instant, modifier: Modifier = Modifier, route: MapRoute = MapRoute(),
     routeStops: List<Stop> = emptyList(), otherVehicles: List<NewVehicle> = emptyList(),
     selectedVehicleId: String? = null, overview: Boolean = false, onSelectVehicle: ((NewVehicle) -> Unit)? = null) {
     if (!busPoint.mapValid() || now.epochSecond - positionAt.epochSecond !in -15..90) return
@@ -81,7 +101,9 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
     var linkError by remember { mutableStateOf(false) }
     val vehicles = otherVehicles.filter { it.isFresh(now) && it.point.mapValid() && it.id != selectedVehicleId }
     val visibleVehicles = if (overview || settings.bool("map_other_buses", false)) vehicles else emptyList()
-    val linePoints = if (settings.bool("map_route", true)) routePoints.filter { it.mapValid() } else emptyList()
+    val shape = route.shape?.takeIf { settings.bool("map_route", true) && it.points.all { point -> point.mapValid() } }
+    val mapRoute = route.copy(shape = shape, projected = route.projected?.takeIf { shape != null && it.mapValid() },
+        phone = route.phone?.takeIf { it.mapValid() })
     val stops = if (settings.bool("map_stops", true)) routeStops.filter { it.point?.mapValid() == true } else emptyList()
     fun open(url: String) { linkError = runCatching { uriHandler.openUri(url) }.isFailure }
     DisposableEffect(controller, lifecycle, viewportVisible) {
@@ -114,12 +136,12 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                 }, factory = { viewContext ->
                     WaitingMapController(viewContext).also {
                         controller = it
-                        it.update(busPoint, boarding, vehicleLabel, settings, dark, linePoints, stops,
+                        it.update(busPoint, boarding, vehicleLabel, settings, dark, mapRoute, stops,
                             visibleVehicles, onSelectVehicle, overview)
                     }.map
                 }, update = { view ->
                     controller?.takeIf { it.map === view }?.update(busPoint, boarding, vehicleLabel, settings, dark,
-                        linePoints, stops, visibleVehicles, onSelectVehicle, overview)
+                        mapRoute, stops, visibleVehicles, onSelectVehicle, overview)
                 }, onReset = null, onRelease = { view ->
                     view.owner?.close()
                     if (controller?.map === view) controller = null
@@ -160,10 +182,23 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                     Icon(Icons.Outlined.OpenInNew, null, Modifier.size(15.dp))
                 }
             }
-            if (linePoints.size > 1) Text("Verbindung der Haltepunkte, kein Straßenverlauf.", color = Soft, fontSize = 11.sp)
+            routeNote(mapRoute, stops.isNotEmpty())?.let { Text(it, color = if (mapRoute.offRoute) Amber else Soft, fontSize = 11.sp, lineHeight = 15.sp) }
             if (linkError) Text("Die Karten-App konnte nicht geöffnet werden.", color = Amber, fontSize = 12.sp)
         }
     }
+}
+
+/** Explains where the drawn line comes from, or that there is none. */
+private fun routeNote(route: MapRoute, stopsShown: Boolean): String? {
+    val lines = mutableListOf<String>()
+    when (route.shape?.source) {
+        RouteShapeSource.TRIP -> lines += "Linienverlauf dieser Fahrt laut VRR."
+        RouteShapeSource.VARIANT -> lines += "Linienverlauf einer früheren VRR-Fahrt mit gleicher Haltestellenfolge."
+        null -> if (stopsShown) lines += "Kein Streckenverlauf verfügbar – nur Haltestellen."
+    }
+    if (route.offRoute) lines += "Der Bus weicht vom bekannten Verlauf ab (z. B. Umleitung). Gezeigt wird seine gemeldete Position."
+    else if (route.projected != null) lines += "Heller Punkt: gemeldete Position auf die Linie übertragen."
+    return lines.joinToString(" ").ifBlank { null }
 }
 
 private fun positionLabel(at: Instant, now: Instant): String {
@@ -191,6 +226,7 @@ private class WaitingMapController(private val context: Context) {
     private var busPoint: GeoPoint? = null
     private var boarding: Stop? = null
     private var routePoints: List<GeoPoint> = emptyList()
+    private var stopPoints: List<GeoPoint> = emptyList()
     private var others: List<NewVehicle> = emptyList()
     private var camera = "bus"
     private var zoom = 15
@@ -198,6 +234,11 @@ private class WaitingMapController(private val context: Context) {
     private var overview = false
     private val density = context.resources.displayMetrics.density
     private val route: Polyline
+    private val section: Polyline
+    private val passed: Polyline
+    private val target: Marker
+    private val projectedMarker: Marker
+    private val phoneMarker: Marker
     private val extraMarkers = mutableListOf<Marker>()
     private val stationMarkers = mutableListOf<Marker>()
     private var overlayIdentity: Any? = null
@@ -240,8 +281,28 @@ private class WaitingMapController(private val context: Context) {
         }
         map.owner = this
         route = Polyline(map).apply {
-            outlinePaint.color = 0xFFB40055.toInt(); outlinePaint.strokeWidth = 3 * density
+            outlinePaint.color = 0x66B40055; outlinePaint.strokeWidth = 3 * density
             infoWindow = null
+        }
+        section = Polyline(map).apply {
+            outlinePaint.color = 0xFFB40055.toInt(); outlinePaint.strokeWidth = 6 * density
+            infoWindow = null
+        }
+        passed = Polyline(map).apply {
+            outlinePaint.color = 0xFF9A93A6.toInt(); outlinePaint.strokeWidth = 6 * density
+            infoWindow = null
+        }
+        target = Marker(map).apply {
+            icon = dotIcon(0xFFB40055.toInt(), 22); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            infoWindow = null; setOnMarkerClickListener { _, _ -> true }
+        }
+        projectedMarker = Marker(map).apply {
+            icon = dotIcon(0xFFFFFFFF.toInt(), 14, 0xFFB40055.toInt()); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            infoWindow = null; setOnMarkerClickListener { _, _ -> true }
+        }
+        phoneMarker = Marker(map).apply {
+            icon = dotIcon(0xFF2F6FDB.toInt(), 16); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            infoWindow = null; setOnMarkerClickListener { _, _ -> true }; title = "Dein Standort"
         }
         stop = Marker(map).apply {
             icon = markerIcon(false); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -251,17 +312,21 @@ private class WaitingMapController(private val context: Context) {
             icon = markerIcon(true); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
             infoWindow = null; setOnMarkerClickListener { _, _ -> true }
         }
-        map.overlays.add(route); map.overlays.add(stop); map.overlays.add(bus)
+        map.overlays.add(route); map.overlays.add(section); map.overlays.add(passed)
+        map.overlays.add(stop); map.overlays.add(target); map.overlays.add(phoneMarker)
+        map.overlays.add(projectedMarker); map.overlays.add(bus)
     }
 
     fun update(point: GeoPoint, boardingStop: Stop?, label: String, settings: AppSettings, dark: Boolean,
-        path: List<GeoPoint>, stops: List<Stop>, vehicles: List<NewVehicle>,
+        mapRoute: MapRoute, stops: List<Stop>, vehicles: List<NewVehicle>,
         onSelect: ((NewVehicle) -> Unit)?, fleetOverview: Boolean) {
         if (closed || !point.mapValid()) return
         val changedPoint = busPoint != point
         busPoint = point
         boarding = boardingStop?.takeIf { it.point?.mapValid() == true }
-        routePoints = path
+        val shape = mapRoute.shape
+        routePoints = shape?.points.orEmpty()
+        stopPoints = stops.mapNotNull { it.point }
         others = vehicles
         camera = settings.string("map_camera", "bus")
         zoom = settings.int("map_zoom", 15).coerceIn(10, 19)
@@ -275,10 +340,30 @@ private class WaitingMapController(private val context: Context) {
         bus.position = OsmPoint(point.lat, point.lon); bus.title = label
         stop.isEnabled = settings.bool("map_stops", true) && boarding != null
         boarding?.let { stop.position = OsmPoint(it.point!!.lat, it.point!!.lon); stop.title = "Einstieg: ${it.name}" }
-        val identity = listOf(path, stops, vehicles)
+        target.isEnabled = mapRoute.target?.point?.mapValid() == true
+        mapRoute.target?.let { stopTarget ->
+            stopTarget.point?.takeIf { it.mapValid() }?.let { target.position = OsmPoint(it.lat, it.lon); target.title = "Ziel: ${stopTarget.name}" }
+        }
+        // The projected point is a second, clearly different marker; the bus marker stays at the raw position.
+        val projected = mapRoute.projected?.takeIf { !mapRoute.offRoute && it.distanceTo(point) >= 8.0 }
+        projectedMarker.isEnabled = projected != null
+        projected?.let { projectedMarker.position = OsmPoint(it.lat, it.lon); projectedMarker.title = "Auf die Linie übertragen" }
+        phoneMarker.isEnabled = mapRoute.phone != null
+        mapRoute.phone?.let { phoneMarker.position = OsmPoint(it.lat, it.lon) }
+        val line = shape?.line
+        val from = mapRoute.sectionFrom
+        val to = mapRoute.sectionTo
+        // Rounded so that a new GPS fix does not rebuild the overlays every few seconds.
+        val passedKey = mapRoute.passedTo?.let { (it / 25.0).toInt() }
+        val identity = listOf(shape?.journeyKey, shape?.source, routePoints.size, from?.toInt(), to?.toInt(), passedKey, stops, vehicles)
         if (identity != overlayIdentity) {
             overlayIdentity = identity
-            route.setPoints(path.map { OsmPoint(it.lat, it.lon) }); route.isEnabled = path.size > 1
+            route.setPoints(routePoints.map { OsmPoint(it.lat, it.lon) }); route.isEnabled = routePoints.size > 1
+            val sectionPoints = if (line != null && from != null && to != null) line.slice(from, to) else emptyList()
+            section.setPoints(sectionPoints.map { OsmPoint(it.lat, it.lon) }); section.isEnabled = sectionPoints.size > 1
+            val passedPoints = if (line != null && from != null && to != null && mapRoute.passedTo != null)
+                line.slice(from, minOf(to, mapRoute.passedTo)) else emptyList()
+            passed.setPoints(passedPoints.map { OsmPoint(it.lat, it.lon) }); passed.isEnabled = passedPoints.size > 1
             extraMarkers.forEach { map.overlays.remove(it) }; extraMarkers.clear()
             stationMarkers.forEach { map.overlays.remove(it) }; stationMarkers.clear()
             stops.filter { it.id != boarding?.id }.take(100).forEach { station ->
@@ -326,7 +411,7 @@ private class WaitingMapController(private val context: Context) {
         needsFit = false
         val points = when {
             overview -> (listOf(point) + others.map { it.point })
-            camera == "route" -> (routePoints + listOfNotNull(point, boarding?.point)).distinct()
+            camera == "route" -> (routePoints.ifEmpty { stopPoints } + listOfNotNull(point, boarding?.point)).distinct()
             camera == "boarding" -> listOf(boarding?.point ?: point)
             else -> listOf(point)
         }.map { OsmPoint(it.lat, it.lon) }
@@ -346,6 +431,15 @@ private class WaitingMapController(private val context: Context) {
     fun close() {
         if (closed) return
         setActive(false); closed = true; map.setUseDataConnection(false); map.owner = null; map.onDetach()
+    }
+
+    private fun dotIcon(fill: Int, sizeDp: Int, ring: Int = android.graphics.Color.WHITE): BitmapDrawable {
+        val size = (sizeDp * density).toInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap); val paint = Paint(Paint.ANTI_ALIAS_FLAG); val center = size / 2f
+        paint.color = ring; canvas.drawCircle(center, center, center, paint)
+        paint.color = fill; canvas.drawCircle(center, center, center - 2.5f * density, paint)
+        return BitmapDrawable(context.resources, bitmap)
     }
 
     private fun markerIcon(isBus: Boolean): BitmapDrawable {

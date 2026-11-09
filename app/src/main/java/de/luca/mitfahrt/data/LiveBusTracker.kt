@@ -15,10 +15,16 @@ class LiveBusTracker(
     private val mutex = Mutex()
     private var fleet: Fleet? = null
     private var journeyKey: String? = null
+    private val history = VehicleHistory()
 
-    suspend fun refresh(ride: Ride, previous: LiveBusState): LiveBusState = mutex.withLock {
+    /**
+     * [phone] and [shape] are only read locally for [options]-controlled detection. Without
+     * options the behaviour is the previous candidate/confirmation logic.
+     */
+    suspend fun refresh(ride: Ride, previous: LiveBusState, phone: List<PhoneFix> = emptyList(),
+                        options: AutoMatchOptions = AutoMatchOptions.OFF, shape: RouteShape? = null): LiveBusState = mutex.withLock {
         val key = ride.departure.key
-        if (journeyKey != key || previous.journeyKey != key) fleet = null
+        if (journeyKey != key || previous.journeyKey != key) { fleet = null; history.clear() }
         journeyKey = key
         val base = previous.takeIf { it.journeyKey == key }
             ?: LiveBusState(journeyKey = key, revision = previous.revision)
@@ -28,10 +34,16 @@ class LiveBusTracker(
         }
         try {
             val selectedId = base.selectedVehicleId
-            if (selectedId != null) return@withLock refreshSelected(ride, base, selectedId)
+            if (selectedId != null) {
+                val manual = refreshSelected(ride, base, selectedId)
+                val auto = if (options.enabled) AutoMatchEngine.step(base.auto, emptyList(), MatchMode.WAITING, clock(), options, manual = true)
+                    else AutoMatchState(rejected = base.auto.rejected)
+                return@withLock withRoute(manual.copy(auto = auto), shape, base)
+            }
 
             var vehicles = fleetAt(clock())
             val knownId = base.vehicle?.id?.takeIf { base.confirmed }
+                ?: base.auto.vehicleId?.takeIf { options.enabled && base.auto.holdsVehicle }
             var missingKnownVehicle = false
             if (knownId != null) {
                 val observed = fetchVehicle(knownId)
@@ -41,12 +53,27 @@ class LiveBusTracker(
                 fleet = fleet?.copy(vehicles = vehicles)
             }
             val now = clock()
+            history.record(vehicles.filter { it.isFresh(now) }, now)
             val candidates = NewVehicleMatcher.candidates(ride, vehicles, now)
             val confirmed = NewVehicleMatcher.confirmed(ride, vehicles, now)
-            base.copy(candidates = candidates, vehicle = confirmed,
+            val auto = if (options.enabled) {
+                val reference = RouteReference.of(ride, shape)
+                val mode = if (ride.boarded) MatchMode.RIDING else MatchMode.WAITING
+                val scored = candidates.map { vehicle ->
+                    val track = history.track(vehicle.id).filter { it.at.isBefore(vehicle.observedAt) }
+                    val schedule = confirmed?.id == vehicle.id
+                    if (mode == MatchMode.WAITING) VehicleScoring.waiting(ride, reference, vehicle, track, now, schedule)
+                    else VehicleScoring.riding(ride, reference, vehicle, track, phone, now, schedule)
+                }
+                AutoMatchEngine.step(base.auto, scored, mode, now, options, manual = false)
+            } else AutoMatchState(rejected = base.auto.rejected)
+            val detected = auto.vehicleId?.takeIf { auto.holdsVehicle }
+                ?.let { id -> vehicles.firstOrNull { it.id == id && it.isFresh(now) } }
+            withRoute(base.copy(candidates = candidates, vehicle = confirmed ?: detected,
                 selectedVehicleId = null, confirmed = confirmed != null, fetchedAt = now,
-                loading = false, error = if (missingKnownVehicle && confirmed == null)
-                    "Für das bisherige Fahrzeug liegen keine aktuellen Positionsdaten vor." else null)
+                loading = false, error = if (missingKnownVehicle && confirmed == null && detected == null &&
+                    auto.status != AutoMatchStatus.RECHECKING)
+                    "Für das bisherige Fahrzeug liegen keine aktuellen Positionsdaten vor." else null, auto = auto), shape, base)
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (_: Exception) {
             // A failed lookup must not let an older cached match reappear on the next refresh.
@@ -73,8 +100,17 @@ class LiveBusTracker(
                 loading = false, error = "Linie oder Richtung passen nicht mehr zur Auswahl.")
         }
         fleet = fleet?.let { it.copy(vehicles = replace(it.vehicles, id, observed)) }
+        history.record(listOf(observed), now)
         return state.copy(candidates = NewVehicleMatcher.candidates(ride, replace(state.candidates, id, observed), now),
             vehicle = observed, confirmed = false, fetchedAt = now, loading = false, error = null)
+    }
+
+    private fun withRoute(state: LiveBusState, shape: RouteShape?, previous: LiveBusState): LiveBusState {
+        val vehicle = state.vehicle ?: return state.copy(routePoint = null, routeOffset = null, offRoute = false)
+        val around = previous.routeOffset?.takeIf { previous.vehicle?.id == vehicle.id }
+        val result = RouteSnapping.vehicle(shape?.takeIf { it.journeyKey == state.journeyKey }, vehicle.point,
+            history.track(vehicle.id).filter { it.at.isBefore(vehicle.observedAt) }, around)
+        return state.copy(routePoint = result.projected?.point, routeOffset = result.projected?.offset, offRoute = result.deviating)
     }
 
     private suspend fun fleetAt(now: Instant): List<NewVehicle> {
@@ -89,6 +125,11 @@ class LiveBusTracker(
         vehicles.filterNot { it.id == id } + listOfNotNull(observed)
 
     companion object {
+        /** A late result is applied only to the same running journey, boarding phase and revision. */
+        fun resultApplies(state: TrackingState, journeyKey: String, boarded: Boolean, revision: Long): Boolean =
+            state.running && state.ride?.departure?.key == journeyKey && state.ride?.boarded == boarded &&
+                state.liveBus.revision == revision
+
         /** A click selects telemetry, not proof that this vehicle operates the chosen departure. */
         fun select(ride: Ride, state: LiveBusState, vehicle: NewVehicle, now: Instant): LiveBusState? {
             if (ride.demo || ride.departure.cancelled || state.journeyKey != ride.departure.key) return null

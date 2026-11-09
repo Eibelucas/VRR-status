@@ -87,7 +87,8 @@ class RideNotifications(private val context: Context) {
         val boardingTime = ride.boardingTime()
         val liveBoarding = if (state.running && !state.lastRefreshFailed) ride.liveBoardingTime(now) else null
         val waitingTime = if (ride.demo) boardingTime else liveBoarding
-        val next = ride.nextStopToTarget(now)
+        val nextInfo = NextStopResolver.resolve(state, now, settings.bool("gps_next_stop", true))
+        val next = nextInfo?.stop
         val remaining = if (waiting) waitingTime?.let { minutesUntil(it.at, now) }
             else if (!ride.isStale(now) && !state.lastRefreshFailed && state.running)
                 ride.displayTarget().estimated?.let { minutesUntil(it, now) } else null
@@ -109,7 +110,12 @@ class RideNotifications(private val context: Context) {
                 !waitingTime.at.isAfter(now) -> "Bus wird erwartet"
                 else -> "${if (waitingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(waitingTime.at, now)}"
             }
-        } else if (next == null) "Ziel laut Fahrtverlauf erreicht" else "Nächster Halt: ${shortName(next.name)}"
+        } else when {
+            nextInfo?.source == NextStopSource.UNCERTAIN -> "Nächster Halt nicht sicher erkannt"
+            next == null -> "Ziel laut Fahrtverlauf erreicht"
+            nextInfo?.source == NextStopSource.GPS -> "Nächster Halt: ${shortName(next.name)} · per GPS"
+            else -> "Nächster Halt: ${shortName(next.name)}"
+        }
         val fullTitle = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.displayTarget().name)}"
         val mode = settings.string("nowbar_content", "full")
         val title = when (mode) {

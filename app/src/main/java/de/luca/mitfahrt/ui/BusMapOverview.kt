@@ -24,6 +24,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import de.luca.mitfahrt.MitfahrtApplication
 import de.luca.mitfahrt.data.AppSettingsStore
 import de.luca.mitfahrt.data.NewVehicle
+import de.luca.mitfahrt.data.Stop
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -94,9 +95,10 @@ fun BusMapOverview(onBack: () -> Unit) {
                     if (selected != null) item {
                         WaitingBusMap(selected.point, null, "Linie ${selected.line} · Fahrzeug ${selected.id}", selected.observedAt, now,
                             otherVehicles = current, selectedVehicleId = selected.id, overview = true,
-                            routePoints = selected.routeStops.takeIf {
+                            // NEW publishes only stop points for the path; they are shown as stops, not joined into a line.
+                            routeStops = selected.routeStops.takeIf {
                                 selected.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
-                            }.orEmpty().map { it.point },
+                            }.orEmpty().mapIndexed { index, stop -> Stop("new-path-$index", stop.name.ifBlank { "Halt" }, stop.point) },
                             onSelectVehicle = { selectedId = it.id })
                     }
                     item {

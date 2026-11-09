@@ -29,6 +29,9 @@ class MitfahrtApplication : Application() {
     val vrr by lazy { VrrClient() }
     val newVehicles by lazy { de.luca.mitfahrt.data.NewVehicleClient() }
     val liveBusTracker by lazy { de.luca.mitfahrt.data.LiveBusTracker(newVehicles::fetch, newVehicles::vehicle) }
+    /** Verified public line geometry; cached in the app's cache directory, no personal data. */
+    val routeShapes by lazy { de.luca.mitfahrt.data.RouteShapeRepository(vrr::tripPath,
+        de.luca.mitfahrt.data.RouteShapeCache(java.io.File(cacheDir, "route_shapes.json"))) }
     val reports by lazy { ReportFiles(this) }
     val arrivals by lazy { ArrivalStore(this) }
     val watch by lazy { WatchPublisher(this, store) }

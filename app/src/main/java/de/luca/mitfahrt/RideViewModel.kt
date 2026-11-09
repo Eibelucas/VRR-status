@@ -163,9 +163,25 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun clearLiveVehicle(journeyKey: String) {
         app.store.update { state ->
+            if (state.ride?.departure?.key == journeyKey) {
+                // Clearing an automatically detected vehicle must not let it be re-assigned at once.
+                val auto = state.liveBus.auto.vehicleId?.takeIf { state.liveBus.auto.holdsVehicle }
+                    ?.let { de.luca.mitfahrt.data.AutoMatchEngine.reject(state.liveBus.auto, it) } ?: state.liveBus.auto
+                state.copy(liveBus = state.liveBus.copy(
+                    vehicle = null, selectedVehicleId = null, confirmed = false, error = null, auto = auto,
+                    routePoint = null, routeOffset = null, offRoute = false,
+                    loading = state.running, revision = state.liveBus.revision + 1))
+            } else state
+        }
+        de.luca.mitfahrt.tracking.RideService.refreshLive(app)
+    }
+    /** "Nein" on "Bist du in diesem Bus?": this vehicle is not proposed again for this journey. */
+    fun rejectLiveVehicle(journeyKey: String, vehicleId: String) {
+        app.store.update { state ->
             if (state.ride?.departure?.key == journeyKey) state.copy(liveBus = state.liveBus.copy(
-                vehicle = null, selectedVehicleId = null, confirmed = false, error = null,
-                loading = state.running, revision = state.liveBus.revision + 1))
+                auto = de.luca.mitfahrt.data.AutoMatchEngine.reject(state.liveBus.auto, vehicleId),
+                vehicle = state.liveBus.vehicle?.takeUnless { it.id == vehicleId && state.liveBus.selectedVehicleId == null && !state.liveBus.confirmed },
+                revision = state.liveBus.revision + 1))
             else state
         }
         de.luca.mitfahrt.tracking.RideService.refreshLive(app)
