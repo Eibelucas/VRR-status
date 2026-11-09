@@ -171,7 +171,7 @@ fun MitfahrtApp(
         }
     }
     val nearbyForPlans = home.stops.takeIf { home.status == NearbyStatus.READY }.orEmpty()
-    val visiblePlans = routePlans.routes.filter { CustomizationPolicy.active(it, now, nearbyForPlans, settings, dayOverrides, schoolCalendar) }.take(settings.int("routes_visible_count", 3))
+    val visiblePlans = HomeSections.activePlans(routePlans.routes, now, nearbyForPlans, settings, dayOverrides, schoolCalendar)
     val suggestedRoutes = if (routePlans.automaticLearning && settings.bool("learn_routes", true) && !settings.bool("manual_only", false)) routes.filter { it.count >= settings.int("suggestion_threshold", 3) } else emptyList()
     val cardOrder = settings.csv("home_cards").let { if (settings.bool("map_home", false) && "map" !in it) it + "map" else it }
     val locationOff = settings.string("location_mode", "active") == "off"
@@ -180,6 +180,8 @@ fun MitfahrtApp(
     val homeNeedsNearby = !settings.bool("manual_only", false) &&
         ("planned" in cardOrder && routePlans.routes.any { it.enabled && it.nearbyOnly } ||
             "suggestions" in cardOrder && suggestedRoutes.isNotEmpty() || "school" in cardOrder && schoolTrips.isNotEmpty())
+    val homeSections = HomeSections.visible(cardOrder, settings, visiblePlans, now, schoolCalendar, schoolTrips.size,
+        suggestedRoutes.size, lastRide != null)
     val companionPhase = companion?.let { JourneyCompanions.phase(it, tracking.ride?.departure?.key, companionSeen) }
     val gap = when (settings.string("density")) { "compact" -> 12.dp; "comfortable" -> 28.dp; else -> 20.dp }
     BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization && personalModule == null && !showPlanner) {
@@ -416,18 +418,18 @@ fun MitfahrtApp(
                             onSwap = { planner.swap(); if (planner.form.value.complete) showPlanner = true },
                             onSaved = { place -> planner.setPlace(de.luca.mitfahrt.PlaceField.DESTINATION, place); showPlanner = true })
                     }
-                    cardOrder.forEach { card -> when (card) {
+                    homeSections.forEach { card -> when (card) {
                         // Shown only when at least one saved route is active now: no empty heading or card.
-                        "planned" -> if (visiblePlans.isNotEmpty()) {
+                        "planned" -> {
                             item { PlannedRoutesCard(visiblePlans, routePlans.routes.size, planDepartures.departures,
                                 planDepartures.loading, now, search.choosing, onManage = { newRoutePlan = false; showRoutePlans = true },
                                 onStart = vm::chooseRoutePlan, onPreview = vm::previewRoutePlan, onOpen = { vm.selectRoutePlan(it); page = 1 },
                                 onConnections = { planner.planRoute(it); showPlanner = true }) }
                             planDepartures.error?.let { message -> item { Text(message, color = Amber, fontSize = 13.sp) } }
                         }
-                        "school" -> if (schoolTrips.isNotEmpty() && !settings.bool("routes_school_paused", false) && !SchoolCalendar.status(now.atZone(RouteDayOverrides.zone).toLocalDate(), schoolCalendar).free) item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
+                        "school" -> item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
                         // Automatic suggestions stay separate from saved routes.
-                        "suggestions" -> if (!settings.bool("manual_only", false) && suggestedRoutes.isNotEmpty()) item {
+                        "suggestions" -> item {
                             HomeOverview(home, suggestedRoutes, now, search.loading, search.choosing,
                                 onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome, onStop = ::selectStop,
                                 onAllStops = { vm.nearby(); page = 1 }, onRoute = { vm.selectRoute(it); page = 1 },

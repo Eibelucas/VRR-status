@@ -155,7 +155,9 @@ class TripPlanningTest {
     @Test fun `invalid or missing geometry yields no line`() {
         val a = TripFixtures.stop("de:05116:1:1:1", "A", 51.0, 6.0, planDep = 0)
         val b = TripFixtures.stop("de:05116:2:1:1", "B", 51.01, 6.0, planArr = 5)
-        val broken = TripFixtures.transit("new:1", "001", "NEW", 5, "Bus", "B", "1", a, b, coords = listOf(51.0 to 6.0, Double.NaN to 6.0))
+        // org.json refuses NaN, so an unreadable value stands for a broken coordinate.
+        val broken = TripFixtures.transit("new:1", "001", "NEW", 5, "Bus", "B", "1", a, b).put("coords",
+            JSONArray().put(JSONArray().put(51.0).put(6.0)).put(JSONArray().put("kaputt").put(6.0)))
         val nested = TripFixtures.transit("new:1", "001", "NEW", 5, "Bus", "B", "2", a, b).put("coords",
             JSONArray().put(JSONArray(listOf(JSONArray(listOf(51.0, 6.0)), JSONArray(listOf(51.01, 6.0))))))
         val journeys = TripParser.journeys(TripFixtures.root(TripFixtures.journey(broken), TripFixtures.journey(nested)), T0)
@@ -200,5 +202,31 @@ class TripPlanningTest {
         val b = TripParser.journeys(TripFixtures.root(TripFixtures.busAndTrain(30, 19)), T0).single()
         assertEquals(a.key, b.key)
         assertNotEquals(a.arrival, b.arrival)
+    }
+
+    @Test fun `journey with two transfers is assessed per transfer`() {
+        val f = TripFixtures
+        val a = f.stop("de:05116:1:1:1", "A", 51.20, 6.44, planDep = 0, estDep = 1)
+        val b1 = f.stop("de:05116:2:1:1", "B", 51.19, 6.44, planArr = 10, estArr = 11)
+        val b2 = f.stop("de:05116:2:2:1", "B", 51.19, 6.44, planDep = 14, estDep = 14)
+        val c1 = f.stop("de:05116:3:1:1", "C", 51.18, 6.44, planArr = 25, estArr = 29)
+        val c2 = f.stop("de:05116:3:2:1", "C", 51.18, 6.44, planDep = 30, platform = "Gleis 1")
+        val d = f.stop("de:05315:4:1:1", "D", 50.94, 6.96, planArr = 70)
+        val journey = TripParser.journeys(f.root(f.journey(
+            f.transit("new:80001: :H:m26", "001", "NEW", 5, "Bus", "B", "1", a, b1),
+            f.transit("vrr:U70", "U70", "RBG", 4, "Stadtbahn", "C", "2", b2, c1),
+            f.walk(c1, c2, 120, productClass = 99),
+            f.transit("ddb:RE1", "RE1", "DBNW", 0, "Zug", "D", "3", c2, d, realtime = false),
+            interchanges = 2)), T0).single()
+        assertEquals(2, journey.interchanges)
+        assertEquals(listOf("001", "U70", "RE1"), journey.transit.map { it.line })
+        assertEquals(listOf(ProductGroup.BUS, ProductGroup.LIGHT_RAIL, ProductGroup.TRAIN), journey.transit.map { ProductGroup.of(it.productClass) })
+        val transfers = TripTransfers.assess(journey)
+        // B: bus 11 -> tram 14 (live both) = 3 min. C: tram 29 + 2 min walk -> train has no live forecast: no statement.
+        assertEquals(1, transfers.size)
+        assertEquals(TransferRisk.OK, transfers.single().risk); assertEquals(180L, transfers.single().slackSeconds)
+        // Train without forecast: arrival stays the planned one.
+        assertEquals(T0.plusSeconds(70 * 60), journey.arrival)
+        assertEquals(T0.plusSeconds(60), journey.departure)
     }
 }
