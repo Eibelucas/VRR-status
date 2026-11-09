@@ -75,7 +75,7 @@ class RouteShapeTest {
         val leg = root.getJSONObject("leg")
         val transport = leg.getJSONObject("transportation")
         val departure = ride.departure.copy(lineId = transport.getString("id"),
-            tripCode = transport.getJSONObject("properties").getString("tripCode"))
+            tripCode = transport.getJSONObject("properties").str("tripCode"))
         assertFalse(leg.has("coords"))
         assertNull(EfaShapeParser.coords(root, departure))
     }
@@ -176,4 +176,14 @@ class RouteShapeTest {
         val sameStations = ride.copy(departure = ride.departure.copy(tripCode = "x", planned = Instant.EPOCH))
         assertEquals(RouteShape.variantKey(ride), RouteShape.variantKey(sameStations))
     }
+    @Test fun `real NEW stop sequence geometry passes trip identity and ordered stop validation`() {
+        val probe = JSONObject(javaClass.classLoader!!.getResource("new-live-route-probe.json")!!.readText())
+        val departure = EfaParser.departures(probe.getJSONObject("monitor"), T0).single()
+        val actualRide = EfaParser.ride(probe.getJSONObject("trip"), departure)
+        val points = EfaShapeParser.coords(probe.getJSONObject("shape"), departure)
+        assertNotNull(points)
+        assertEquals(830, points!!.size)
+        assertNotNull(RouteShape.verify(actualRide, points, RouteShapeSource.TRIP))
+    }
+
 }

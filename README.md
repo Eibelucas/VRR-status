@@ -18,6 +18,14 @@ Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
 
+## GPS-Abgleich und echte Strecken ab 0.17
+
+Die automatische Fahrzeugerkennung vergleicht frische NEW-Positionen mit Linie, Richtung und mehreren Handy-Messungen. Nach bestätigtem Einstieg unterstützt die gemeinsame Bewegung die Zuordnung. Unsichere Fälle bleiben Vorschläge; eine manuelle Auswahl hat Vorrang.
+
+Die Karte zeichnet ausschließlich geprüfte Straßenverläufe aus VRR-Fahrtdaten, keine geraden Verbindungen zwischen Haltestellen. Die zusätzliche STOPSEQCOORD-Abfrage wurde für eine aktuelle NEW-Fahrt live mit 830 Punkten bestätigt. Fehlt eine geeignete Geometrie, werden nur Haltestellen gezeigt. GPS-basierter Haltestellenfortschritt funktioniert nach „Bin im Bus“ auch ohne Live-Ankunftsprognose und wird als solcher gekennzeichnet. Daraus wird keine erfundene Restzeit berechnet.
+
+Details, Datenquellen und Grenzen stehen in [docs/GPS_MATCHING.md](docs/GPS_MATCHING.md). Die Erkennungsschwellen benötigen noch einen Praxistest auf echten Fahrten.
+
 ## Einstellungen, Widgets und Alltag ab 0.16
 
 Unter **Einstellungen → Alle Einstellungen & Profile** stehen Suche, Bereiche, erweiterte Optionen, zuletzt geänderte Werte und Rücksetzen bereit. Profile lassen sich manuell oder nach Wochentag und Uhrzeit wählen. Startkarten, Navigation, Suchradius, Linien, Anzeige, Karte, Benachrichtigungen, Watch, Lernen, Daten und Update-Verhalten sind anpassbar. Sicherungen enthalten Einstellungen und eigene Routenvorlagen; keine Fahrthistorie, Standortaufzeichnungen oder Belege. Name/Klasse/Notiz werden standardmäßig ausgelassen.

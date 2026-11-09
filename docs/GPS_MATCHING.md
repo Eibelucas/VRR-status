@@ -23,7 +23,7 @@ NEW liefert **keine Linien- oder Fahrtgeometrie**. `FAHRTWEG` sind Haltestellenk
 |---|---|---|
 | `XML_TRIPSTOPTIMES_REQUEST` (bisher genutzt) | `leg.stopSequence[].coord` = Haltepunkte | Die aufgezeichnete Antwort (`src/test/resources/ride.json`) enthält **kein** `leg.coords` (Test vorhanden). |
 | Fahrtdetails mit `leg.coords` | Polylinie `[[lat, lon], …]`, teils einmal zusätzlich verschachtelt | Wird vom EFA-Client *Travel::Status::DE::EFA* (VRR) als Fahrtverlauf gelesen; dort ausdrücklich: „wenn das Backend keine Koordinaten liefert, leer“. |
-| `XML_STOPSEQCOORD_REQUEST` | wie oben (gleiche Parameter wie TRIPSTOPTIMES) | Wird jetzt höchstens einmal je Fahrt und 20 Minuten versucht. **Nicht live geprüft** (Sandbox ohne Zugriff). |
+| `XML_STOPSEQCOORD_REQUEST` | wie oben (gleiche Parameter wie TRIPSTOPTIMES) | Wird jetzt höchstens einmal je Fahrt und 20 Minuten versucht. **Live geprüft am 09.11.2026:** Eine aktuelle NEW-Fahrt ab Hehn lieferte 830 Linienpunkte in `leg.coords` (Reihenfolge Breite/Länge). |
 | `XML_LINESTOP_REQUEST` | nur Haltepunkte (`includeCoords`) | ungeeignet |
 
 Zuordnung: Eine EFA-Polylinie wird nur akzeptiert, wenn `transportation.id` und `properties.tripCode` exakt zur gewählten Fahrt passen **und** die Haltestellen der Fahrt in ihrer Reihenfolge innerhalb von 60 m auf der Linie liegen (Einstieg und Ziel Pflicht, ≥ 80 % der Halte dazwischen).
@@ -62,8 +62,8 @@ Ausstiegsalarm ohne frische VRR-Daten nur bei frischem (≤ 45 s), genauem (≤ 
 Handypositionen nur im Arbeitsspeicher des Dienstes (max. 5 Minuten, 120 Fixes), nicht gespeichert, nicht übertragen. Bei abgeschaltetem Standort wird der Puffer geleert. Die Geometrie im Cache ist öffentliche Liniengeometrie.
 
 ## 6. Einschränkungen / Praxistest nötig
-- Ob VRR für NEW-Fahrten `leg.coords` liefert (TRIPSTOPTIMES oder STOPSEQCOORD), ist ungeprüft. Ohne das bleibt die Karte bei „nur Haltestellen“.
+- Für eine aktuelle NEW-Fahrt wurde STOPSEQCOORD mit 830 Punkten bestätigt; TRIPSTOPTIMES enthielt keine Geometrie. Andere Fahrten können weiterhin ohne Geometrie bleiben.
 - Schwellen sind aus typischen Werten abgeleitet, nicht aus aufgezeichneten Fahrten.
 - Der Standort-Listener liefert erst nach 12 m Bewegung neue Fixes; ein stehender Bus erscheint nach 45 s als „Letzte bestätigte Position“.
-- Compose-UI und `RideService` wurden in der Sandbox nicht gebaut (kein Android-SDK); Datenteil kompiliert, Tests laufen.
+- Android-Kompilierung ist in der Integrationsumgebung erfolgreich; der vollständige Test- und Release-Durchlauf erfolgt vor Veröffentlichung.
 - Widget und Watch zeigen den GPS-erkannten Halt über `gpsPassedIndex`, aber noch ohne Herkunftsangabe.

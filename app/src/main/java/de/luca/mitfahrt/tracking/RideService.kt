@@ -376,8 +376,15 @@ class RideService : Service(), LocationListener {
         }
     }
 
-    private fun hasLocation(): Boolean = customization.current().string("location_mode", "active") == "active" &&
-        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun hasLocation(): Boolean {
+        val mode = customization.current().string("location_mode", "active")
+        val process = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(process)
+        val visible = process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+            process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+        return (mode == "active" || mode == "foreground" && visible) &&
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }
 
     @SuppressLint("MissingPermission", "UnspecifiedRegisterReceiverFlag")
     private fun startSensors() {
@@ -457,12 +464,12 @@ class RideService : Service(), LocationListener {
     override fun onLocationChanged(location: Location) {
         if (!hasLocation()) return
         val ageNanos = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
-        if (location.accuracy > 150 || ageNanos > 60_000_000_000) return
+        if (!location.accuracy.isFinite() || location.accuracy !in 1f..150f || ageNanos !in 0..60_000_000_000L) return
         val point = GeoPoint(location.latitude, location.longitude)
         val now = Instant.now()
         val fix = PhoneFix(point, location.accuracy, now.minusMillis(ageNanos.coerceAtLeast(0) / 1_000_000))
         phoneTrack.add(fix)
-        store.update { it.copy(location = point, locationAt = now) }
+        store.update { it.copy(location = point, locationAt = fix.at) }
         val ride = store.state.value.ride ?: return
         detectOwnArrival(ride, point, location.accuracy)
         if (ride.demo || !ride.boarded || !customization.current().bool("gps_next_stop", true)) return
