@@ -35,7 +35,10 @@ class RideService : Service(), LocationListener {
     private var lastRideRefresh = 0L
     private var lastCompletionCheck: Instant? = null
     private var candidateLookup: Job? = null
-    private var approaching: Int? = null
+    /** Recent phone positions for local detection only; never stored or transmitted. */
+    private val phoneTrack = PhoneTrack()
+    private var shapeJob: Job? = null
+    private var shapeCheck: Pair<String, Long>? = null
     private var sessionStart = 0L
     private var sensorsRegistered = false
     private var locationSubscribed = false
@@ -85,7 +88,6 @@ class RideService : Service(), LocationListener {
             if (store.state.value.ride?.departure?.key != ride.departure.key) explicitlyStarted = ride
             store.setRide(ride)
             store.update { it.copy(monitoring = false, candidates = emptyList()) }
-            approaching = null
             lastCompletionCheck = null
             lastRideRefresh = SystemClock.elapsedRealtime()
         } else if (intent?.action == MONITOR) {
@@ -110,6 +112,7 @@ class RideService : Service(), LocationListener {
             observer = scope.launch { store.state.collect { notifications.post(it) } }
             liveLoop = scope.launch {
                 while (isActive) {
+                    ensureRouteShape()
                     refreshLiveBus()
                     val settings = customization.current()
                     val interval = settings.int(if (store.state.value.ride?.boarded == true) "refresh_riding" else "refresh_waiting",
@@ -172,8 +175,10 @@ class RideService : Service(), LocationListener {
                     }
                     if (ArrivalAlertPolicy.exitDue(current, alertOptions, now) && currentRide != null) {
                         val id = ExitAlarm.id(currentRide)
+                        val gpsBased = current.lastRefreshFailed || now.epochSecond - currentRide.fetchedAt.epochSecond !in -30..120
                         if (id != null) emitAlert(id, "exit", "Bald aussteigen",
-                            "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}",
+                            "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}" +
+                                if (gpsBased) " · per GPS erkannt" else "",
                             currentRide.exitTargetStop()?.estimated?.takeIf { it > now } ?: now.plusSeconds(60), runtime)
                     }
                     notifications.post(store.state.value)
@@ -189,20 +194,45 @@ class RideService : Service(), LocationListener {
         val ride = before.ride ?: return
         if (!before.running || ride.demo || ride.departure.cancelled) return
         val settings = customization.current()
-        if (!settings.bool(if (ride.boarded) "map_riding" else "map_waiting", true)) return
+        if (!settings.bool(if (ride.boarded) "map_onboard" else "map_waiting", true)) return
         val key = ride.departure.key
         val revision = before.liveBus.revision
         val input = before.liveBus.copy(journeyKey = key, loading = true, error = null)
-        fun applies(state: TrackingState): Boolean = state.running && state.ride?.departure?.key == key &&
-            state.ride?.boarded == ride.boarded && state.liveBus.revision == revision
+        fun applies(state: TrackingState): Boolean = LiveBusTracker.resultApplies(state, key, ride.boarded, revision)
         store.update { if (applies(it)) it.copy(liveBus = input) else it }
+        val options = AutoMatchOptions(enabled = settings.bool("vehicle_auto", true),
+            askFirst = settings.string("vehicle_auto_mode", "assign") == "ask")
+        // Phone positions stay on the device and are only passed to the local matcher.
+        val phone = if (options.enabled && hasLocation()) phoneTrack.recent(Instant.now(), 180) else emptyList()
         try {
-            val result = app.liveBusTracker.refresh(ride, input)
+            val result = app.liveBusTracker.refresh(ride, input, phone, options,
+                before.routeShape?.takeIf { it.journeyKey == key })
             store.update { if (applies(it)) it.copy(liveBus = result) else it }
         } catch (e: CancellationException) { throw e
         } catch (_: Exception) {
             store.update { if (applies(it)) it.copy(liveBus = input.copy(loading = false,
                 error = "NEW-Positionen gerade nicht erreichbar.")) else it }
+        }
+    }
+
+    /** Loads verified line geometry once per journey; retries are rate-limited by the repository. */
+    private fun ensureRouteShape() {
+        val state = store.state.value
+        val ride = state.ride ?: return
+        val key = ride.departure.key
+        state.routeShape?.takeIf { it.journeyKey == key }?.let { shape ->
+            // A refreshed ride (e.g. diversion stops) must still match; otherwise drop the geometry.
+            if (RouteShape.verify(ride, shape.points, shape.source) == null)
+                store.update { if (it.ride?.departure?.key == key) it.copy(routeShape = null) else it }
+            return
+        }
+        if (ride.demo || shapeJob?.isActive == true) return
+        val now = SystemClock.elapsedRealtime()
+        if (shapeCheck?.let { it.first == key && now - it.second < 300_000 } == true) return
+        shapeCheck = key to now
+        shapeJob = scope.launch {
+            val shape = try { app.routeShapes.load(ride) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            if (shape != null) store.update { if (it.ride?.departure?.key == key) it.copy(routeShape = shape) else it }
         }
     }
 
@@ -366,6 +396,7 @@ class RideService : Service(), LocationListener {
         if (!hasLocation()) {
             if (locationSubscribed) runCatching { locations.removeUpdates(this) }
             locationSubscribed = false
+            phoneTrack.clear()
             if (store.state.value.location != null) store.update { it.copy(location = null, locationAt = null) }
             return
         }
@@ -425,25 +456,30 @@ class RideService : Service(), LocationListener {
 
     override fun onLocationChanged(location: Location) {
         if (!hasLocation()) return
-        if (location.accuracy > 150 || (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) > 60_000_000_000) return
+        val ageNanos = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
+        if (location.accuracy > 150 || ageNanos > 60_000_000_000) return
         val point = GeoPoint(location.latitude, location.longitude)
-        store.update { it.copy(location = point, locationAt = Instant.now()) }
+        val now = Instant.now()
+        val fix = PhoneFix(point, location.accuracy, now.minusMillis(ageNanos.coerceAtLeast(0) / 1_000_000))
+        phoneTrack.add(fix)
+        store.update { it.copy(location = point, locationAt = now) }
         val ride = store.state.value.ride ?: return
         detectOwnArrival(ride, point, location.accuracy)
-        if (ride.demo || !ride.boarded || location.accuracy > 65) return
-        // Confirm passing a stop only after approaching and leaving it; never jump to a parallel street.
-        val upcoming = ride.stops.indices.filter { it >= ride.boardingIndex && it > ride.gpsPassedIndex }
-            .take(4).minByOrNull { ride.stops[it].point?.distanceTo(point) ?: Double.MAX_VALUE }
-        val close = upcoming?.takeIf { index ->
-            ride.stops[index].point?.distanceTo(point)?.let { it < 70 } == true &&
-                ride.stops[index].effective(ride.offsetSeconds)?.let { kotlin.math.abs(it.epochSecond - Instant.now().epochSecond) < 360 } == true
+        if (ride.demo || !ride.boarded || !customization.current().bool("gps_next_stop", true)) return
+        // Progress along the known stop order (and real line, if verified); never by clock time.
+        val state = store.state.value
+        val reference = RouteReference.of(ride, state.routeShape?.takeIf { it.journeyKey == ride.departure.key })
+        var progress = GpsStopProgress.update(state.gpsProgress, ride, reference, fix)
+        val live = state.liveBus
+        val reliable = live.vehicle?.takeIf { vehicle ->
+            vehicle.isFresh(now) && live.journeyKey == ride.departure.key && (live.confirmed ||
+                live.auto.status == AutoMatchStatus.ASSIGNED && live.auto.basis == AutoMatchBasis.CO_MOVEMENT)
         }
-        if (close != null) approaching = close
-        val seen = approaching
-        if (seen != null && (ride.stops.getOrNull(seen)?.point?.distanceTo(point) ?: 0.0) > 130) {
-            store.setRide(ride.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, seen)), preserveStatus = true)
-            approaching = null
-        }
+        if (reliable != null) progress = GpsStopProgress.update(progress, ride, reference,
+            PhoneFix(reliable.point, 25f, reliable.observedAt), fromVehicle = true)
+        store.update { current -> if (current.ride?.departure?.key == ride.departure.key) current.copy(gpsProgress = progress) else current }
+        if (progress.passedIndex > ride.gpsPassedIndex)
+            store.setRide(ride.copy(gpsPassedIndex = progress.passedIndex), preserveStatus = true)
     }
 
     private fun detectOwnArrival(ride: Ride, point: GeoPoint, accuracy: Float) {
@@ -463,7 +499,10 @@ class RideService : Service(), LocationListener {
         } else app.arrivals.recordDetected(Stop(stop.id, stop.name, stop.point), now)
     }
 
-    override fun onProviderDisabled(provider: String) { store.update { it.copy(location = null, locationAt = null) } }
+    override fun onProviderDisabled(provider: String) {
+        phoneTrack.clear()
+        store.update { it.copy(location = null, locationAt = null) }
+    }
     override fun onProviderEnabled(provider: String) = Unit
     @Deprecated("Legacy platform callback")
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit

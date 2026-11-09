@@ -290,9 +290,13 @@ fun MitfahrtApp(
                             LiveBusCard(ride, tracking.liveBus, now,
                                 onSelect = { vm.selectLiveVehicle(ride.departure.key, it) },
                                 onClear = { vm.clearLiveVehicle(ride.departure.key) },
-                                onRefresh = { vm.refreshLiveVehicle(ride.departure.key) })
+                                onRefresh = { vm.refreshLiveVehicle(ride.departure.key) },
+                                shape = tracking.routeShape, progress = tracking.gpsProgress,
+                                // Own position is only drawn locally and only while fresh.
+                                phone = tracking.location?.takeIf { tracking.locationAt?.let { at -> now.epochSecond - at.epochSecond in -10..60 } == true },
+                                onReject = { vm.rejectLiveVehicle(ride.departure.key, it) })
                         }
-                        if (ride.boarded) item { NextStopCard(ride, now) }
+                        if (ride.boarded) item { NextStopCard(tracking, now, settings.bool("gps_next_stop", true)) }
                         if (!ride.demo && !ride.departure.cancelled) item { ExitTargetCard(ride, alertPreferences.exitEnabled, vm::setExitTarget, vm::saveSchoolTrip) }
                         if (!ride.demo) item {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -558,23 +562,39 @@ private fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean) {
 }
 
 @Composable
-private fun NextStopCard(ride: Ride, now: Instant) {
-    val next = ride.nextStopToTarget(now)
+private fun NextStopCard(tracking: TrackingState, now: Instant, gpsEnabled: Boolean) {
+    val info = NextStopResolver.resolve(tracking, now, gpsEnabled)
+    val next = info?.stop
+    val uncertain = info?.source == NextStopSource.UNCERTAIN
     Row(Modifier.fillMaxWidth().clip(Shape).background(Panel).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(42.dp).clip(CircleShape).background(Lime.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
             Icon(Icons.Outlined.NearMe, null, tint = Lime, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(if (next != null) "NÄCHSTER HALT" else "ZIEL", color = Soft, fontSize = 10.sp, letterSpacing = 1.sp)
+            Text(if (next != null || uncertain) "NÄCHSTER HALT" else "ZIEL", color = Soft, fontSize = 10.sp, letterSpacing = 1.sp)
             Spacer(Modifier.height(5.dp))
-            Text(next?.let { shortName(it.name) } ?: "Ziel laut Fahrtverlauf", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            Text(when {
+                uncertain -> "Nicht sicher erkannt"
+                next != null -> shortName(next.name)
+                else -> "Ziel laut Fahrtverlauf"
+            }, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            info?.takeIf { it.stop != null || uncertain }?.let {
+                Text(listOfNotNull(it.source.takeUnless { uncertain }?.label, it.note).joinToString(" · "),
+                    color = if (uncertain) Amber else Soft, fontSize = 12.sp, lineHeight = 17.sp)
+            }
         }
-        next?.effective(ride.offsetSeconds)?.let {
-            Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
-                Text("${minutesUntil(it, now)}", fontWeight = FontWeight.SemiBold, color = Lime, fontSize = 26.sp)
+        when {
+            // A remaining time only from a fresh live forecast; GPS detection never yields one.
+            info?.minutes != null -> Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
+                Text("${info.minutes}", fontWeight = FontWeight.SemiBold, color = Lime, fontSize = 26.sp)
                 Text("Min", fontSize = 12.sp, color = Soft)
             }
+            info?.source == NextStopSource.SCHEDULE && next?.planned != null ->
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
+                    Text(clockTime(next.planned), fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                    Text("Plan", fontSize = 12.sp, color = Soft)
+                }
         }
     }
 }

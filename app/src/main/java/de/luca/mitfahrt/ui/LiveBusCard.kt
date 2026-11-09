@@ -18,7 +18,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import de.luca.mitfahrt.data.AutoMatchBasis
+import de.luca.mitfahrt.data.AutoMatchStatus
+import de.luca.mitfahrt.data.GeoPoint
+import de.luca.mitfahrt.data.GpsProgressState
+import de.luca.mitfahrt.data.GpsStopProgress
 import de.luca.mitfahrt.data.LiveBusState
+import de.luca.mitfahrt.data.RouteShape
+import de.luca.mitfahrt.data.exitTargetIndex
 import de.luca.mitfahrt.data.AppSettingsStore
 import de.luca.mitfahrt.data.NewVehicle
 import de.luca.mitfahrt.data.Ride
@@ -34,7 +41,8 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVehicle) -> Unit,
-    onClear: () -> Unit, onRefresh: () -> Unit) {
+    onClear: () -> Unit, onRefresh: () -> Unit, shape: RouteShape? = null, progress: GpsProgressState? = null,
+    phone: GeoPoint? = null, onReject: (String) -> Unit = {}) {
     val context = LocalContext.current
     val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
     if (ride.demo || ride.departure.cancelled || state.journeyKey != ride.departure.key ||
@@ -42,9 +50,23 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
     var chooseVehicle by rememberSaveable(ride.departure.key) { mutableStateOf(false) }
     val boarding = ride.stops.getOrNull(ride.boardingIndex)?.let { Stop(it.id, it.name, it.point) }
     val candidates = state.candidates.filter { it.isFresh(now) }.distinctBy { it.id }
-    val selected = state.vehicle?.takeIf { state.confirmed || state.selectedVehicleId == it.id }
+    val auto = state.auto
+    val detected = auto.holdsVehicle && state.vehicle?.id == auto.vehicleId && !state.confirmed && state.selectedVehicleId == null
+    val selected = state.vehicle?.takeIf { state.confirmed || state.selectedVehicleId == it.id || detected }
     val current = selected?.takeIf { it.isFresh(now) }
     val stale = selected?.takeUnless { it.isFresh(now) }
+    val routeShape = shape?.takeIf { it.journeyKey == ride.departure.key }
+    val targetIndex = ride.exitTargetIndex() ?: ride.stops.lastIndex
+    val travelled = when {
+        !ride.boarded -> null
+        state.routeOffset != null && (state.confirmed || auto.basis == AutoMatchBasis.CO_MOVEMENT) -> state.routeOffset
+        progress?.exact == true && GpsStopProgress.confident(progress, now) -> progress.offset
+        else -> null
+    }
+    val mapRoute = MapRoute(shape = routeShape,
+        target = ride.stops.getOrNull(targetIndex)?.let { Stop(it.id, it.name, it.point) },
+        sectionFrom = routeShape?.offsetOf(ride.boardingIndex), sectionTo = routeShape?.offsetOf(targetIndex),
+        passedTo = travelled, projected = state.routePoint, offRoute = state.offRoute, phone = phone)
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -54,17 +76,21 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
             }
         }
         if (current != null) {
-            Text(if (state.confirmed) "Deiner Abfahrt zugeordnet" else "Ausgewähltes Linienfahrzeug",
-                color = if (state.confirmed) Lime else Soft, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            if (!state.confirmed) Text("Zuordnung zu deiner Abfahrt nicht bestätigt.",
-                color = Amber, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(when {
+                state.confirmed -> "Deiner Abfahrt zugeordnet"
+                detected && auto.basis == AutoMatchBasis.CO_MOVEMENT -> "Fahrzeug anhand gemeinsamer Bewegung erkannt"
+                detected -> "Wahrscheinliches Fahrzeug: Linie, Richtung und Annäherung passen"
+                else -> "Ausgewähltes Linienfahrzeug"
+            }, color = if (state.confirmed) Lime else Soft, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            if (!state.confirmed) Text(if (detected) "Automatisch erkannt, nicht vom Verkehrsunternehmen bestätigt."
+                else "Zuordnung zu deiner Abfahrt nicht bestätigt.", color = Amber, fontSize = 12.sp, lineHeight = 18.sp)
+            if (detected) auto.ranking.firstOrNull { it.id == current.id }?.reasons?.take(3)?.takeIf { it.isNotEmpty() }?.let {
+                Text("Grund: ${it.joinToString(", ")}", color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
+            }
             if (current.destination.isNotBlank()) Text("${if (current.directionReliable) "Richtung" else "Anzeige am Bus"} ${shortName(current.destination)}",
                 color = Soft, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            val pathCurrent = current.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
             WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
-                current.observedAt, now,
-                routePoints = if (pathCurrent && current.routeStops.size > 1) current.routeStops.map { it.point }
-                    else ride.stops.mapNotNull { it.point },
+                current.observedAt, now, route = mapRoute,
                 routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
                 otherVehicles = candidates, selectedVehicleId = current.id,
                 onSelectVehicle = onSelect)
@@ -95,6 +121,32 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                     if (candidates.isEmpty()) OutlinedButton(onClick = onRefresh, enabled = !state.loading,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Erneut laden") }
                 }
+            }
+        }
+        if (auto.status == AutoMatchStatus.RECHECKING && current == null)
+            Text("Erkanntes Fahrzeug meldet gerade keine aktuelle Position – wird erneut geprüft.", color = Amber, fontSize = 13.sp, lineHeight = 19.sp)
+        val suggested = auto.vehicleId?.takeIf { auto.status == AutoMatchStatus.SUGGESTED && state.selectedVehicleId == null }
+            ?.let { id -> candidates.firstOrNull { it.id == id } }
+        if (suggested != null) AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (ride.boarded) "Bist du in diesem Bus?" else "Ist das dein Bus?", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text("Linie ${suggested.line} · Fahrzeug ${suggested.id} · NEW ${vehicleAge(suggested.observedAt, now)}",
+                    color = Soft, fontSize = 13.sp)
+                auto.ranking.firstOrNull { it.id == suggested.id }?.reasons?.take(3)?.takeIf { it.isNotEmpty() }?.let {
+                    Text(it.joinToString(", "), color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { onSelect(suggested) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Ja") }
+                    OutlinedButton(onClick = { onReject(suggested.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Nein") }
+                }
+            }
+        }
+        val choices = if (auto.status == AutoMatchStatus.AMBIGUOUS && current == null && state.selectedVehicleId == null)
+            auto.choices.mapNotNull { id -> candidates.firstOrNull { it.id == id } } else emptyList()
+        if (choices.size >= 2) {
+            Text("Mehrere Busse passen – welcher ist deiner?", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            choices.forEach { vehicle ->
+                VehicleChoiceRow(vehicle, boarding, now, false) { onSelect(vehicle) }
             }
         }
         state.error?.let { Text(it, color = Amber, fontSize = 13.sp, lineHeight = 19.sp) }

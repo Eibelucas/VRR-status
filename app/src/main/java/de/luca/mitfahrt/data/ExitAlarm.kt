@@ -35,11 +35,13 @@ fun Ride.remapExitTargetFrom(previous: Ride): Ride {
 object ExitAlarm {
     fun due(state: TrackingState, now: Instant): Boolean {
         val ride = state.ride ?: return false
-        if (!state.running || state.lastRefreshFailed || ride.demo || !ride.boarded || ride.departure.cancelled ||
-            now.epochSecond - ride.fetchedAt.epochSecond !in -30..120) return false
+        if (!state.running || ride.demo || !ride.boarded || ride.departure.cancelled) return false
         val targetIndex = ride.exitTargetIndex() ?: return false
         val target = ride.stops[targetIndex]
         if (target.cancelled || ride.gpsPassedIndex >= targetIndex) return false
+        // Without a fresh VRR forecast only a current, accurate GPS progress may warn.
+        if (state.lastRefreshFailed || now.epochSecond - ride.fetchedAt.epochSecond !in -30..120)
+            return GpsExitSignal.due(ride, state.gpsProgress, now)
         // A current explicit target forecast may establish that this warning is already late.
         // A timetable cannot override an actually passed stop when the bus is delayed.
         if (target.estimated?.isAfter(now) == false) return false
