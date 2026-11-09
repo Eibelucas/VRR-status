@@ -154,7 +154,8 @@ data class TripLeg(
         if (kind != LegKind.TRANSIT || lineId.isBlank() || tripCode.isBlank() || origin.id.isBlank()) return null
         val planned = origin.plannedDeparture ?: return null
         return Departure(lineId, line.ifBlank { lineName }, direction, origin.id, origin.name, tripCode, planned,
-            origin.estimatedDeparture, origin.platform, cancelled, notices.take(3), fetchedAt.takeIf { origin.estimatedDeparture != null })
+            origin.estimatedDeparture, origin.platform, cancelled, notices.take(3), fetchedAt.takeIf { origin.estimatedDeparture != null },
+            operator = if (isNew) "" else operatorCode.ifBlank { "?" })
     }
 }
 
@@ -399,4 +400,36 @@ object TripParser {
         }
         return if (points.all(Geo::valid)) points else emptyList()
     }
+}
+
+/** Search options are stored as ordinary settings so the options sheet and the settings screen agree. */
+object TripSettings {
+    val MODES = listOf("train", "light_rail", "bus", "on_demand", "other")
+    private val GROUPS = mapOf("train" to ProductGroup.TRAIN, "light_rail" to ProductGroup.LIGHT_RAIL, "bus" to ProductGroup.BUS,
+        "on_demand" to ProductGroup.ON_DEMAND, "other" to ProductGroup.OTHER)
+    fun key(group: ProductGroup): String = GROUPS.entries.first { it.value == group }.key
+
+    fun options(settings: AppSettings): TripOptions {
+        val allowed = settings.csv("trip_modes").mapNotNull(GROUPS::get).toSet().ifEmpty { ProductGroup.entries.toSet() }
+        return TripOptions(
+            excluded = ProductGroup.entries.toSet() - allowed,
+            maxChanges = settings.string("trip_max_changes").toIntOrNull()?.coerceIn(0, 9),
+            walkSpeed = WalkSpeed.entries.firstOrNull { it.efa == settings.string("trip_walk_speed") } ?: WalkSpeed.NORMAL,
+            maxWalkMinutes = settings.string("trip_max_walk").toIntOrNull()?.coerceIn(1, 60),
+            preference = RoutePreference.entries.firstOrNull { it.efa == settings.string("trip_route_type") } ?: RoutePreference.FASTEST,
+            noSolidStairs = settings.bool("trip_no_stairs"), noEscalators = settings.bool("trip_no_escalators"),
+            lowFloor = settings.bool("trip_low_floor"), wheelchair = settings.bool("trip_wheelchair")
+        )
+    }
+
+    /** Setting values for [options]; used by the options sheet. */
+    fun values(options: TripOptions): Map<String, String> = mapOf(
+        "trip_modes" to ProductGroup.entries.filter { it !in options.excluded }.ifEmpty { ProductGroup.entries }.joinToString(",") { key(it) },
+        "trip_max_changes" to (options.maxChanges?.toString() ?: "any"),
+        "trip_walk_speed" to options.walkSpeed.efa,
+        "trip_max_walk" to (options.maxWalkMinutes?.toString() ?: "default"),
+        "trip_route_type" to options.preference.efa,
+        "trip_no_stairs" to options.noSolidStairs.toString(), "trip_no_escalators" to options.noEscalators.toString(),
+        "trip_low_floor" to options.lowFloor.toString(), "trip_wheelchair" to options.wheelchair.toString()
+    )
 }

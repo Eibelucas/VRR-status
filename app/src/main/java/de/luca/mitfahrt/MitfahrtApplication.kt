@@ -41,12 +41,16 @@ class MitfahrtApplication : Application() {
     val schoolTrips by lazy { de.luca.mitfahrt.data.SchoolTripStore(this) }
     /** Saved destinations and the optional search history of the journey planner; never own coordinates. */
     val tripPlaces by lazy { de.luca.mitfahrt.data.TripPlacesStore(this) }
+    /** Journey with several legs that is accompanied leg by leg. */
+    val companion by lazy { de.luca.mitfahrt.data.JourneyCompanionStore(this) }
 
     override fun onCreate() {
         super.onCreate()
         runCatching { watch.start() }
         runCatching { de.luca.mitfahrt.updates.UpdateScheduler.schedule(this) }
         widgetScope.launch { store.state.collect { runCatching { MitfahrtWidgets.trackingChanged(this@MitfahrtApplication) } } }
+        // A leg counts as started only once its ride is really tracked, never by timetable time.
+        widgetScope.launch { store.state.collect { state -> state.ride?.departure?.key?.let { runCatching { companion.markSeen(it) } } } }
         widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
         widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
         widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }

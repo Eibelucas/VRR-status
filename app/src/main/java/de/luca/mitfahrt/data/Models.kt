@@ -22,9 +22,13 @@ data class Departure(
     val stopId: String, val stopName: String, val tripCode: String,
     val planned: Instant, val estimated: Instant?, val platform: String,
     val cancelled: Boolean = false, val notices: List<String> = emptyList(),
-    val observedAt: Instant? = null
+    val observedAt: Instant? = null,
+    /** Operator code; empty for departures from the NEW departure board (always NEW). */
+    val operator: String = ""
 ) {
     val key: String get() = "$lineId/$tripCode/$planned"
+    /** NEW live positions, vehicle detection and the NEW map only apply to NEW trips. */
+    val newOperated: Boolean get() = lineId.startsWith("new:") || operator.isBlank() || operator.equals("NEW", true)
     val effective: Instant get() = estimated ?: planned
     val delayMinutes: Int get() = ((effective.epochSecond - planned.epochSecond) / 60).toInt()
 }

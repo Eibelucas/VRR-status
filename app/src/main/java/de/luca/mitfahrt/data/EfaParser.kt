@@ -73,13 +73,17 @@ object EfaParser {
         return Stop(id, name, resolvedPoint)
     }
 
-    fun departures(root: JSONObject, observedAt: Instant = Instant.now()): List<Departure> = root.optJSONArray("stopEvents")?.objects().orEmpty()
+    /**
+     * Departure board. [newOnly] keeps the NEW focus of stop boards and suggestions; tracking a
+     * leg of a planned journey (train, other operator) reads the same board without that filter.
+     */
+    fun departures(root: JSONObject, observedAt: Instant = Instant.now(), newOnly: Boolean = true): List<Departure> = root.optJSONArray("stopEvents")?.objects().orEmpty()
         .mapNotNull { event ->
             val transport = event.optJSONObject("transportation") ?: return@mapNotNull null
             val operator = transport.optJSONObject("operator")
+            val isNew = operator?.str("code")?.uppercase() == "NEW" || transport.str("id").startsWith("new:")
             // Do not suggest trains or a different operator just because it serves the same stop.
-            if (operator?.str("code")?.uppercase() != "NEW" &&
-                !transport.str("id").startsWith("new:")) return@mapNotNull null
+            if (newOnly && !isNew) return@mapNotNull null
             val planned = event.instant("departureTimePlanned") ?: return@mapNotNull null
             val location = event.optJSONObject("location") ?: return@mapNotNull null
             val tripCode = transport.optJSONObject("properties")?.str("tripCode").orEmpty()
@@ -91,7 +95,7 @@ object EfaParser {
                 transport.optJSONObject("destination")?.str("name").orEmpty(), location.str("id"),
                 location.str("name"), tripCode, planned, event.instant("departureTimeEstimated"),
                 location.optJSONObject("properties")?.str("platformName").orEmpty(),
-                isCancelled(event), infos, observedAt)
+                isCancelled(event), infos, observedAt, if (isNew) "" else operator?.str("code").orEmpty().ifBlank { "?" })
         }.distinctBy { it.key }.sortedBy { it.effective }
 
     fun ride(root: JSONObject, departure: Departure, now: Instant = Instant.now()): Ride {

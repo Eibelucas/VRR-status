@@ -41,10 +41,10 @@ class VrrClient {
         "type_1" to "STOP", "radius_1" to radius.coerceIn(100, 3000).toString(), "max" to "30"
     ))).sortedBy { it.distance ?: Int.MAX_VALUE }
 
-    suspend fun departures(stop: Stop): List<Departure> = EfaParser.departures(request("XML_DM_REQUEST", mapOf(
+    suspend fun departures(stop: Stop, newOnly: Boolean = true): List<Departure> = EfaParser.departures(request("XML_DM_REQUEST", mapOf(
         "type_dm" to "stop", "name_dm" to stop.id, "mode" to "direct", "limit" to "80",
         "timeOffset" to "-5", "useRealtime" to "1"
-    )))
+    )), newOnly = newOnly)
 
     suspend fun ride(departure: Departure): Ride {
         val root = request("XML_TRIPSTOPTIMES_REQUEST", tripParameters(departure))

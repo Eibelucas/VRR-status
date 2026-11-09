@@ -24,7 +24,7 @@ data class SettingDefinition(
         if (text.length > 4096 || text.any { it == '\u0000' }) return null
         return when (kind) {
             SettingKind.BOOLEAN -> text.takeIf { it == "true" || it == "false" }
-            SettingKind.CHOICE -> text.takeIf { v -> choices.any { it.value == v } }
+            SettingKind.CHOICE -> (SettingsMigration.choice(key, text) ?: text).takeIf { v -> choices.any { it.value == v } }
             SettingKind.NUMBER -> text.toIntOrNull()?.takeIf { it in range }?.toString()
             SettingKind.TEXT -> when (key) {
                 "quiet_start", "quiet_end" -> runCatching { LocalTime.parse(text).toString() }.getOrNull()
@@ -36,11 +36,15 @@ data class SettingDefinition(
                     .filter { it in listOf(60, 120, 180, 300) }.distinct().sortedDescending()
                     .takeIf { it.isNotEmpty() }?.joinToString(",")
                 "accent_hex" -> text.takeIf { Regex("#[0-9a-fA-F]{6}").matches(it) }
+                // "nearby" and "favorites" moved to the "In der Nähe" tab; they are dropped from the start page.
                 "home_cards" -> text.split(',').map(String::trim)
-                    .filter { it in listOf("planned", "nearby", "favorites", "suggestions", "school", "last", "map") }
+                    .filter { it in SettingsMigration.HOME_CARDS }
                     .distinct().joinToString(",")
-                "nav_order" -> text.split(',').map(String::trim).filter { it in listOf("ride", "stops", "reports", "settings") }
-                    .distinct().let { (it + listOf("ride", "stops", "reports", "settings")).distinct().joinToString(",") }
+                "nav_order" -> text.split(',').map(String::trim).map { SettingsMigration.TAB_ALIASES[it] ?: it }
+                    .filter { it in SettingsMigration.TABS }
+                    .distinct().let { (it + SettingsMigration.TABS).distinct().joinToString(",") }
+                "trip_modes" -> text.split(',').map(String::trim).filter { it in TripSettings.MODES }
+                    .distinct().takeIf { it.isNotEmpty() }?.joinToString(",")
                 "notification_actions" -> text.split(',').map(String::trim).filter { it in listOf("board", "arrival", "stop", "map") }
                     .distinct().take(3).joinToString(",")
                 "watch_actions" -> text.split(',').map(String::trim).filter { it in listOf("board", "arrival", "target", "stop") }
@@ -53,10 +57,20 @@ data class SettingDefinition(
     }
 }
 
+/** Values of earlier versions that are mapped instead of being dropped. */
+object SettingsMigration {
+    /** Bottom navigation since the journey planner: "Fahrt" became "Start", "Haltestellen" became "In der Nähe". */
+    val TABS = listOf("home", "nearby", "reports", "settings")
+    val TAB_ALIASES = mapOf("ride" to "home", "stops" to "nearby")
+    val HOME_CARDS = listOf("planned", "school", "suggestions", "last", "map")
+    private val CHOICES = mapOf("start_page" to mapOf("ride" to "home", "stops" to "nearby"))
+    fun choice(key: String, value: String): String? = CHOICES[key]?.get(value)
+}
+
 /** One catalog is used for validation, search, reset and the controls themselves. */
 object SettingsCatalog {
     val groups = linkedMapOf(
-        "home" to "Startseite", "routes" to "Routen & Alltag", "live" to "Abfahrten & Live-Daten",
+        "home" to "Startseite", "trip" to "Verbindungssuche", "nearby" to "In der Nähe", "routes" to "Routen & Alltag", "live" to "Abfahrten & Live-Daten",
         "map" to "Buskarte", "alerts" to "Hinweise & Vibration", "nowbar" to "Now Bar & Widgets",
         "watch" to "Watch", "reports" to "Ankunft & Belege", "automation" to "Erkennung & Vorschläge",
         "appearance" to "Darstellung", "privacy" to "Daten & Datenschutz", "updates" to "Updates"
@@ -71,15 +85,26 @@ object SettingsCatalog {
         SettingDefinition(key, title, group, default, SettingKind.TEXT, advanced = advanced, hint = hint)
 
     val definitions: List<SettingDefinition> = listOf(
-        c("start_page", "Beim Öffnen anzeigen", "home", "ride", "ride" to "Übersicht", "stops" to "Haltestellen", "routes" to "Eigene Routen", "map" to "Karte"),
-        t("home_cards", "Startkarten & Reihenfolge", "home", "planned,nearby,favorites,suggestions,school,last", false, "Reihenfolge auswählen; nicht gewählte Karten bleiben verborgen."),
-        n("nearby_radius", "Suchradius in Metern", "home", 500, 100..3000),
-        b("nearby_expand", "Suchradius bei Bedarf erweitern", "home", true),
-        n("departure_count", "Abfahrten pro Haltestelle", "home", 5, 1..15),
-        c("stop_sort", "Haltestellen sortieren", "home", "distance", "distance" to "Entfernung", "departure" to "Nächste Abfahrt", "manual" to "Eigene Reihenfolge"),
+        c("start_page", "Beim Öffnen anzeigen", "home", "home", "home" to "Start", "nearby" to "In der Nähe", "routes" to "Eigene Routen", "map" to "Karte"),
+        t("home_cards", "Unter der Suche & Reihenfolge", "home", "planned,school,suggestions", false, "Ein Bereich erscheint nur, wenn es etwas anzuzeigen gibt."),
         b("manual_only", "Nur eigene Haltestellen & Routen", "home", false),
-        t("excluded_stops", "Ausgeblendete Haltestellen", "home", hint = "Haltestellenkennungen, durch Kommas getrennt."),
-        t("preferred_stops", "Bevorzugte Haltestellen", "home", hint = "Haltestellenkennungen in der gewünschten Reihenfolge."),
+        b("trip_my_location", "„Mein Standort“ als Start", "trip", true, hint = "Nur wenn der Standort freigegeben ist."),
+        c("trip_route_type", "Verbindungen bevorzugen", "trip", "leasttime", "leasttime" to "Schnellste", "leastinterchange" to "Wenig Umstiege", "leastwalking" to "Wenig Fußweg"),
+        c("trip_max_changes", "Umstiege höchstens", "trip", "any", "any" to "Beliebig", "0" to "Nur direkt", "1" to "1", "2" to "2", "3" to "3"),
+        c("trip_walk_speed", "Gehgeschwindigkeit", "trip", "normal", "slow" to "Langsam", "normal" to "Normal", "fast" to "Schnell"),
+        c("trip_max_walk", "Fußweg zur Haltestelle höchstens", "trip", "default", "default" to "Wie VRR", "5" to "5 Min", "10" to "10 Min", "15" to "15 Min", "20" to "20 Min", "30" to "30 Min"),
+        t("trip_modes", "Verkehrsmittel", "trip", "train,light_rail,bus,on_demand,other", false, "Mindestens ein Verkehrsmittel."),
+        b("trip_no_stairs", "Ohne Treppen", "trip", false),
+        b("trip_no_escalators", "Ohne Rolltreppen", "trip", false),
+        b("trip_low_floor", "Niederflurfahrzeuge", "trip", false),
+        b("trip_wheelchair", "Für Rollstuhl geeignet", "trip", false),
+        n("nearby_radius", "Suchradius in Metern", "nearby", 500, 100..3000),
+        b("nearby_expand", "Suchradius bei Bedarf erweitern", "nearby", true),
+        n("departure_count", "Abfahrten pro Haltestelle", "nearby", 5, 1..15),
+        c("stop_sort", "Haltestellen sortieren", "nearby", "distance", "distance" to "Entfernung", "departure" to "Nächste Abfahrt", "manual" to "Eigene Reihenfolge"),
+        c("nearby_view", "Ansicht", "nearby", "list", "list" to "Liste", "map" to "Karte"),
+        t("excluded_stops", "Ausgeblendete Haltestellen", "nearby", hint = "Haltestellenkennungen, durch Kommas getrennt."),
+        t("preferred_stops", "Bevorzugte Haltestellen", "nearby", hint = "Haltestellenkennungen in der gewünschten Reihenfolge."),
         b("calendar_enabled", "NRW-Schulkalender berücksichtigen", "routes", true),
         b("routes_school_paused", "Schulrouten pausieren", "routes", false),
         t("routes_free_dates", "Eigene freie Tage", "routes", hint = "Datum als JJJJ-MM-TT, mehrere Tage durch Kommas getrennt."),
@@ -181,10 +206,12 @@ object SettingsCatalog {
         b("high_contrast", "Hoher Kontrast", "appearance", false),
         b("reduce_motion", "Weniger Animationen", "appearance", false),
         c("surface_style", "Kartenstil", "appearance", "flat", "flat" to "Flächen", "outlined" to "Umrandungen"),
-        t("nav_order", "Navigation & Reihenfolge", "appearance", "ride,stops,reports,settings", hint = "ride, stops, reports, settings"),
+        t("nav_order", "Navigation & Reihenfolge", "appearance", "home,nearby,reports,settings", hint = "home, nearby, reports, settings"),
         c("location_mode", "Standort verwenden", "privacy", "active", "off" to "Aus", "foreground" to "Bei geöffneter App", "active" to "Auch während aktiver Fahrten"),
         b("history_enabled", "Fahrthistorie speichern", "privacy", true),
         n("history_days", "Fahrthistorie nach Tagen löschen", "privacy", 0, 0..365, true, "0 = behalten"),
+        b("trip_history", "Suchverlauf der Verbindungssuche speichern", "privacy", true,
+            hint = "Nur Start und Ziel, nie dein Standort. Einträge einzeln löschbar."),
         b("export_personal", "Persönliche Angaben in Sicherungen", "privacy", false, true),
         c("update_check", "Nach Updates suchen", "updates", "open", "manual" to "Nur manuell", "open" to "Beim Öffnen", "daily" to "Täglich", "weekly" to "Wöchentlich"),
         b("update_wifi_only", "APK nur über WLAN herunterladen", "updates", false),
