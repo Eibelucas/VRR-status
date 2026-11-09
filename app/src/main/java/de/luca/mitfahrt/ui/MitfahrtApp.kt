@@ -1015,7 +1015,7 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
             }
         }
         item {
-            Text("Daten vom VRR. Standort wird für Haltestellenabfragen an den VRR übermittelt. Kein Konto, keine Werbung, keine Analyse-Tracker.",
+            Text("Daten vom VRR. Standort wird für Haltestellenabfragen und – nur wenn du „Mein Standort“ wählst – für die Verbindungssuche an den VRR übermittelt, aber nicht gespeichert. Kein Konto, keine Werbung, keine Analyse-Tracker.",
                 color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
             Spacer(Modifier.height(8.dp))
             Text("Letzte Fahrt, selbst erfasste Ankünfte und Berichte werden auf deinem Gerät gespeichert.", color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
