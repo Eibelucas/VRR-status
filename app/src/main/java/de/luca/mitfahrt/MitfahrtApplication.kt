@@ -39,6 +39,8 @@ class MitfahrtApplication : Application() {
     val routes by lazy { RouteHistoryStore(this, store.lastRide.value) }
     val savedStops by lazy { de.luca.mitfahrt.data.SavedStopsStore(this) }
     val schoolTrips by lazy { de.luca.mitfahrt.data.SchoolTripStore(this) }
+    /** Saved destinations and the optional search history of the journey planner; never own coordinates. */
+    val tripPlaces by lazy { de.luca.mitfahrt.data.TripPlacesStore(this) }
 
     override fun onCreate() {
         super.onCreate()
