@@ -121,6 +121,7 @@ object RideCodec {
             put("stopId", d.stopId); put("stopName", d.stopName); put("tripCode", d.tripCode)
             put("planned", d.planned.toString()); put("estimated", d.estimated?.toString())
             put("observedAt", d.observedAt?.toString())
+            if (d.operator.isNotBlank()) put("operator", d.operator)
             put("platform", d.platform); put("cancelled", d.cancelled); put("notices", JSONArray(d.notices))
             put("boardingIndex", ride.boardingIndex); put("fetchedAt", ride.fetchedAt.toString())
             put("demo", ride.demo); put("gpsPassedIndex", ride.gpsPassedIndex)
@@ -141,7 +142,7 @@ object RideCodec {
         val d = Departure(obj.str("lineId"), obj.str("line"), obj.str("destination"), obj.str("stopId"),
             obj.str("stopName"), obj.str("tripCode"), Instant.parse(obj.str("planned")), obj.instant("estimated"),
             obj.str("platform"), obj.optBoolean("cancelled"), obj.optJSONArray("notices")?.let { a ->
-                (0 until a.length()).map { a.getString(it) } }.orEmpty(), obj.instant("observedAt"))
+                (0 until a.length()).map { a.getString(it) } }.orEmpty(), obj.instant("observedAt"), obj.str("operator"))
         val stops = obj.getJSONArray("stops").objects().map { stop ->
             RideStop(stop.str("id"), stop.str("name"), if (stop.has("lat") && stop.has("lon"))
                 GeoPoint(stop.getDouble("lat"), stop.getDouble("lon")) else null,

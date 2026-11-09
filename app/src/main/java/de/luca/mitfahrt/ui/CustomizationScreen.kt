@@ -257,7 +257,7 @@ private fun SettingControl(definition: SettingDefinition, settings: AppSettings,
 private fun settingSummary(definition: SettingDefinition, settings: AppSettings): String {
     val value = settings.string(definition.key)
     definition.choices.firstOrNull { it.value == value }?.let { return it.label }
-    if (definition.key in listOf("home_cards", "nav_order", "report_fields", "notification_actions", "watch_actions", "alert_leads")) {
+    if (definition.key in listOf("home_cards", "nav_order", "report_fields", "notification_actions", "watch_actions", "alert_leads", "trip_modes")) {
         val choices = listChoices(definition.key)
         return value.split(',').mapNotNull { item -> choices.firstOrNull { it.value == item }?.label }.joinToString(" · ").ifEmpty { "Keine ausgewählt" }
     }
@@ -288,8 +288,9 @@ private fun CustomizationPreview(settings: AppSettings, group: String) {
 }
 
 private fun listChoices(key: String): List<SettingChoice> = when (key) {
-    "home_cards" -> listOf("planned" to "Eigene Routen", "nearby" to "Nahe Haltestellen", "favorites" to "Favoriten", "suggestions" to "Vorschläge", "school" to "Schulwege", "last" to "Letzte Fahrt", "map" to "Karte")
-    "nav_order" -> listOf("ride" to "Fahrt", "stops" to "Haltestellen", "reports" to "Berichte", "settings" to "Einstellungen")
+    "home_cards" -> listOf("planned" to "Eigene Routen", "school" to "Schulwege", "suggestions" to "Automatische Vorschläge", "last" to "Letzte Fahrt", "map" to "Karte")
+    "nav_order" -> listOf("home" to "Start", "nearby" to "In der Nähe", "reports" to "Berichte", "settings" to "Einstellungen")
+    "trip_modes" -> listOf("train" to "Bahn", "light_rail" to "U-/Stadtbahn & Tram", "bus" to "Bus", "on_demand" to "Rufbus & AST", "other" to "Sonstige")
     "notification_actions" -> listOf("board" to "Bin im Bus", "arrival" to "Ankunft merken", "map" to "Karte öffnen", "stop" to "Fahrt beenden")
     "watch_actions" -> listOf("board" to "Bin im Bus", "arrival" to "Ankunft merken", "target" to "Ziel wählen", "stop" to "Fahrt beenden")
     "alert_leads" -> listOf("300" to "5 Minuten vorher", "180" to "3 Minuten vorher", "120" to "2 Minuten vorher", "60" to "1 Minute vorher")
@@ -332,11 +333,11 @@ private fun SettingEditor(definition: SettingDefinition, settings: AppSettings, 
                         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = choice.value in selected || required, enabled = !required, onCheckedChange = { checked ->
                                 val updated = if (checked) selected + choice.value else selected - choice.value
-                                if (definition.key != "alert_leads" || updated.isNotEmpty()) text = updated
+                                if (definition.key !in listOf("alert_leads", "trip_modes") || updated.isNotEmpty()) text = updated
                                     .let { if (definition.key == "notification_actions") it.takeLast(3) else it }.joinToString(",")
                             })
                             Text(choice.label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            if (index >= 0 && definition.key !in listOf("alert_leads", "report_fields")) {
+                            if (index >= 0 && definition.key !in listOf("alert_leads", "report_fields", "trip_modes")) {
                                 IconButton(onClick = { val updated = selected.toMutableList(); java.util.Collections.swap(updated, index, index - 1); text = updated.joinToString(",") },
                                     enabled = index > 0, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.KeyboardArrowUp, "${choice.label} nach oben") }
                                 IconButton(onClick = { val updated = selected.toMutableList(); java.util.Collections.swap(updated, index, index + 1); text = updated.joinToString(",") },

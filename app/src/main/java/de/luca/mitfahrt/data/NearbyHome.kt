@@ -11,7 +11,9 @@ import java.time.Instant
 enum class NearbyStatus { NO_PERMISSION, LOCATION_OFF, LOCATING, READY, UNAVAILABLE }
 data class HomeState(val status: NearbyStatus = NearbyStatus.LOCATING, val stops: List<Stop> = emptyList(),
     val departures: List<Departure> = emptyList(), val loading: Boolean = false, val departuresLoading: Boolean = false,
-    val approximate: Boolean = false, val updatedAt: Instant? = null, val error: String? = null)
+    val approximate: Boolean = false, val updatedAt: Instant? = null, val error: String? = null,
+    /** Latest own position, in memory only; used for "Mein Standort" and walking distances. */
+    val point: GeoPoint? = null, val pointAt: Instant? = null)
 
 data class NearbyDepartures(val departures: List<Departure>, val failed: Int)
 

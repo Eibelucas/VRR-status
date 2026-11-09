@@ -123,8 +123,11 @@ class RideNotifications(private val context: Context) {
             "next" -> if (waiting) fullTitle else "${ride.departure.line} · ${shortName(next?.name.orEmpty())}"
             else -> fullTitle
         }
+        // Leg of an accompanied journey: the planned next vehicle, clearly marked as plan time.
+        val transfer = (context.applicationContext as? de.luca.mitfahrt.MitfahrtApplication)?.companion?.state?.value
+            ?.takeIf { it.trackedKey == ride.departure.key }?.let(JourneyCompanions::transferHint)?.let { "$it (Plan)" }
         val fullText = listOfNotNull(headline,
-            delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }).joinToString(" · ")
+            delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }, transfer).joinToString(" · ")
         val text = when (mode) {
             "line" -> if (ride.departure.cancelled) "Bus fällt aus" else timeSource
             "time" -> if (waiting) headline else remaining?.let { "$it Min bis Ziel" } ?: "Keine Live-Zeit"
@@ -152,7 +155,8 @@ class RideNotifications(private val context: Context) {
             builder.setStyle(Notification.BigTextStyle().bigText(
                 "$headline\n" +
                     (if (waiting) "${shortName(ride.departure.stopName)} · $timeSource" else "${remaining?.let { "$it Min" } ?: "–"} bis ${shortName(ride.displayTarget().name)} · $timeSource") +
-                    (delay?.let { "\n${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" } ?: "")))
+                    (delay?.let { "\n${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" } ?: "") +
+                    (transfer?.let { "\n$it" } ?: "")))
                 .setProgress(100, if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt(), false)
         }
         val notification = builder.build()

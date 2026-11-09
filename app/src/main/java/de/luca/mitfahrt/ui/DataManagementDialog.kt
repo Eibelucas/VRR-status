@@ -12,12 +12,13 @@ import de.luca.mitfahrt.RideViewModel
 @Composable
 fun DataManagementDialog(vm: RideViewModel, onClose: () -> Unit) {
     var selected by remember { mutableStateOf<Pair<String, String>?>(null) }
-    val areas = listOf("history" to "Fahrthistorie", "suggestions" to "Vorschlagszähler", "arrivals" to "Eigene Ankünfte",
+    val areas = listOf("history" to "Fahrthistorie", "suggestions" to "Vorschlagszähler", "trip_history" to "Suchverlauf der Verbindungssuche",
+        "trip_places" to "Gespeicherte Ziele und Suchverlauf", "arrivals" to "Eigene Ankünfte",
         "reports" to "Alle Belege", "map" to "Kartenspeicher")
     AlertDialog(onDismissRequest = onClose, title = { Text("Gespeicherte Daten") }, text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(areas) { area -> OutlinedButton(onClick = { selected = area }, modifier = Modifier.fillMaxWidth()) { Text("${area.second} löschen") } }
-            item { Text("Eigene Favoriten und Routen werden dabei behalten.", color = Soft) }
+            item { Text("Favoriten und Routen werden dabei behalten; gespeicherte Ziele nur, wenn du sie nicht ausdrücklich löschst.", color = Soft) }
         }
     }, confirmButton = { TextButton(onClick = onClose) { Text("Schließen") } })
     selected?.let { area -> AlertDialog(onDismissRequest = { selected = null }, title = { Text("${area.second} löschen?") },

@@ -70,4 +70,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.17")
+    // Renders the new screens in Robolectric for screenshots and crash checks (test only).
+    testImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

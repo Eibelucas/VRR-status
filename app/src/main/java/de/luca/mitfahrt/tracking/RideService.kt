@@ -176,9 +176,12 @@ class RideService : Service(), LocationListener {
                     if (ArrivalAlertPolicy.exitDue(current, alertOptions, now) && currentRide != null) {
                         val id = ExitAlarm.id(currentRide)
                         val gpsBased = current.lastRefreshFailed || now.epochSecond - currentRide.fetchedAt.epochSecond !in -30..120
-                        if (id != null) emitAlert(id, "exit", "Bald aussteigen",
+                        // On a planned journey the exit is a transfer: name the next vehicle (plan time).
+                        val transfer = app.companion.state.value?.takeIf { it.trackedKey == currentRide.departure.key }
+                            ?.let(JourneyCompanions::transferHint)
+                        if (id != null) emitAlert(id, "exit", if (transfer != null) "Bald umsteigen" else "Bald aussteigen",
                             "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}" +
-                                if (gpsBased) " · per GPS erkannt" else "",
+                                (if (gpsBased) " · per GPS erkannt" else "") + (transfer?.let { " · $it" } ?: ""),
                             currentRide.exitTargetStop()?.estimated?.takeIf { it > now } ?: now.plusSeconds(60), runtime)
                     }
                     notifications.post(store.state.value)
@@ -192,7 +195,7 @@ class RideService : Service(), LocationListener {
     private suspend fun refreshLiveBus() {
         val before = store.state.value
         val ride = before.ride ?: return
-        if (!before.running || ride.demo || ride.departure.cancelled) return
+        if (!before.running || ride.demo || ride.departure.cancelled || !ride.departure.newOperated) return
         val settings = customization.current()
         if (!settings.bool(if (ride.boarded) "map_onboard" else "map_waiting", true)) return
         val key = ride.departure.key
@@ -320,7 +323,8 @@ class RideService : Service(), LocationListener {
         try {
             var departure = ride.departure
             // The trip endpoint may omit real-time estimates even if the departure monitor has them.
-            val monitor = runCatching { app.vrr.departures(Stop(departure.stopId, departure.stopName)) }
+            // Legs of a planned journey may be trains or other operators: no NEW filter for those.
+            val monitor = runCatching { app.vrr.departures(Stop(departure.stopId, departure.stopName), newOnly = departure.newOperated) }
                 .getOrElse { error -> if (error is CancellationException) throw error else emptyList() }
                 .firstOrNull { it.key == departure.key }
             monitor?.let { departure = it }

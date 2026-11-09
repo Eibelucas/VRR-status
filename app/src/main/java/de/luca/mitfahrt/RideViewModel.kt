@@ -21,7 +21,9 @@ data class SearchState(
     val loading: Boolean = false, val error: String? = null,
     val pendingRide: Ride? = null, val choosing: String? = null,
     val searched: Boolean = false, val routeFilter: FrequentRoute? = null, val schoolTrip: SchoolTrip? = null,
-    val plannedRoute: RoutePlan? = null, val previewRide: Ride? = null
+    val plannedRoute: RoutePlan? = null, val previewRide: Ride? = null,
+    /** A journey leg replaces the current ride without the "Fahrt wechseln?" question. */
+    val replaceRide: Boolean = false
 )
 data class AlternativesState(val forJourney: String? = null, val stops: List<Stop> = emptyList(),
     val departures: List<Departure> = emptyList(), val loading: Boolean = false, val error: String? = null)
@@ -239,6 +241,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                     refreshPlanDepartures()
                     event.point?.let { point ->
                         lastPoint = point; lastFix = SystemClock.elapsedRealtime()
+                        homeState.value = homeState.value.copy(point = point, pointAt = Instant.now())
                         mutable.value.selectedStop?.let { stop ->
                             mutable.value = mutable.value.copy(selectedStop = stop.copy(distance = stop.point?.distanceTo(point)?.toInt()))
                         }
@@ -407,6 +410,8 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun chooseRoutePlan(plan: RoutePlan, departure: Departure) { chooseWithTarget(departure, plan.destination.id, 0, preview = false) }
+    /** Preview only: shows the trip, starts nothing and records nothing. */
+    fun previewRoutePlan(plan: RoutePlan, departure: Departure) { chooseWithTarget(departure, plan.destination.id, 0, preview = true) }
 
     fun createReport(ride: Ride, stopIndex: Int) {
         if (reportState.value.busy) return
@@ -476,6 +481,8 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                 "history" -> { clearArchive(); check(archive.value.entries.isEmpty()); app.routes.clear(); de.luca.mitfahrt.widgets.MitfahrtWidgets.clearCache(app) }
                 "suggestions" -> { app.routes.clear(); app.savedStops.clearRecent(); app.savedStops.clearMuted() }
                 "arrivals" -> app.arrivals.clear()
+                "trip_history" -> app.tripPlaces.clearRecent()
+                "trip_places" -> app.tripPlaces.clearAll()
                 "reports" -> check(app.reports.clear())
                 "map" -> { val path = File(app.cacheDir, "waiting-map"); check(!path.exists() || path.deleteRecursively()) }
             } }
@@ -491,7 +498,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         app.archive.setEnabled(config.bool("history_enabled", true)); app.archive.setRetentionDays(config.int("history_days", 0))
         app.schoolCalendar.setEnabled(config.bool("calendar_enabled", true))
         app.dayOverrides.prune()
-        app.savedStops.refresh(); app.routes.refresh(); app.arrivals.prune()
+        app.savedStops.refresh(); app.routes.refresh(); app.arrivals.prune(); app.tripPlaces.refresh()
         de.luca.mitfahrt.updates.UpdateScheduler.schedule(app)
         de.luca.mitfahrt.widgets.MitfahrtWidgets.settingsChanged(app)
         if (homeJob?.isActive == true) retryHome()
@@ -611,7 +618,8 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                 mutable.value = mutable.value.copy(choosing = null)
                 return@load
             }
-            app.routes.observe(selected, visitId)
+            // A preview is no ride: route suggestions learn only from rides that are actually started.
+            if (!preview) app.routes.observe(selected, visitId)
             mutable.value = if (preview) mutable.value.copy(previewRide = selected, choosing = null)
                 else mutable.value.copy(pendingRide = selected, previewRide = null, choosing = null)
         }
@@ -620,9 +628,82 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissPreview() { mutable.value = mutable.value.copy(previewRide = null) }
     fun confirmPreview() {
         val ride = mutable.value.previewRide ?: return
+        app.routes.observe(ride, UUID.randomUUID().toString())
         mutable.value = mutable.value.copy(previewRide = null, pendingRide = ride)
     }
-    fun consumeRide() { mutable.value = mutable.value.copy(pendingRide = null) }
+    fun consumeRide() { mutable.value = mutable.value.copy(pendingRide = null, replaceRide = false) }
+
+    // --- accompaniment of a planned journey (several legs) ---
+    val companion = app.companion.state
+    val companionSeen = app.companion.seen
+    private val companionNextState = MutableStateFlow<Ride?>(null)
+    /** Live trip of the next leg, for the transfer; null when not loaded or not available. */
+    val companionNext = companionNextState.asStateFlow()
+    private var companionNextJob: Job? = null
+
+    /** Explicit "Fahrt begleiten": tracks the first vehicle leg with the existing ride tracking. */
+    fun startJourney(journey: TripJourney) {
+        val started = JourneyCompanions.start(journey, Instant.now())
+        if (started == null) {
+            actionState.value = "Diese Verbindung kann nicht begleitet werden: Für die erste Fahrt fehlt eine VRR-Fahrtkennung."
+            return
+        }
+        companionNextState.value = null
+        startCompanionLeg(started, replace = false)
+    }
+
+    /** Explicit transfer to the next leg; never triggered by time alone. */
+    fun continueJourney() {
+        val next = companion.value?.let(JourneyCompanions::advance) ?: return
+        companionNextState.value = null
+        startCompanionLeg(next, replace = true)
+    }
+
+    fun endJourney() { companionNextJob?.cancel(); companionNextState.value = null; app.companion.clear() }
+
+    /** Starts the current leg again, e.g. after the permission dialog was declined. */
+    fun resumeJourney() {
+        val current = companion.value ?: return
+        startCompanionLeg(current.copy(trackedKey = null), replace = false)
+    }
+
+    /** Search query for alternatives from the transfer stop; the screen opens the planner with it. */
+    fun journeyAlternatives(): TripQuery? = companion.value?.let {
+        JourneyCompanions.alternatives(it, Instant.now(), TripSettings.options(settingsStore.current()))
+    }
+
+    private fun startCompanionLeg(companion: JourneyCompanion, replace: Boolean) {
+        val leg = companion.leg
+        val departure = leg.asDeparture(companion.journey.fetchedAt) ?: run {
+            actionState.value = "Für ${leg.line.ifBlank { "diesen Abschnitt" }} fehlt eine VRR-Fahrtkennung. Bitte neu suchen."
+            return
+        }
+        load {
+            mutable.value = mutable.value.copy(choosing = departure.key)
+            val ride = app.vrr.ride(departure).copy(boarded = false, trackingStartedAt = Instant.now())
+            val exit = JourneyCompanions.exitIndex(ride, leg)
+            if (exit == null) {
+                actionState.value = "Der Fahrtverlauf enthält ${shortName(leg.destination.name)} nicht mehr. Bitte neu suchen."
+                mutable.value = mutable.value.copy(choosing = null)
+                return@load
+            }
+            val selected = ride.withExitTarget(exit)
+            app.companion.set(JourneyCompanions.tracking(companion, selected.departure.key))
+            mutable.value = mutable.value.copy(pendingRide = selected, replaceRide = replace, previewRide = null, choosing = null)
+        }
+    }
+
+    /** Loads the next leg's trip (any operator) for a live transfer check. */
+    fun refreshCompanionNext() {
+        val current = companion.value ?: return
+        val departure = current.nextLeg?.asDeparture(current.journey.fetchedAt) ?: run { companionNextState.value = null; return }
+        if (companionNextJob?.isActive == true) return
+        companionNextJob = viewModelScope.launch {
+            val ride = runCatching { app.vrr.ride(departure) }.getOrElse { if (it is CancellationException) throw it; null }
+            // Only keep it while the same journey and leg are still accompanied.
+            if (companion.value?.nextLeg?.tripCode == departure.tripCode) companionNextState.value = ride
+        }
+    }
     fun clearError() { mutable.value = mutable.value.copy(error = null) }
 
     private fun filterDepartures(departures: List<Departure>, route: FrequentRoute?): List<Departure> = CustomizationPolicy.departures(departures, settingsStore.current()).filter {

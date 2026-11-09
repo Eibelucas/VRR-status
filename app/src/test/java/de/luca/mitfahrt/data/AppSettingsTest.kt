@@ -60,8 +60,8 @@ class AppSettingsTest {
     }
 
     @Test fun `lists cannot introduce unknown navigation destinations or repeated cards`() {
-        assertEquals("ride,settings,stops,reports", SettingsCatalog.byKey.getValue("nav_order").clean("ride,settings,evil,ride"))
-        assertEquals("map,nearby", SettingsCatalog.byKey.getValue("home_cards").clean("map,unknown,nearby,map"))
+        assertEquals("home,settings,nearby,reports", SettingsCatalog.byKey.getValue("nav_order").clean("home,settings,evil,home"))
+        assertEquals("map,school", SettingsCatalog.byKey.getValue("home_cards").clean("map,unknown,school,map"))
         assertEquals("board,arrival,map", SettingsCatalog.byKey.getValue("notification_actions").clean("board,arrival,map,stop"))
     }
 

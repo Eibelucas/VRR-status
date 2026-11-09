@@ -41,10 +41,10 @@ class VrrClient {
         "type_1" to "STOP", "radius_1" to radius.coerceIn(100, 3000).toString(), "max" to "30"
     ))).sortedBy { it.distance ?: Int.MAX_VALUE }
 
-    suspend fun departures(stop: Stop): List<Departure> = EfaParser.departures(request("XML_DM_REQUEST", mapOf(
+    suspend fun departures(stop: Stop, newOnly: Boolean = true): List<Departure> = EfaParser.departures(request("XML_DM_REQUEST", mapOf(
         "type_dm" to "stop", "name_dm" to stop.id, "mode" to "direct", "limit" to "80",
         "timeOffset" to "-5", "useRealtime" to "1"
-    )))
+    )), newOnly = newOnly)
 
     suspend fun ride(departure: Departure): Ride {
         val root = request("XML_TRIPSTOPTIMES_REQUEST", tripParameters(departure))
@@ -63,6 +63,23 @@ class VrrClient {
         return EfaShapeParser.coords(request("XML_STOPSEQCOORD_REQUEST", tripParameters(departure)), departure)
     }
 
+    /**
+     * Journey planning (XML_TRIP_REQUEST2). No operator filter: trains, trams and other buses
+     * belong to a journey. An answer without journeys is an empty result, not an invented one.
+     */
+    suspend fun trips(query: TripQuery, page: TripPage, now: java.time.Instant = java.time.Instant.now()): List<TripJourney> {
+        val parameters = TripRequest.parameters(query, page, now)
+            ?: throw TripSearchException("Dein Standort ist gerade nicht bekannt. Wähle einen Start aus.")
+        val root = requestRaw("XML_TRIP_REQUEST2", parameters)
+        return TripParser.journeys(root, java.time.Instant.now())
+    }
+
+    /** Stops, addresses, streets, places and POIs as far as VRR resolves them. */
+    suspend fun places(text: String): List<TripPlace> {
+        if (text.isBlank()) return emptyList()
+        return TripParser.places(requestRaw("XML_STOPFINDER_REQUEST", TripRequest.placeSearch(text)))
+    }
+
     private fun tripParameters(departure: Departure): Map<String, String> {
         val date = departure.planned.atZone(ZoneId.of("Europe/Berlin"))
         return mapOf(
@@ -73,7 +90,15 @@ class VrrClient {
         )
     }
 
-    private suspend fun request(endpoint: String, parameters: Map<String, String>): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun request(endpoint: String, parameters: Map<String, String>): JSONObject {
+        val root = requestRaw(endpoint, parameters)
+        val errors = root.optJSONArray("systemMessages")?.objects().orEmpty().filter { it.str("type") == "error" }
+        check(errors.isEmpty()) { "Die VRR-Abfrage konnte nicht verarbeitet werden. Bitte erneut versuchen." }
+        return root
+    }
+
+    /** EFA reports "nothing found" as an error message; callers that can tell empty from broken use this. */
+    private suspend fun requestRaw(endpoint: String, parameters: Map<String, String>): JSONObject = withContext(Dispatchers.IO) {
         val params = mapOf("outputFormat" to "rapidJSON", "language" to "de", "coordOutputFormat" to "WGS84[dd.ddddd]") + parameters
         val query = params.entries.joinToString("&") { (key, value) ->
             "$key=${URLEncoder.encode(value, "UTF-8")}" }
@@ -85,10 +110,7 @@ class VrrClient {
             conn.setRequestProperty("User-Agent", "Mitfahrt-Android/${BuildConfig.VERSION_NAME}")
             check(conn.responseCode == 200) { "VRR ist gerade nicht erreichbar (${conn.responseCode})." }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val root = JSONObject(body)
-            val errors = root.optJSONArray("systemMessages")?.objects().orEmpty().filter { it.str("type") == "error" }
-            check(errors.isEmpty()) { "Die VRR-Abfrage konnte nicht verarbeitet werden. Bitte erneut versuchen." }
-            root
+            JSONObject(body)
         } finally { conn.disconnect() }
     }
 }
