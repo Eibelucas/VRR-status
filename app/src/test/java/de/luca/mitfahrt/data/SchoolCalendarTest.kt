@@ -1,10 +1,17 @@
 package de.luca.mitfahrt.data
 
+import android.app.Application
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Before
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.time.LocalDate
 
 class SchoolCalendarTest {
@@ -115,5 +122,52 @@ class SchoolCalendarTest {
         var many = on
         repeat(SchoolCalendar.MAX_CUSTOM_DAYS) { many = SchoolCalendar.withFreeDay(many, d("2027-01-01").plusDays(it.toLong()), "")!! }
         assertNull(SchoolCalendar.withFreeDay(many, d("2029-01-01"), ""))
+    }
+
+    @Test fun `published no-Pentecost-vacation years remain normal school days on Tuesday`() {
+        // BASS 12-65 Nr. 1 explicitly lists no Pentecost school holidays in 2028 and 2030.
+        assertEquals(SchoolDayReason.PUBLIC_HOLIDAY, SchoolCalendar.status(d("2028-06-05"), on).reason)
+        assertEquals(SchoolDayReason.SCHOOL_DAY, SchoolCalendar.status(d("2028-06-06"), on).reason)
+        assertEquals(SchoolDayReason.PUBLIC_HOLIDAY, SchoolCalendar.status(d("2030-06-10"), on).reason)
+        assertEquals(SchoolDayReason.SCHOOL_DAY, SchoolCalendar.status(d("2030-06-11"), on).reason)
+    }
+
+    @Test fun `explicit school-day precedence survives imported conflicting entries`() {
+        val settings = SchoolCalendar.decode("""{"free":[{"date":"2026-12-25","label":"Frei"}],"school":["2026-12-25"]}""")
+        assertFalse(d("2026-12-25") in settings.freeDays)
+        assertEquals(SchoolDayReason.CUSTOM_SCHOOL_DAY, SchoolCalendar.status(d("2026-12-25"), settings).reason)
+        assertEquals(settings, SchoolCalendar.decode(SchoolCalendar.encode(settings)))
+    }
+
+    @Test fun `dates outside the supported public-holiday algorithm do not crash the calendar query`() {
+        assertNull(NrwPublicHolidays.name(d("0001-01-01")))
+        assertFalse(SchoolCalendar.status(d("0001-01-01"), on).holidayDataKnown)
+    }
+}
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = Application::class)
+class SchoolCalendarStoreTest {
+    private val app: Application get() = RuntimeEnvironment.getApplication()
+
+    @Before fun reset() { app.getSharedPreferences("school_calendar", Context.MODE_PRIVATE).edit().clear().commit() }
+
+    @Test fun `stale instances retain enabled choice free days and explicit school days`() {
+        val first = SchoolCalendarStore(app)
+        val second = SchoolCalendarStore(app)
+        val free = LocalDate.parse("2027-02-08")
+        val school = LocalDate.parse("2026-12-25")
+        first.setEnabled(false)
+        assertTrue(second.addFreeDay(free, "Rosenmontag"))
+        assertTrue(first.markSchoolDay(school))
+        val saved = SchoolCalendarStore(app).current()
+        assertFalse(saved.enabled)
+        assertEquals(mapOf(free to "Rosenmontag"), saved.freeDays)
+        assertEquals(setOf(school), saved.schoolDays)
+        second.setEnabled(true)
+        assertEquals(SchoolDayReason.CUSTOM_FREE, first.status(free).reason)
+        first.removeFreeDay(free)
+        second.removeSchoolDay(school)
+        assertEquals(SchoolCalendarSettings(), SchoolCalendarStore(app).current())
     }
 }

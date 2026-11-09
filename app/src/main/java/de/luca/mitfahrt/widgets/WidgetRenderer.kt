@@ -7,10 +7,12 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.SizeF
 import android.view.View
 import android.widget.RemoteViews
 import de.luca.mitfahrt.R
+import java.time.Instant
 
 /** Turns a [WidgetModel] into RemoteViews; all decisions about content are made by the presenter. */
 internal object WidgetRenderer {
@@ -39,8 +41,10 @@ internal object WidgetRenderer {
     private fun views(context: Context, widgetId: Int, config: WidgetConfig?, model: WidgetModel,
                       widthDp: Int, heightDp: Int): RemoteViews {
         val kind = config?.kind ?: WidgetKind.STOP
-        val spec = WidgetSizing.spec(widthDp, heightDp, config?.info ?: InfoLevel.NORMAL, kind)
-        val paint = Painter(config?.theme ?: ThemeMode.SYSTEM, systemDark(context), config?.accent ?: WidgetAccent.BERRY)
+        val spec = WidgetSizing.spec(widthDp, heightDp, config?.info ?: InfoLevel.NORMAL, kind, config?.rowCount ?: 3)
+        val theme = (config?.theme ?: ThemeMode.SYSTEM).let { if (it == ThemeMode.SYSTEM)
+            ThemeMode.fromKey(WidgetDefaults.settings(context).string("theme", "system")) else it }
+        val paint = Painter(theme, systemDark(context), config?.accent ?: WidgetAccent.BERRY)
         val views = RemoteViews(context.packageName, R.layout.mitfahrt_widget_root)
 
         paint.color(views, R.id.mitfahrt_widget_background, "setColorFilter") { it.background }
@@ -114,8 +118,18 @@ internal object WidgetRenderer {
         } else {
             views.setViewVisibility(R.id.mitfahrt_widget_row_times, View.VISIBLE)
             views.setTextViewText(R.id.mitfahrt_widget_row_time, row.time)
-            views.setTextViewText(R.id.mitfahrt_widget_row_label, row.timeLabel)
-            // The source of a time (live, Prognose, Plan, Ausfall) stays visible on every size.
+            val source = row.sourceAt
+            if (source != null) {
+                // The launcher advances this clock even when Doze postpones our process/alarm.
+                val ageMillis = (Instant.now().toEpochMilli() - source.toEpochMilli()).coerceIn(0, 365L * 86_400_000)
+                val label = row.timeLabel.replace("%", "%%")
+                views.setChronometer(R.id.mitfahrt_widget_row_label, SystemClock.elapsedRealtime() - ageMillis,
+                    "$label · vor %s", true)
+            } else {
+                views.setChronometer(R.id.mitfahrt_widget_row_label, SystemClock.elapsedRealtime(), null, false)
+                views.setTextViewText(R.id.mitfahrt_widget_row_label, row.timeLabel)
+            }
+            // Source and age remain visible even on the smallest widget size.
             views.setViewVisibility(R.id.mitfahrt_widget_row_label,
                 if (row.timeLabel.isNotBlank()) View.VISIBLE else View.GONE)
             paint.color(views, R.id.mitfahrt_widget_row_time, "setTextColor") {

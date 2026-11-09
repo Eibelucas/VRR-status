@@ -45,7 +45,7 @@ import java.util.Locale
 /** Search, profiles and backup are available without knowing any internal setting keys. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (String) -> Unit = {}) {
+fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (String) -> Unit = {}, onOpenModule: (String) -> Unit = {}) {
     val context = LocalContext.current
     val widgetsAvailable = remember(context) { runCatching {
         context.packageManager.getReceiverInfo(android.content.ComponentName(context.packageName,
@@ -112,6 +112,7 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
                         if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "Suche löschen") }
                     })
             }
+            item { PersonalModuleLinks(onOpenModule, query) }
             item {
                 AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -149,6 +150,7 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
                 }
             }
             val filtered = SettingsCatalog.definitions.filter { definition ->
+                definition.key != "transport_filter" &&
                 (widgetsAvailable || !definition.key.startsWith("widget_")) &&
                 (!recentOnly || definition.key in settings.recentKeys) &&
                     (settings.advanced || !definition.advanced || query.isNotBlank() || recentOnly) &&

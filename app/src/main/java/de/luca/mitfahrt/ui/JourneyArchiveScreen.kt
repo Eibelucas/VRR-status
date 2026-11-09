@@ -35,6 +35,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,16 +89,26 @@ fun JourneyArchiveScreen(
     var confirmClear by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
 
-    val visible = JourneyArchive.filter(state.entries, JourneyArchiveFilter(query, line, day, day))
+    val allLines = JourneyArchive.lines(state.entries)
+    val activeLine = line?.takeIf { it in allLines }
+    val visible = JourneyArchive.filter(state.entries, JourneyArchiveFilter(query, activeLine, day, day))
     val groups = JourneyArchive.byDay(visible)
+    LaunchedEffect(state.entries) {
+        val ids = state.entries.map { it.id }.toSet()
+        selected = selected.intersect(ids)
+        detail = detail?.let { shown -> state.entries.firstOrNull { it.id == shown.id } }
+    }
 
     fun delete(ids: Set<String>) {
         val undo = onRemove(ids) ?: return
         selected = selected - ids
         scope.launch {
             val text = if (undo.entries.size == 1) "Fahrt gelöscht" else "${undo.entries.size} Fahrten gelöscht"
-            if (snackbar.showSnackbar(text, actionLabel = "Rückgängig", withDismissAction = true) == SnackbarResult.ActionPerformed &&
-                onUndo(undo) == 0) snackbar.showSnackbar("Nicht wiederhergestellt: Eintrag wurde inzwischen geändert")
+            if (snackbar.showSnackbar(text, actionLabel = "Rückgängig", withDismissAction = true) == SnackbarResult.ActionPerformed) {
+                val count = onUndo(undo)
+                if (count == 0) snackbar.showSnackbar("Fahrten konnten nicht wiederhergestellt werden.")
+                else if (count < undo.entries.size) snackbar.showSnackbar("$count von ${undo.entries.size} Fahrten wiederhergestellt")
+            }
         }
     }
 
@@ -106,7 +117,7 @@ fun JourneyArchiveScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Gefahrene Fahrten", style = MaterialTheme.typography.titleLarge)
+                    Text("Fahrtenverlauf", style = MaterialTheme.typography.titleLarge)
                     OutlinedTextField(value = query, onValueChange = { query = it.take(60) }, singleLine = true,
                         label = { Text("Suchen") }, modifier = Modifier.fillMaxWidth())
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -118,12 +129,12 @@ fun JourneyArchiveScreen(
                                 start.year, start.monthValue - 1, start.dayOfMonth).show()
                         }, label = { Text(day?.let(::dayLabelShort) ?: "Datum wählen") }, modifier = Modifier.heightIn(min = 48.dp))
                     }
-                    val lines = JourneyArchive.lines(state.entries)
+                    val lines = allLines
                     if (lines.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = line == null, onClick = { line = null }, label = { Text("Alle Linien") },
+                        FilterChip(selected = activeLine == null, onClick = { line = null }, label = { Text("Alle Linien") },
                             modifier = Modifier.heightIn(min = 48.dp))
                         lines.forEach { option ->
-                            FilterChip(selected = line == option, onClick = { line = if (line == option) null else option },
+                            FilterChip(selected = activeLine == option, onClick = { line = if (activeLine == option) null else option },
                                 label = { Text(option) }, modifier = Modifier.heightIn(min = 48.dp))
                         }
                     }
@@ -139,7 +150,7 @@ fun JourneyArchiveScreen(
                 }
             }
             if (groups.isEmpty()) item {
-                Text(if (state.entries.isEmpty()) "Noch keine gefahrenen Fahrten" else "Keine Treffer",
+                Text(if (state.entries.isEmpty()) "Noch keine verfolgten Fahrten" else "Keine Treffer",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 24.dp))
             }
             groups.forEach { (date, entries) ->
@@ -166,7 +177,7 @@ fun JourneyArchiveScreen(
                             }
                             Text("Automatisch löschen nach", style = MaterialTheme.typography.bodyMedium)
                             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                JourneyArchive.RETENTION_OPTIONS.forEach { days ->
+                                (JourneyArchive.RETENTION_OPTIONS + state.settings.retentionDays).distinct().sorted().forEach { days ->
                                     FilterChip(selected = state.settings.retentionDays == days, onClick = { onRetentionDays(days) },
                                         label = { Text(if (days == 0) "Nie" else "$days Tagen") }, modifier = Modifier.heightIn(min = 48.dp))
                                 }

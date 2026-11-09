@@ -35,4 +35,31 @@ class CustomizationPolicyTest {
         val settings = AppSettings(mapOf("stop_sort" to "departure"))
         assertEquals(listOf("b", "a"), CustomizationPolicy.stops(stops, settings, listOf(departure("7").copy(stopId = "b"))).map { it.id })
     }
+    @Test fun `date exception replaces hours but keeps nearby and manual gates`() {
+        val at = Instant.parse("2026-11-09T08:30:00Z") // Monday 09:30 Berlin.
+        val origin = Stop("a", "Hehn")
+        val plan = RoutePlan(id = "school", name = "Schule", origin = origin, destination = Stop("b", "Hbf"),
+            window = RouteWindow((1..5).toSet(), 7 * 60, 9 * 60), nearbyOnly = true)
+        val exception = RouteDayOverride(routeId = plan.id, date = java.time.LocalDate.of(2026, 11, 9),
+            mode = DayOverrideMode.TIMES, windows = listOf(DayTimeWindow(9 * 60, 10 * 60)))
+        assertFalse(CustomizationPolicy.active(plan, at, listOf(origin), AppSettings()))
+        assertTrue(CustomizationPolicy.active(plan, at, listOf(origin), AppSettings(), listOf(exception)))
+        assertFalse(CustomizationPolicy.active(plan, at, emptyList(), AppSettings(), listOf(exception)))
+        assertFalse(CustomizationPolicy.active(plan.copy(manualOnly = true), at, listOf(origin), AppSettings(), listOf(exception)))
+    }
+    @Test fun `school calendar and global pause still apply to custom hours`() {
+        val at = Instant.parse("2026-11-09T08:30:00Z")
+        val date = java.time.LocalDate.of(2026, 11, 9)
+        val plan = RoutePlan(id = "school", name = "Schule", origin = Stop("a", "Hehn"), destination = Stop("b", "Hbf"),
+            schoolOnly = true, nearbyOnly = false)
+        val exception = RouteDayOverride(routeId = plan.id, date = date, mode = DayOverrideMode.TIMES,
+            windows = listOf(DayTimeWindow(0, 0)))
+        val calendar = SchoolCalendarSettings(freeDays = mapOf(date to "Schulfrei"))
+        assertFalse(CustomizationPolicy.active(plan, at, emptyList(), AppSettings(), listOf(exception), calendar))
+        assertTrue(CustomizationPolicy.active(plan, at, emptyList(), AppSettings(), listOf(exception), calendar.copy(schoolDays = setOf(date))))
+        assertTrue(CustomizationPolicy.active(plan, at, emptyList(), AppSettings(mapOf("routes_free_dates" to date.toString())),
+            listOf(exception), calendar.copy(schoolDays = setOf(date))))
+        assertFalse(CustomizationPolicy.active(plan, at, emptyList(), AppSettings(mapOf("routes_school_paused" to "true")), listOf(exception)))
+    }
+
 }

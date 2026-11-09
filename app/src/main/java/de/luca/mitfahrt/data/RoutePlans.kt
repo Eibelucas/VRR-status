@@ -95,8 +95,8 @@ object RoutePlans {
     fun validColor(value: String): Boolean = value in COLORS || value.matches(Regex("#[0-9a-fA-F]{6}"))
 
     fun active(plan: RoutePlan, now: Instant, nearbyStops: List<Stop>, schoolPaused: Boolean = false,
-        freeDates: Set<String> = emptySet()): Boolean =
-        plan.enabled && !plan.manualOnly && plan.effectiveWindows().any { it.active(now) } &&
+        freeDates: Set<String> = emptySet(), timeOverride: Boolean? = null): Boolean =
+        plan.enabled && !plan.manualOnly && (timeOverride ?: plan.effectiveWindows().any { it.active(now) }) &&
             now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate().toString().let { date ->
                 date !in plan.excludedDates && (!plan.schoolOnly || !schoolPaused && date !in freeDates)
             } &&

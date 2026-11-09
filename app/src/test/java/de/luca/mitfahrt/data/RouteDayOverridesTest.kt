@@ -1,13 +1,21 @@
 package de.luca.mitfahrt.data
 
+import android.app.Application
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Before
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.Instant
 
 class RouteDayOverridesTest {
     private val zone = RouteDayOverrides.zone
@@ -148,5 +156,70 @@ class RouteDayOverridesTest {
             RouteDayOverrides.summary(RouteDayOverrides.clean(times("s", "2026-11-12", 22 * 60 to 60, 540 to 600))!!))
         assertNotNull(RouteDayOverrides.summary(hidden("s", "2026-11-12")))
         assertFalse(RouteDayOverrides.summary(hidden("s", "2026-11-12")).contains("-"))
+    }
+
+    @Test fun `expired entries do not consume capacity for a new exception`() {
+        val today = LocalDate.parse("2026-11-09")
+        val expired = (0 until RouteDayOverrides.MAX_OVERRIDES).map { hidden("route-$it", "2026-11-01") }
+        val saved = RouteDayOverrides.upsert(expired, hidden("school", "2026-11-09"), today)
+        assertEquals(listOf("school"), saved?.map { it.routeId })
+    }
+
+    @Test fun `invalid raw windows cannot activate routes and malformed window pairs are rejected`() {
+        assertFalse(DayTimeWindow(-1, 60).coversOwnDay(30))
+        assertFalse(DayTimeWindow(0, 0).coversOwnDay(-1))
+        assertFalse(DayTimeWindow(0, 0).coversOwnDay(1440))
+        assertFalse(DayTimeWindow(1320, 60).coversNextDay(-1))
+        val invalid = listOf(times("r", "2026-11-09", -1 to 60))
+        assertNull(RouteDayOverrides.decision(invalid, "r", at("2026-11-09T00:30")))
+        assertTrue(RouteDayOverrides.decode("""[{"id":"a","route":"r","date":"2026-11-12","mode":"TIMES","windows":[[540,600,700]]}]""").isEmpty())
+    }
+
+    @Test fun `an exception id cannot erase an unrelated route and duplicate storage rows stay unique`() {
+        val first = hidden("out", "2026-11-09").copy(id = "shared")
+        val other = hidden("back", "2026-11-10").copy(id = "shared")
+        assertNull(RouteDayOverrides.upsert(listOf(first), other, LocalDate.parse("2026-11-09")))
+        assertEquals(listOf(first), RouteDayOverrides.prune(listOf(first, other), LocalDate.parse("2026-11-09")))
+        assertEquals(listOf(first), RouteDayOverrides.decode(RouteDayOverrides.encode(listOf(first, other, first))))
+    }
+}
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = Application::class)
+class RouteDayOverridesStoreTest {
+    private val app: Application get() = RuntimeEnvironment.getApplication()
+    private val now = Instant.parse("2026-11-09T10:00:00Z")
+    private fun item(route: String, date: String = "2026-11-09") = RouteDayOverride(
+        id = route, routeId = route, date = LocalDate.parse(date), mode = DayOverrideMode.HIDDEN)
+
+    @Before fun reset() { app.getSharedPreferences("route_day_overrides", Context.MODE_PRIVATE).edit().clear().commit() }
+
+    @Test fun `stale store instances retain other edits and undo respects a replacement`() {
+        val first = RouteDayOverridesStore(app) { now }
+        val second = RouteDayOverridesStore(app) { now }
+        assertTrue(first.save(item("out")))
+        assertTrue(second.save(item("back")))
+        assertEquals(setOf("out", "back"), first.current().map { it.routeId }.toSet())
+        val removed = first.remove("out")!!
+        assertTrue(second.save(item("sport")))
+        assertTrue(first.restore(removed))
+        assertEquals(setOf("out", "back", "sport"), second.current().map { it.routeId }.toSet())
+        first.remove("out")
+        assertTrue(second.save(item("out").copy(mode = DayOverrideMode.TIMES, windows = listOf(DayTimeWindow(600, 660)))))
+        assertFalse(first.restore(removed))
+        assertEquals(DayOverrideMode.TIMES, first.current().first { it.routeId == "out" }.mode)
+    }
+
+    @Test fun `running stores preserve yesterday overnight windows then prune after the following day`() {
+        var instant = Instant.parse("2026-11-09T18:00:00Z")
+        val store = RouteDayOverridesStore(app) { instant }
+        assertTrue(store.save(item("night").copy(mode = DayOverrideMode.TIMES, windows = listOf(DayTimeWindow(1320, 120)))))
+        instant = Instant.parse("2026-11-10T00:30:00Z")
+        assertEquals(true, store.decision("night"))
+        assertEquals(1, store.current().size)
+        instant = Instant.parse("2026-11-11T08:00:00Z")
+        store.prune()
+        assertTrue(store.current().isEmpty())
+        assertTrue(RouteDayOverridesStore(app) { instant }.current().isEmpty())
     }
 }

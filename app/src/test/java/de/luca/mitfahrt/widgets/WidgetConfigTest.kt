@@ -19,9 +19,9 @@ class WidgetConfigTest {
         assertTrue(clean.isComplete())
     }
 
-    @Test fun `opacity snaps to the offered steps`() {
-        assertEquals(70, WidgetConfigs.clean(WidgetConfig(WidgetKind.ACTIVE, opacity = 73))?.opacity)
-        assertEquals(50, WidgetConfigs.clean(WidgetConfig(WidgetKind.ACTIVE, opacity = 5))?.opacity)
+    @Test fun `opacity preserves exact app setting while bounding unsupported values`() {
+        assertEquals(73, WidgetConfigs.clean(WidgetConfig(WidgetKind.ACTIVE, opacity = 73))?.opacity)
+        assertEquals(20, WidgetConfigs.clean(WidgetConfig(WidgetKind.ACTIVE, opacity = 5))?.opacity)
     }
 
     @Test fun `unknown stored keys fall back to defaults`() {
@@ -35,5 +35,11 @@ class WidgetConfigTest {
     @Test fun `palette alpha matches opacity`() {
         assertEquals(255, WidgetPalette.alpha(100))
         assertEquals(128, WidgetPalette.alpha(50))
+    }
+
+    @Test fun `unusable or injected target ids cannot become widget configuration`() {
+        listOf("https://example.com", "stop/name", "id\nother", "id other", "x\\other").forEach { id ->
+            assertNull(WidgetConfigs.clean(WidgetConfig(WidgetKind.STOP, id, "Haltestelle")))
+        }
     }
 }

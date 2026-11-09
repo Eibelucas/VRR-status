@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,9 @@ fun ArrivalHistoryScreen(
     val stops = ArrivalHistory.stops(marks)
     val activeStop = stop?.takeIf { key -> stops.any { it.key == key } }
     val days = ArrivalHistory.byDay(marks, activeStop)
+    LaunchedEffect(marks) {
+        if (pendingDelete?.let { pending -> marks.none { it.id == pending.id } } == true) pendingDelete = null
+    }
 
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {

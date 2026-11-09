@@ -1,29 +1,28 @@
-# Konfigurierbare Mitfahrt: Arbeitsstand
+# Konfigurierbare Mitfahrt: integrierter Stand 0.16.0
 
-Entwicklungsstand für die Erweiterung nach Version 0.15.0. Noch kein neues APK-Release. Die große Funktionsliste ist nicht vollständig abgeschlossen.
+Die Entwicklung aus `feature/customization` und Claudes Branches `claude/android-widgets` sowie `claude/mitfahrt-extras` wurde zusammengeführt. Die Module sind an Oberfläche, Einstellungen und Fahrtverfolgung angeschlossen.
 
-## Im Quellcode eingebunden
+## Enthalten
 
-- Zentral validierte Einstellungen: Suche, Gruppen, erweiterte Optionen, zuletzt geändert, Profile mit Zeitregeln, Rücksetzen und Sicherung/Import eigener Routenvorlagen.
-- Konfigurierbare Startkarten, Navigation, Suchradius, Linienfilter, Listenanzeige und Darstellung.
-- Eigene Routen mit mehreren Zeitfenstern, Wochentagen, Linien, Farben/Symbolen, Fußweg/Puffer, Schulpausen und einzelnen ausgeblendeten Tagen.
-- Native NEW-Buskarte als eigene Ansicht sowie bei aktiven Fahrten vor und nach dem Einstieg; Kamera, Ebenen, Datenstand und Kartenstil.
-- Live-basierte Vorwarnungen, Losgeh-, Verspätungs-, Ausfall- und Ausstiegshinweise mit Ruhezeiten, Gerätezielen und Vibrationsmustern.
-- Konfigurierbare Now-Bar-Inhalte und Aktionen; Standortmodi und optionale eigene Ankunftserkennung mit Bestätigung.
-- Wear-OS-Routen-/Favoritenauswahl, ausdrücklicher Fahrtstart, sichere Aktionen, Kachel und Komplikation.
-- Eigene Ankünfte, Belegvorschläge, anpassbare PDF-Darstellung und Dateiexport, Löschfristen und Datenverwaltung.
-- Getrennte Lernschalter, Vorschlagsschwellen und Update-Einstellungen.
+- Suchbare Einstellungen, einfache/erweiterte Bereiche, Profile mit Zeitregeln, zuletzt geändert, Rücksetzen und sichere Routenvorlagen.
+- Konfigurierbare Startkarten, Navigation, Suchradius, Linien, Anzeige, native Buskarte und Darstellung.
+- Routen mit mehreren Zeitfenstern, Wochentagen, Linien, Farben/Symbolen, Fußweg/Puffer, Schulpausen und Ausnahmen für einzelne Tage.
+- NRW-Schulkalender mit Feiertagen, veröffentlichten Ferien und eigenen freien bzw. ausdrücklich als Schultag gewählten Tagen.
+- Archiv tatsächlich gestarteter Fahrten mit Suche, Einzel-/Mehrfachlöschung, sicherem Rückgängig und Aufbewahrungsfrist. Vorschauen und Hintergrundabfragen legen keine Einträge an.
+- Persönliche Ankünfte mit Herkunftsangabe, Haltestellenfilter und einzelner Löschung. Standorterkennung und Speicherung sind abschaltbar.
+- Native Android-Widgets für Haltestellen, Routen und die aktive Fahrt; globale Vorgaben oder einzelne Konfiguration. Uhrzeit und sichtbares Datenalter statt eines möglicherweise eingefrorenen Live-Countdowns.
+- Live-basierte Alarme, Ruhezeiten, Geräteziel und Vibration; Now-Bar-Inhalte, Aktionen und Sperrbildschirm-Details.
+- Wear-OS-Routen-/Favoritenauswahl, ausdrücklicher Start, sichere Fahrtaktionen, Kachel und Komplikation.
+- PDF-Belege, eigene Freigabe persönlicher Angaben, Dateiexport, Belegvorschläge, Datenverwaltung und Update-Einstellungen.
 
-## Noch offen / parallel abgegeben
+## Grenzen
 
-- Android-Homescreen-Widgets: eigener Claude-Auftrag. Widget-Einstellungen erscheinen erst, wenn ein Widget-Provider tatsächlich registriert ist.
-- Tagesausnahmen mit abweichenden Uhrzeiten, NRW-Schulkalender, vollständiges Archiv tatsächlich verfolgter Fahrten und einzelne Ankünfte in einer Übersicht: Zusatzauftrag in CLAUDE_EXTRAS.md.
-- Integration der gelieferten Claude-Module, Prüfung jeder Einstellung gegen die vollständige Funktionsliste und anschließender Release-Durchlauf.
-- EFA-Abfahrtsparser liefert derzeit gezielt NEW-Verbindungen; eine allgemeine Verkehrsmittelauswahl benötigt vor Veröffentlichung noch einen vollständigen Abgleich mit der Datenquelle.
-- Visuelle Prüfung und Praxistest auf Android/Samsung/Wear OS ausstehend. Keine Hardwareprüfung behauptet.
+- Die Ferienabdeckung reicht vom 20.07.2026 bis 27.04.2030; schulinterne bewegliche Ferientage bleiben eigene Angaben. Fehlende Abdeckung wird angezeigt.
+- Die Datenquelle ist auf NEW-Busabfahrten ausgerichtet. Die noch nicht unterstützte allgemeine Verkehrsmittelauswahl wird nicht als nutzbare Einstellung angeboten.
+- Eindeutige Fahrzeugzuordnung hängt von den NEW-Quelldaten ab. Eine manuelle Auswahl bestätigt keine konkrete VRR-Abfahrt. GPS-Positionen werden nicht in erfundene Ankunftsprognosen umgerechnet.
+- Widget-Aktualisierungen unterliegen Androids Energiesparregeln; Alter und Quelle bleiben sichtbar.
+- Eine physische Samsung-/Wear-OS-Prüfung ist nicht erfolgt. Die gesamte frühere Wunschliste ist damit nicht als auf Hardware vollständig abgenommen erklärt.
 
-## Prüfung dieses Stands
+## Validierung
 
-Zentral ausgeführt: `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest :app:lintDebug :wear:lintDebug`.
-
-Ergebnis: 372 App-, 20 gemeinsame und 10 Watch-Tests erfolgreich, insgesamt 402. Beide Lint-Prüfungen ohne Fehler. Release-Signierung und APK-Veröffentlichung sind in diesem Arbeitsstand noch nicht gelaufen.
+Gemeinsame und Handy-/Watch-Unit-Tests, Android Lint und Release-Builds werden für den integrierten Quellstand ausgeführt. Der Testlauf umfasst 483 Handy-, 20 gemeinsame und 10 Watch-Tests. Die öffentlichen Update-Dateien und beide APK-Signaturen werden vor der Veröffentlichung geprüft.

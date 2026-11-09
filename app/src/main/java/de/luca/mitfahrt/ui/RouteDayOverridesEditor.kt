@@ -1,6 +1,7 @@
 package de.luca.mitfahrt.ui
 
 import android.app.DatePickerDialog
+import android.app.Dialog
 import android.app.TimePickerDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +58,8 @@ fun RouteDayOverridesEditor(
     modifier: Modifier = Modifier
 ) {
     val upcoming = RouteDayOverrides.upcoming(overrides, routeId, today)
-    var editing by remember { mutableStateOf<RouteDayOverride?>(null) }
+    var editing by remember(routeId) { mutableStateOf<RouteDayOverride?>(null) }
+    var actionFailed by remember(routeId) { mutableStateOf(false) }
     val todayOverride = upcoming.firstOrNull { it.date == today }
 
     AppCard(modifier.fillMaxWidth()) {
@@ -65,7 +68,7 @@ fun RouteDayOverridesEditor(
             Text(routeName, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { onSave(RouteDayOverride(routeId = routeId, date = today, mode = DayOverrideMode.HIDDEN)) },
+                    onClick = { actionFailed = !onSave(RouteDayOverride(routeId = routeId, date = today, mode = DayOverrideMode.HIDDEN)) },
                     enabled = todayOverride?.mode != DayOverrideMode.HIDDEN,
                     modifier = Modifier.heightIn(min = 48.dp)
                 ) {
@@ -81,6 +84,7 @@ fun RouteDayOverridesEditor(
                     Text("Ausnahme", Modifier.padding(start = 6.dp))
                 }
             }
+            if (actionFailed) Text("Die Ausnahme konnte nicht gespeichert werden.", color = MaterialTheme.colorScheme.error)
             if (upcoming.isEmpty()) {
                 Text("Keine Ausnahmen geplant", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -119,13 +123,22 @@ private fun OverrideDialog(
     onDismiss: () -> Unit, onConfirm: (RouteDayOverride) -> Boolean
 ) {
     val context = LocalContext.current
-    var date by remember { mutableStateOf(initial.date) }
-    var mode by remember { mutableStateOf(initial.mode) }
-    var windows by remember { mutableStateOf(initial.windows.ifEmpty { listOf(DayTimeWindow(9 * 60, 10 * 60)) }) }
-    var failed by remember { mutableStateOf(false) }
+    var date by remember(initial) { mutableStateOf(initial.date) }
+    var mode by remember(initial) { mutableStateOf(initial.mode) }
+    var windows by remember(initial) { mutableStateOf(initial.windows.ifEmpty { listOf(DayTimeWindow(9 * 60, 10 * 60)) }) }
+    var failed by remember(initial) { mutableStateOf(false) }
+    val dialogs = remember(context) { mutableListOf<Dialog>() }
+    DisposableEffect(context) {
+        onDispose { dialogs.toList().forEach { it.dismiss() }; dialogs.clear() }
+    }
+    fun show(dialog: Dialog) {
+        dialogs += dialog
+        dialog.setOnDismissListener { dialogs.remove(dialog) }
+        dialog.show()
+    }
 
     fun pickTime(minute: Int, onPicked: (Int) -> Unit) {
-        TimePickerDialog(context, { _, hour, min -> onPicked(hour * 60 + min) }, minute / 60, minute % 60, true).show()
+        show(TimePickerDialog(context, { _, hour, min -> onPicked(hour * 60 + min) }, minute / 60, minute % 60, true))
     }
 
     AlertDialog(
@@ -134,12 +147,12 @@ private fun OverrideDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
-                    DatePickerDialog(context, { _, year, month, day -> date = LocalDate.of(year, month + 1, day) },
+                    show(DatePickerDialog(context, { _, year, month, day -> date = LocalDate.of(year, month + 1, day) },
                         date.year, date.monthValue - 1, date.dayOfMonth).apply {
                         datePicker.minDate = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
                         datePicker.maxDate = today.plusDays(RouteDayOverrides.MAX_DAYS_AHEAD)
                             .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    }.show()
+                    })
                 }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(RouteDayOverrides.dateLabel(date, today))
                 }
@@ -179,7 +192,7 @@ private fun OverrideDialog(
                         }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Zeitfenster hinzufügen") }
                     }
                 }
-                if (failed) Text("Bitte ein heutiges oder späteres Datum und gültige Zeiten wählen.",
+                if (failed) Text("Speichern nicht möglich. Prüfe Datum, Zeiten und die Anzahl deiner Ausnahmen.",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
         },

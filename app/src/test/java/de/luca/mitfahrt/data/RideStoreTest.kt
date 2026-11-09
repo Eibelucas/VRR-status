@@ -193,4 +193,23 @@ class RideStoreTest {
         assertEquals(LiveBusState(), store.state.value.liveBus)
     }
 
+    @Test fun `store updates never create archive entries and never resurrect deleted journeys`() {
+        val directory = kotlin.io.path.createTempDirectory("archive-integration-").toFile()
+        try {
+            val archive = JourneyArchiveStore(java.io.File(directory, "archive.json"))
+            val store = RideStore(app, onRideUpdated = archive::update)
+            val selected = ride()
+            store.setRide(selected)
+            assertTrue(archive.state.value.entries.isEmpty())
+            archive.record(selected) // Explicit successful tracking start is the sole creation step.
+            store.setRide(selected.copy(boarded = true, fetchedAt = now.plusSeconds(15)))
+            assertEquals(1, archive.state.value.entries.size)
+            assertTrue(archive.state.value.entries.single().ride.boarded)
+            val removed = archive.remove(setOf(JourneyArchive.id(selected)))!!
+            store.setRide(selected.copy(boarded = true, fetchedAt = now.plusSeconds(30)))
+            assertTrue(archive.state.value.entries.isEmpty())
+            assertEquals(1, archive.restore(removed))
+        } finally { directory.deleteRecursively() }
+    }
+
 }

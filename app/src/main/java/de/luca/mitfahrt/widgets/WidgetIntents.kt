@@ -36,7 +36,7 @@ object WidgetIntents {
 
     fun configuration(context: Context, widgetId: Int): Intent =
         Intent(context, WidgetConfigurationActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
         }
 }

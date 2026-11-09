@@ -44,10 +44,22 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun handleLaunchIntent(intent: android.content.Intent) {
         if (intent.getBooleanExtra("open_settings", false)) { navigationState.value = "settings"; return }
         if (intent.getBooleanExtra("open_live_map", false) || intent.getStringExtra("widget_action") == "map") { navigationState.value = "map"; return }
-        val id = intent.getStringExtra("widget_id") ?: return
+        if (intent.getStringExtra("widget_kind") == "active" || intent.getStringExtra("widget_action") == "ride") {
+            navigationState.value = "ride"; return
+        }
+        val id = intent.getStringExtra("widget_id")?.takeIf { it.isNotBlank() && it.length <= 256 } ?: return
         when (intent.getStringExtra("widget_kind")) {
             "route" -> app.routePlans.current().routes.firstOrNull { it.id == id }?.let { selectRoutePlan(it, recordVisit = false); navigationState.value = "stops" }
-            "stop" -> app.savedStops.state.value.favorites.firstOrNull { stopKey(it.id) == stopKey(id) }?.let { selectStop(it, recordVisit = false); navigationState.value = "stops" }
+            "stop" -> {
+                val saved = app.savedStops.state.value
+                val widgetStore = de.luca.mitfahrt.widgets.WidgetStore(app)
+                val fromWidget = de.luca.mitfahrt.widgets.MitfahrtWidgets.ids(app).asSequence().mapNotNull(widgetStore::config)
+                    .firstOrNull { it.kind == de.luca.mitfahrt.widgets.WidgetKind.STOP && stopKey(it.targetId) == stopKey(id) }
+                    ?.let { Stop(it.targetId, it.targetName) }
+                val stop = (saved.favorites + saved.recent).firstOrNull { stopKey(it.id) == stopKey(id) } ?: fromWidget
+                if (stop != null) { selectStop(stop, recordVisit = false); navigationState.value = "stops" }
+                else actionState.value = "Diese Haltestelle ist nicht mehr im Widget gespeichert. Bitte das Widget neu einrichten."
+            }
             "active" -> navigationState.value = "ride"
         }
     }
@@ -56,6 +68,51 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     val arrivals = app.arrivals.marks
     val routes = app.routes.routes
     val routePlans = app.routePlans.state
+    val dayOverrides = app.dayOverrides.state
+    val schoolCalendar = app.schoolCalendar.state
+    val archive = app.archive.state
+    private val archivedLastRideUndo = mutableMapOf<Long, Ride>()
+    private val lastRideArchiveUndo = mutableMapOf<String, JourneyArchiveUndo>()
+    fun removeArchived(ids: Set<String>): JourneyArchiveUndo? {
+        val undo = app.archive.remove(ids) ?: return null
+        app.store.lastRide.value?.takeIf { JourneyArchive.id(it) in ids }?.let { ride ->
+            app.store.forgetLastRide(ride.departure.key)?.let { archivedLastRideUndo[undo.sequence] = it }
+        }
+        return undo
+    }
+    fun restoreArchived(undo: JourneyArchiveUndo): Int {
+        val restored = app.archive.restore(undo)
+        archivedLastRideUndo.remove(undo.sequence)?.takeIf { ride -> archive.value.entries.any { it.id == JourneyArchive.id(ride) } }?.let(app.store::restoreLastRide)
+        return restored
+    }
+    fun clearArchive() {
+        app.archive.clear()
+        if (archive.value.entries.isNotEmpty()) return
+        archivedLastRideUndo.clear(); lastRideArchiveUndo.clear()
+        app.store.lastRide.value?.let { app.store.forgetLastRide(it.departure.key) }
+    }
+    fun setArchiveEnabled(enabled: Boolean) { settingsStore.set("history_enabled", enabled.toString()) }
+    fun setArchiveRetention(days: Int) { settingsStore.set("history_days", days.toString()) }
+    fun removeArrival(mark: ArrivalMark) { app.arrivals.remove(mark.id) }
+    fun saveDayOverride(item: RouteDayOverride): Boolean {
+        if (routePlans.value.routes.none { it.id == item.routeId }) return false
+        val saved = app.dayOverrides.save(item)
+        if (saved && item.mode == DayOverrideMode.TIMES) routePlans.value.routes.firstOrNull { it.id == item.routeId }?.let { plan ->
+            if (item.date.toString() in plan.excludedDates) app.routePlans.save(plan.copy(excludedDates = plan.excludedDates - item.date.toString()))
+        }
+        return saved
+    }
+    fun removeDayOverride(item: RouteDayOverride) {
+        app.dayOverrides.remove(item.id)
+        routePlans.value.routes.firstOrNull { it.id == item.routeId }?.let { plan ->
+            if (item.date.toString() in plan.excludedDates) app.routePlans.save(plan.copy(excludedDates = plan.excludedDates - item.date.toString()))
+        }
+    }
+    fun setCalendarEnabled(enabled: Boolean) { settingsStore.set("calendar_enabled", enabled.toString()) }
+    fun addFreeDay(date: java.time.LocalDate, label: String): Boolean = app.schoolCalendar.addFreeDay(date, label)
+    fun removeFreeDay(date: java.time.LocalDate) = app.schoolCalendar.removeFreeDay(date)
+    fun markSchoolDay(date: java.time.LocalDate): Boolean = app.schoolCalendar.markSchoolDay(date)
+    fun removeSchoolDay(date: java.time.LocalDate) = app.schoolCalendar.removeSchoolDay(date)
     private val planDepartureState = MutableStateFlow(PlanDeparturesState())
     val planDepartures = planDepartureState.asStateFlow()
     private val plannedLoader = PlannedJourneyLoader(app.vrr::departures, app.vrr::ride)
@@ -139,7 +196,11 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     private var queryJob: Job? = null
     private var nearbyQueries = true
 
-    init { viewModelScope.launch {
+    init {
+        viewModelScope.launch { app.archive.error.collect { message ->
+            if (message != null) { actionState.value = message; app.archive.clearError() }
+        } }
+        viewModelScope.launch {
         val saved = withContext(Dispatchers.IO) { app.reports.list() }
         if (!reportState.value.busy && reportState.value.entries.isEmpty()) reportState.value = reportState.value.copy(entries = saved)
     } }
@@ -172,6 +233,8 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
             }
             launch { routes.drop(1).collect { if (nearbyQueries) refreshHomeDepartures() } }
             launch { schoolTrips.drop(1).collect { if (nearbyQueries) refreshHomeDepartures() } }
+            launch { dayOverrides.drop(1).collect { if (nearbyQueries) refreshPlanDepartures(force = true) } }
+            launch { schoolCalendar.drop(1).collect { if (nearbyQueries) refreshPlanDepartures(force = true) } }
             launch { routePlans.drop(1).collect { if (nearbyQueries) { refreshHomeDepartures(); refreshPlanDepartures(force = true) } } }
             refreshPlanDepartures()
             launch {
@@ -199,8 +262,16 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun clearRoutes() { app.routes.clear(); homeState.value = homeState.value.copy(departures = emptyList()) }
     fun removeRoute(route: FrequentRoute): List<RouteVisit> = app.routes.remove(route.key)
     fun restoreRoutes(visits: List<RouteVisit>) = app.routes.restore(visits)
-    fun forgetLastRide(ride: Ride): Ride? = app.store.forgetLastRide(ride.departure.key)
-    fun restoreLastRide(ride: Ride): Boolean = app.store.restoreLastRide(ride)
+    fun forgetLastRide(ride: Ride): Ride? {
+        val removed = app.store.forgetLastRide(ride.departure.key) ?: return null
+        app.archive.remove(setOf(JourneyArchive.id(ride)))?.let { lastRideArchiveUndo[ride.departure.key] = it }
+        return removed
+    }
+    fun restoreLastRide(ride: Ride): Boolean {
+        val restored = app.store.restoreLastRide(ride)
+        lastRideArchiveUndo.remove(ride.departure.key)?.takeIf { restored }?.let(app.archive::restore)
+        return restored
+    }
     fun clearActionMessage() { actionState.value = null }
     fun setExitTarget(index: Int?) {
         tracking.value.ride?.let { app.store.setRide(it.withExitTarget(index), preserveStatus = true) }
@@ -280,7 +351,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         if (!nearbyQueries) return
         val now = Instant.now()
         val nearby = homeState.value.stops.takeIf { homeState.value.status == NearbyStatus.READY }.orEmpty()
-        val plans = routePlans.value.routes.filter { CustomizationPolicy.active(it, now, nearby, settingsStore.current()) }.take(settingsStore.current().int("routes_visible_count", 3))
+        val plans = routePlans.value.routes.filter { CustomizationPolicy.active(it, now, nearby, settingsStore.current(), dayOverrides.value, schoolCalendar.value) }.take(settingsStore.current().int("routes_visible_count", 3))
         val changed = plans != lastPlannedPlans
         if (!force && !changed && (plannedJob?.isActive == true ||
                 SystemClock.elapsedRealtime() - lastPlannedRefresh < 30_000)) return
@@ -386,7 +457,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun clearData(area: String) { viewModelScope.launch {
         try {
             withContext(Dispatchers.IO) { when (area) {
-                "history" -> { app.store.lastRide.value?.let { app.store.forgetLastRide(it.departure.key) }; app.routes.clear() }
+                "history" -> { clearArchive(); check(archive.value.entries.isEmpty()); app.routes.clear(); de.luca.mitfahrt.widgets.MitfahrtWidgets.clearCache(app) }
                 "suggestions" -> { app.routes.clear(); app.savedStops.clearRecent(); app.savedStops.clearMuted() }
                 "arrivals" -> app.arrivals.clear()
                 "reports" -> check(app.reports.clear())
@@ -399,8 +470,14 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     } }
     fun applySettings() {
         app.store.applyPrivacy()
+        val config = settingsStore.current()
+        if (!config.bool("arrival_store", true) || !config.bool("arrival_auto", false)) dismissDetectedArrival()
+        app.archive.setEnabled(config.bool("history_enabled", true)); app.archive.setRetentionDays(config.int("history_days", 0))
+        app.schoolCalendar.setEnabled(config.bool("calendar_enabled", true))
+        app.dayOverrides.prune()
         app.savedStops.refresh(); app.routes.refresh(); app.arrivals.prune()
         de.luca.mitfahrt.updates.UpdateScheduler.schedule(app)
+        de.luca.mitfahrt.widgets.MitfahrtWidgets.settingsChanged(app)
         if (homeJob?.isActive == true) retryHome()
         if (mutable.value.selectedStop != null) reloadSelectedStop()
     }

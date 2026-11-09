@@ -10,17 +10,29 @@ Eine native Android-App für die NEW-Busse in Mönchengladbach. Kotlin, Jetpack 
 
 1. APK auf dem Android-Handy installieren und die kurze Einführung durchgehen oder überspringen.
 2. Auf der Startseite eine nahe Haltestelle, eine passende eigene Strecke oder **Haltestelle suchen** wählen.
-3. Passenden Bus antippen. Nach dem Einsteigen **Bin im Bus** wählen; **Fahrt beenden** stoppt den Hintergrunddienst.
+3. Passenden Bus antippen, die Vorschau prüfen und **Fahrt verfolgen** wählen. Nach dem Einsteigen **Bin im Bus** wählen; **Fahrt beenden** stoppt den Hintergrunddienst.
 
-Nach Auswahl eines Busses zeigt die Warteansicht den Countdown in Minuten und Sekunden. Bei einer echten VRR-Ankunftsprognose steht dort **Dein Bus kommt in**, andernfalls ausdrücklich **Bis zur Abfahrt**. Nach Ablauf wird **Wird erwartet** angezeigt; der Timer behauptet keine tatsächliche Ankunft. **Bin im Bus** schaltet zur Fahrtenansicht um. Abfahrtslisten werden nur während der sichtbaren Haltestellenansicht alle 30 Sekunden aktualisiert.
+Nach dem ausdrücklichen Start zeigt die Warteansicht einen Countdown nur mit frischer echter Live-Prognose. Ohne diese steht **Keine Live-Zeit** und die Fahrplan-Uhrzeit bleibt entsprechend gekennzeichnet. Nach Ablauf wird **Wird erwartet** angezeigt; der Timer behauptet keine tatsächliche Ankunft. Abfahrten werden während der sichtbaren Ansicht im gewählten Intervall aktualisiert.
 
 Alternativ **Erkennung starten**: Mitfahrt sucht nach `NEW-Hotspot` und schlägt NEW-Fahrten an nahe gelegenen Haltestellen vor. Die konkrete Fahrt muss bestätigt werden. Ein sichtbarer Hotspot beweist weder, dass man im Bus sitzt, noch welche Linie fährt. Die App verbindet sich nicht selbst mit einem WLAN.
 
 Unter **Einstellungen → Demofahrt ansehen** lassen sich ausdrücklich gekennzeichnete Beispieldaten ausprobieren.
 
+## Einstellungen, Widgets und Alltag ab 0.16
+
+Unter **Einstellungen → Alle Einstellungen & Profile** stehen Suche, Bereiche, erweiterte Optionen, zuletzt geänderte Werte und Rücksetzen bereit. Profile lassen sich manuell oder nach Wochentag und Uhrzeit wählen. Startkarten, Navigation, Suchradius, Linien, Anzeige, Karte, Benachrichtigungen, Watch, Lernen, Daten und Update-Verhalten sind anpassbar. Sicherungen enthalten Einstellungen und eigene Routenvorlagen; keine Fahrthistorie, Standortaufzeichnungen oder Belege. Name/Klasse/Notiz werden standardmäßig ausgelassen.
+
+**Android-Widgets:** Startbildschirm gedrückt halten → Widgets → Mitfahrt. Haltestelle, Route oder aktive Fahrt wählen. Ein Widget kann den App-Vorgaben folgen oder eigene Einstellungen verwenden. Tippen öffnet eine Ansicht und startet keine Fahrt. Prognosen werden als Uhrzeiten mit sichtbarem Datenalter dargestellt. Hintergrundaktualisierungen folgen Androids Energiesparregeln; manuelles Aktualisieren bleibt möglich.
+
+**Routenausnahmen** erlauben eigene Uhrzeiten für einzelne Tage oder das Ausblenden eines Tages. **Schulkalender NRW** berücksichtigt Feiertage, veröffentlichte Ferien und eigene Ausnahmen für als Schulroute gekennzeichnete Routen. Globale Pausen, Nähe und manuelle Anzeige bleiben gültig. Die lokale Ferienabdeckung reicht vom 20.07.2026 bis 27.04.2030 und nennt die offizielle Quelle; fehlende Termine und schulinterne bewegliche Ferientage werden nicht geraten.
+
+Unter **Berichte → Fahrtenarchiv** stehen tatsächlich gestartete Fahrten. Vorschauen und Hintergrundabfragen erzeugen keine Einträge. Löschen mit Rückgängig, Mehrfachauswahl, Suche, Aufbewahrungsfrist und Abschalten sind vorgesehen. **Berichte → Ankünfte** zeigt persönliche Ankünfte mit Herkunft, Datum und Haltestelle. Eine Standortmarkierung ist keine offizielle Busankunft. Daten und Belege bleiben lokal; keine stillen Freigaben oder Cloud-Synchronisierung.
+
+Die native Livekarte ist auch während der Fahrt verfügbar. Auf der Watch können gespeicherte Routen/Favoriten geöffnet und Fahrten ausdrücklich gestartet werden. Handy und Watch für das neue gemeinsame Format aktualisieren. Der vollständige Stand ist in [RELEASE_NOTES.md](RELEASE_NOTES.md) beschrieben.
+
 ## Live-Busposition und Vorschau ab 0.15
 
-Während einer aktiven Wartefahrt zeigt **Busposition** aktuelle Daten aus der von [NEW verwendeten Livequelle](https://livebus.new.de/) auf einer nativen OpenStreetMap-Karte. Standortmeldungen werden nicht aus Fahrplanzeiten simuliert. Ohne einen eindeutigen aktuellen Abgleich zur VRR-Abfahrt wählt der Nutzer ein Linienfahrzeug ausdrücklich aus; diese Zuordnung bleibt als unbestätigt gekennzeichnet. Die Google-Maps-Schaltfläche öffnet den zuletzt gemeldeten Punkt extern. OpenStreetMap-Attribution, identifizierbarer User-Agent, interner HTTP-Kachelcache und pausierte Downloads außerhalb der sichtbaren Kartenansicht sind berücksichtigt.
+Während einer aktiven Fahrt zeigt **Busposition** aktuelle Daten aus der von [NEW verwendeten Livequelle](https://livebus.new.de/) auf einer nativen OpenStreetMap-Karte. Standortmeldungen werden nicht aus Fahrplanzeiten simuliert. Ohne einen eindeutigen aktuellen Abgleich zur VRR-Abfahrt wählt der Nutzer ein Linienfahrzeug ausdrücklich aus; diese Zuordnung bleibt als unbestätigt gekennzeichnet. Die Google-Maps-Schaltfläche öffnet den zuletzt gemeldeten Punkt extern. OpenStreetMap-Attribution, identifizierbarer User-Agent, interner HTTP-Kachelcache und pausierte Downloads außerhalb der sichtbaren Kartenansicht sind berücksichtigt.
 
 Ohne frische Live-Prognose wird eine absolute **Fahrplan**-Zeit angezeigt, aber kein Warte-Countdown oder darauf basierender Ankunftsalarm ausgelöst. Die Position eines Fahrzeugs ist keine Ankunftsprognose. Now Bar und Wear OS zeigen fehlende Live-Zeiten entsprechend an.
 

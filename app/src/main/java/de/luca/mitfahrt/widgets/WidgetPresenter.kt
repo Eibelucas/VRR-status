@@ -8,7 +8,6 @@ import de.luca.mitfahrt.data.clockTime
 import de.luca.mitfahrt.data.displayTarget
 import de.luca.mitfahrt.data.liveBoardingTime
 import de.luca.mitfahrt.data.liveEstimate
-import de.luca.mitfahrt.data.minutesUntil
 import de.luca.mitfahrt.data.nextStopToTarget
 import de.luca.mitfahrt.data.shortName
 import de.luca.mitfahrt.data.stopKey
@@ -50,9 +49,10 @@ object WidgetPresenter {
     // --- Stop and route boards -------------------------------------------------------------
 
     private fun board(config: WidgetConfig, snapshot: WidgetSnapshot, now: Instant, loading: Boolean): WidgetModel {
-        val open = WidgetAction.Open(config.kind, config.targetId, "departures")
-        val rowAction = if (config.kind == WidgetKind.ROUTE) WidgetAction.Open(config.kind, config.targetId, "preview") else open
+        val open = WidgetAction.Open(config.kind, config.targetId, config.action)
+        val rowAction = open
         val rows = snapshot.departures.mapNotNull { departureRow(it, now, config.info, rowAction) }
+            .map { it.copy(sourceAt = it.sourceAt ?: snapshot.fetchedAt) }
         val fetchedAt = snapshot.fetchedAt
         val stale = fetchedAt == null || age(fetchedAt, now) !in -30..WidgetTiming.PROGNOSIS_SECONDS
         val status = when {
@@ -99,8 +99,8 @@ object WidgetPresenter {
         val kind: TimeKind
         when {
             departure.cancelled -> { time = clockTime(departure.planned); label = "Ausfall"; kind = TimeKind.CANCELLED }
-            live != null -> { time = countdown(live, now); label = "live$delayText"; kind = TimeKind.LIVE }
-            trustedEstimate != null -> { time = clockTime(trustedEstimate); label = "Prognose$delayText"; kind = TimeKind.PROGNOSIS }
+            live != null -> { time = clockTime(live); label = "Prognose$delayText"; kind = TimeKind.LIVE }
+            trustedEstimate != null -> { time = clockTime(trustedEstimate); label = "Ältere Prognose$delayText"; kind = TimeKind.PROGNOSIS }
             else -> { time = clockTime(departure.planned); label = "Plan"; kind = TimeKind.SCHEDULE }
         }
         val destination = shortName(departure.destination).ifBlank { "Ziel unbekannt" }
@@ -111,12 +111,12 @@ object WidgetPresenter {
         ).joinToString(" · ").ifBlank { null }
         val spoken = when (kind) {
             TimeKind.CANCELLED -> "fällt aus, geplant ${clockTime(departure.planned)}"
-            TimeKind.LIVE -> "live, ${spokenCountdown(live!!, now)}"
+            TimeKind.LIVE -> "Prognose ${clockTime(live)}"
             TimeKind.PROGNOSIS -> "Prognose ${clockTime(trustedEstimate)}"
             TimeKind.SCHEDULE -> "laut Fahrplan ${clockTime(departure.planned)}"
         }
         return WidgetRow(departure.line.ifBlank { "?" }, destination, time, label, kind, detail,
-            "Linie ${departure.line} nach $destination, $spoken", action)
+            "Linie ${departure.line} nach $destination, $spoken", action, departure.observedAt)
     }
 
     private fun nextBoardRender(snapshot: WidgetSnapshot, now: Instant): Instant? {
@@ -126,7 +126,6 @@ object WidgetPresenter {
             val observed = departure.observedAt
             if (departure.liveEstimate(now) != null && observed != null) {
                 candidates += observed.plusSeconds(WidgetTiming.LIVE_SECONDS + 1)
-                candidates += now.plusSeconds(60)
             }
             if (departure.estimated != null && observed != null)
                 candidates += observed.plusSeconds(WidgetTiming.PROGNOSIS_SECONDS + 1)
@@ -142,7 +141,7 @@ object WidgetPresenter {
     private fun activeRide(config: WidgetConfig, snapshot: WidgetSnapshot, input: ActiveRideInput,
                            now: Instant, loading: Boolean): WidgetModel {
         val stored = input.ride
-        val openRide = WidgetAction.Open(WidgetKind.ACTIVE, null, "ride")
+        val openRide = WidgetAction.Open(WidgetKind.ACTIVE, null, config.action)
         if (stored == null) return WidgetModel(
             title = "Aktuelle Fahrt", status = if (loading) WidgetStatus.LOADING else WidgetStatus.EMPTY,
             statusLine = "Keine Fahrt aktiv", message = "Fahrt in der App wählen", open = openRide)
@@ -166,16 +165,17 @@ object WidgetPresenter {
             val name = shortName(boardingStop?.name ?: ride.departure.stopName)
             rows += timedRow(badge, "Einstieg $name", planned, live?.at, prognosis, cancelled, now,
                 detail = if (config.info == InfoLevel.DETAILED) "Richtung ${shortName(ride.departure.destination)}" else null,
-                spokenPrefix = "Linie ${ride.departure.line}, Einstieg $name", action = openRide)
+                spokenPrefix = "Linie ${ride.departure.line}, Einstieg $name", action = openRide, sourceAt = sourceAt)
             val target = ride.displayTarget()
-            rows += stopRow(null, "Ziel ${shortName(target.name)}", target, fresh && !ride.demo, recent, now, openRide)
+            rows += stopRow(null, "Ziel ${shortName(target.name)}", target, fresh && !ride.demo, recent, now, openRide, sourceAt = ride.fetchedAt)
         } else {
             val target = ride.displayTarget()
             rows += stopRow(badge, "Ziel ${shortName(target.name)}", target, fresh && !ride.demo, recent, now, openRide,
                 cancelled = cancelled || target.cancelled,
-                detail = if (config.info == InfoLevel.DETAILED) "Richtung ${shortName(ride.departure.destination)}" else null)
+                detail = if (config.info == InfoLevel.DETAILED) "Richtung ${shortName(ride.departure.destination)}" else null, sourceAt = ride.fetchedAt)
             ride.nextStopToTarget(now)?.takeIf { stopKey(it.id) != stopKey(target.id) }?.let { next ->
-                rows += stopRow(null, "Nächster Halt ${shortName(next.name)}", next, fresh && !ride.demo, recent, now, openRide)
+                rows += stopRow(null, "Nächster Halt ${shortName(next.name)}", next, fresh && !ride.demo, recent, now, openRide,
+                    cancelled = cancelled || next.cancelled, sourceAt = ride.fetchedAt)
             }
         }
         ride.departure.notices.firstOrNull()?.trim()?.takeIf { it.isNotBlank() && config.info == InfoLevel.DETAILED }?.let {
@@ -205,7 +205,6 @@ object WidgetPresenter {
         val candidates = mutableListOf(ride.fetchedAt.plusSeconds(WidgetTiming.PROGNOSIS_SECONDS + 1))
         if (rows.any { it.timeKind == TimeKind.LIVE }) {
             candidates += ride.fetchedAt.plusSeconds(WidgetTiming.LIVE_SECONDS + 1)
-            candidates += now.plusSeconds(60)
         }
         return WidgetModel(
             title = "Aktuelle Fahrt", status = status, statusLine = joinStatus(label, ride.fetchedAt, now),
@@ -215,55 +214,36 @@ object WidgetPresenter {
     }
 
     private fun stopRow(badge: String?, title: String, stop: RideStop, live: Boolean, recent: Boolean, now: Instant,
-                        action: WidgetAction, cancelled: Boolean = stop.cancelled, detail: String? = null): WidgetRow {
+                        action: WidgetAction, cancelled: Boolean = stop.cancelled, detail: String? = null, sourceAt: Instant? = null): WidgetRow {
         val estimate = stop.estimated?.takeIf { !cancelled }
         return timedRow(badge, title, stop.planned, estimate?.takeIf { live }, estimate?.takeIf { recent },
-            cancelled, now, detail, title, action)
+            cancelled, now, detail, title, action, sourceAt)
     }
 
     private fun timedRow(badge: String?, title: String, planned: Instant?, live: Instant?, prognosis: Instant?,
                          cancelled: Boolean, now: Instant, detail: String?, spokenPrefix: String,
-                         action: WidgetAction): WidgetRow {
+                         action: WidgetAction, sourceAt: Instant? = null): WidgetRow {
         val time: String
         val label: String
         val kind: TimeKind
         when {
             cancelled -> { time = clockTime(planned); label = "Ausfall"; kind = TimeKind.CANCELLED }
-            live != null -> { time = countdown(live, now); label = "live"; kind = TimeKind.LIVE }
-            prognosis != null -> { time = clockTime(prognosis); label = "Prognose"; kind = TimeKind.PROGNOSIS }
+            live != null -> { time = clockTime(live); label = "Prognose"; kind = TimeKind.LIVE }
+            prognosis != null -> { time = clockTime(prognosis); label = "Ältere Prognose"; kind = TimeKind.PROGNOSIS }
             else -> { time = clockTime(planned); label = "Plan"; kind = TimeKind.SCHEDULE }
         }
         val spoken = when (kind) {
             TimeKind.CANCELLED -> "fällt aus"
-            TimeKind.LIVE -> "live, ${spokenCountdown(live!!, now)}"
+            TimeKind.LIVE -> "Prognose ${clockTime(live)}"
             TimeKind.PROGNOSIS -> "Prognose $time"
             TimeKind.SCHEDULE -> "laut Fahrplan $time"
         }
-        return WidgetRow(badge, title, time, label, kind, detail, "$spokenPrefix, $spoken", action)
+        return WidgetRow(badge, title, time, label, kind, detail, "$spokenPrefix, $spoken", action, sourceAt)
     }
 
     // --- Helpers ---------------------------------------------------------------------------
 
     private fun age(at: Instant, now: Instant): Long = now.epochSecond - at.epochSecond
-
-    internal fun countdown(at: Instant, now: Instant): String {
-        val minutes = minutesUntil(at, now)
-        return when {
-            minutes == 0 -> "jetzt"
-            minutes < 60 -> "$minutes min"
-            else -> clockTime(at)
-        }
-    }
-
-    private fun spokenCountdown(at: Instant, now: Instant): String {
-        val minutes = minutesUntil(at, now)
-        return when {
-            minutes == 0 -> "jetzt"
-            minutes == 1 -> "in einer Minute"
-            minutes < 60 -> "in $minutes Minuten"
-            else -> "um ${clockTime(at)}"
-        }
-    }
 
     internal fun dataStand(fetchedAt: Instant, now: Instant): String {
         val day = fetchedAt.atZone(zone).toLocalDate()
@@ -283,5 +263,5 @@ object WidgetPresenter {
 internal fun mergeDisplayRide(tracked: Ride, fetched: Ride): Ride? {
     if (tracked.demo || fetched.departure.key != tracked.departure.key) return null
     if (fetched.stops.map { stopKey(it.id) } != tracked.stops.map { stopKey(it.id) }) return null
-    return tracked.copy(stops = fetched.stops, fetchedAt = fetched.fetchedAt)
+    return tracked.copy(departure = fetched.departure, stops = fetched.stops, fetchedAt = fetched.fetchedAt)
 }

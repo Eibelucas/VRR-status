@@ -28,14 +28,14 @@ data class DayTimeWindow(val startMinute: Int, val endMinute: Int) {
     fun valid(): Boolean = startMinute in 0..1439 && endMinute in 0..1439
 
     /** Covers [minute] of its own start date. */
-    fun coversOwnDay(minute: Int): Boolean = when {
+    fun coversOwnDay(minute: Int): Boolean = valid() && minute in 0..1439 && when {
         wholeDay -> true
         overnight -> minute >= startMinute
         else -> minute in startMinute until endMinute
     }
 
     /** Covers [minute] of the following date. */
-    fun coversNextDay(minute: Int): Boolean = overnight && minute < endMinute
+    fun coversNextDay(minute: Int): Boolean = valid() && minute in 0..1439 && overnight && minute < endMinute
 
     fun label(): String = when {
         wholeDay -> "Ganztägig"
@@ -75,6 +75,7 @@ object RouteDayOverrides {
     const val MAX_OVERRIDES = 400
     const val MAX_WINDOWS = 6
     const val MAX_DAYS_AHEAD = 400L
+    private const val MAX_JSON_LENGTH = 512_000
     private const val MAX_ID = 128
 
     fun decision(overrides: List<RouteDayOverride>, routeId: String, now: Instant,
@@ -97,7 +98,7 @@ object RouteDayOverrides {
     }
 
     private fun find(overrides: List<RouteDayOverride>, routeId: String, date: LocalDate): RouteDayOverride? =
-        overrides.firstOrNull { it.routeId == routeId && it.date == date }
+        overrides.asSequence().filter { it.routeId == routeId && it.date == date }.mapNotNull(::clean).firstOrNull()
 
     private fun coversOwnDay(window: RouteWindow, day: DayOfWeek, minute: Int): Boolean {
         if (!window.valid() || day.value !in window.days) return false
@@ -130,6 +131,7 @@ object RouteDayOverrides {
         overrides.mapNotNull(::clean)
             .filter { !it.date.isBefore(today.minusDays(1)) && !it.date.isAfter(today.plusDays(MAX_DAYS_AHEAD)) }
             .distinctBy { it.routeId to it.date }
+            .distinctBy { it.id }
             .sortedWith(compareBy<RouteDayOverride> { it.date }.thenBy { it.routeId })
             .take(MAX_OVERRIDES)
 
@@ -137,10 +139,12 @@ object RouteDayOverrides {
     fun upsert(overrides: List<RouteDayOverride>, override: RouteDayOverride, today: LocalDate): List<RouteDayOverride>? {
         val clean = clean(override) ?: return null
         if (clean.date.isBefore(today) || clean.date.isAfter(today.plusDays(MAX_DAYS_AHEAD))) return null
-        val previous = overrides.firstOrNull { it.routeId == clean.routeId && it.date == clean.date }
+        val current = prune(overrides, today)
+        if (current.any { it.id == clean.id && it.routeId != clean.routeId }) return null
+        val previous = current.firstOrNull { it.routeId == clean.routeId && it.date == clean.date }
         val stored = if (previous != null) clean.copy(id = previous.id) else clean
         // An edited exception that moves to another date leaves its old date.
-        val others = overrides.filterNot { it.id == clean.id || it.id == stored.id || (it.routeId == clean.routeId && it.date == clean.date) }
+        val others = current.filterNot { it.id == clean.id || it.id == stored.id || (it.routeId == clean.routeId && it.date == clean.date) }
         if (previous == null && others.size >= MAX_OVERRIDES) return null
         return prune(others + stored, today)
     }
@@ -166,7 +170,8 @@ object RouteDayOverrides {
         DayOverrideMode.TIMES -> override.windows.joinToString(", ") { it.label() }
     }
 
-    fun encode(overrides: List<RouteDayOverride>): String = JSONArray(overrides.mapNotNull(::clean).map { item ->
+    fun encode(overrides: List<RouteDayOverride>): String = JSONArray(overrides.mapNotNull(::clean)
+        .distinctBy { it.routeId to it.date }.distinctBy { it.id }.take(MAX_OVERRIDES).map { item ->
         JSONObject().apply {
             put("id", item.id); put("route", item.routeId); put("date", item.date.toString())
             put("mode", item.mode.name)
@@ -175,8 +180,9 @@ object RouteDayOverrides {
     }).toString()
 
     fun decode(value: String): List<RouteDayOverride> = runCatching {
+        require(value.length <= MAX_JSON_LENGTH)
         val array = JSONArray(value)
-        (0 until array.length()).mapNotNull { index ->
+        (0 until minOf(array.length(), MAX_OVERRIDES * 4)).mapNotNull { index ->
             runCatching {
                 val item = array.getJSONObject(index)
                 val windows = item.optJSONArray("windows")
@@ -186,10 +192,11 @@ object RouteDayOverrides {
                     mode = DayOverrideMode.valueOf(item.getString("mode")),
                     windows = (0 until (windows?.length() ?: 0)).map { w ->
                         val pair = windows!!.getJSONArray(w)
+                        require(pair.length() == 2)
                         DayTimeWindow(integer(pair.get(0)), integer(pair.get(1)))
                     }))
             }.getOrNull()
-        }.take(MAX_OVERRIDES)
+        }.distinctBy { it.routeId to it.date }.distinctBy { it.id }.take(MAX_OVERRIDES)
     }.getOrDefault(emptyList())
 
     private fun integer(value: Any): Int {
@@ -208,9 +215,14 @@ class RouteDayOverridesStore(context: Context, private val clock: () -> Instant 
 
     private fun today(): LocalDate = clock().atZone(RouteDayOverrides.zone).toLocalDate()
 
+    /** Refresh before writes so a second store instance cannot overwrite newer edits. */
+    @Synchronized fun current(): List<RouteDayOverride> = RouteDayOverrides.prune(
+        RouteDayOverrides.decode(runCatching { prefs.getString("overrides", "[]") }.getOrNull() ?: "[]"), today())
+        .also { mutable.value = it }
+
     /** Saves or replaces the exception for the route and date; returns false if invalid. */
     @Synchronized fun save(override: RouteDayOverride): Boolean {
-        val updated = RouteDayOverrides.upsert(mutable.value, override, today()) ?: return false
+        val updated = RouteDayOverrides.upsert(current(), override, today()) ?: return false
         persist(updated)
         return true
     }
@@ -220,25 +232,26 @@ class RouteDayOverridesStore(context: Context, private val clock: () -> Instant 
 
     /** Removes an exception so the normal weekly rule applies again; returns it for undo. */
     @Synchronized fun remove(id: String): RouteDayOverride? {
-        val removed = mutable.value.firstOrNull { it.id == id } ?: return null
-        persist(mutable.value.filterNot { it.id == id })
+        val current = current()
+        val removed = current.firstOrNull { it.id == id } ?: return null
+        persist(current.filterNot { it.id == id })
         return removed
     }
 
     /** Undo never replaces an exception saved for the same route and date in the meantime. */
     @Synchronized fun restore(override: RouteDayOverride): Boolean {
-        if (mutable.value.any { it.id == override.id || (it.routeId == override.routeId && it.date == override.date) })
+        if (current().any { it.id == override.id || (it.routeId == override.routeId && it.date == override.date) })
             return false
         return save(override)
     }
 
     /** Removes all exceptions of a route that no longer exists. */
-    @Synchronized fun removeRoute(routeId: String) { persist(mutable.value.filterNot { it.routeId == routeId }) }
+    @Synchronized fun removeRoute(routeId: String) { persist(current().filterNot { it.routeId == routeId }) }
 
     fun decision(routeId: String, now: Instant = clock(), normalWindows: List<RouteWindow> = emptyList()): Boolean? =
-        RouteDayOverrides.decision(mutable.value, routeId, now, normalWindows)
+        RouteDayOverrides.decision(current(), routeId, now, normalWindows)
 
-    @Synchronized fun prune() { persist(mutable.value) }
+    @Synchronized fun prune() { persist(current()) }
 
     private fun persist(values: List<RouteDayOverride>) {
         val clean = RouteDayOverrides.prune(values, today())

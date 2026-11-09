@@ -2,6 +2,7 @@ package de.luca.mitfahrt.widgets
 
 import android.appwidget.AppWidgetManager
 import android.content.Intent
+import android.content.ComponentName
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,6 +36,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,7 +70,8 @@ class WidgetConfigurationActivity : ComponentActivity() {
         setResult(RESULT_CANCELED)
         val widgetId = intent?.extras?.getInt(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
             ?: AppWidgetManager.INVALID_APPWIDGET_ID
-        if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) { finish(); return }
+        val provider = AppWidgetManager.getInstance(this).getAppWidgetInfo(widgetId)?.provider
+        if (widgetId <= 0 || provider != ComponentName(this, MitfahrtWidgetProvider::class.java)) { finish(); return }
         val app = application as MitfahrtApplication
         val store = WidgetStore(this)
         val existing = store.config(widgetId)
@@ -81,7 +84,7 @@ class WidgetConfigurationActivity : ComponentActivity() {
             MitfahrtTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     WidgetSetup(
-                        initial = existing, knownStops = knownStops, routes = routes,
+                        initial = existing, defaults = WidgetDefaults.resolve(this), knownStops = knownStops, routes = routes,
                         search = { query -> app.vrr.search(query) },
                         onCancel = { finish() },
                         onSave = { config ->
@@ -99,25 +102,30 @@ class WidgetConfigurationActivity : ComponentActivity() {
 
 @Composable
 private fun WidgetSetup(
-    initial: WidgetConfig?, knownStops: List<Stop>, routes: List<RoutePlan>,
+    initial: WidgetConfig?, defaults: WidgetConfig, knownStops: List<Stop>, routes: List<RoutePlan>,
     search: suspend (String) -> List<Stop>, onCancel: () -> Unit, onSave: (WidgetConfig) -> Unit
 ) {
-    var kind by remember { mutableStateOf(initial?.kind ?: WidgetKind.STOP) }
+    val starting = initial ?: defaults
+    var useDefaults by remember { mutableStateOf(initial?.useAppDefaults ?: true) }
+    var kind by remember { mutableStateOf(starting.kind) }
     var stop by remember {
-        mutableStateOf(initial?.takeIf { it.kind == WidgetKind.STOP }?.let { Stop(it.targetId, it.targetName) })
+        mutableStateOf(starting.takeIf { it.kind == WidgetKind.STOP && it.targetId.isNotBlank() }?.let { Stop(it.targetId, it.targetName) })
     }
-    var routeId by remember { mutableStateOf(initial?.takeIf { it.kind == WidgetKind.ROUTE }?.targetId) }
-    var info by remember { mutableStateOf(initial?.info ?: InfoLevel.NORMAL) }
-    var theme by remember { mutableStateOf(initial?.theme ?: ThemeMode.SYSTEM) }
-    var accent by remember { mutableStateOf(initial?.accent ?: WidgetAccent.BERRY) }
-    var opacity by remember { mutableStateOf(initial?.opacity ?: 100) }
+    var routeId by remember { mutableStateOf(starting.takeIf { it.kind == WidgetKind.ROUTE }?.targetId) }
+    var info by remember { mutableStateOf(starting.info) }
+    var theme by remember { mutableStateOf(starting.theme) }
+    var accent by remember { mutableStateOf(starting.accent) }
+    var opacity by remember { mutableStateOf(starting.opacity) }
+    var action by remember { mutableStateOf(starting.action) }
+    var count by remember { mutableStateOf(starting.rowCount) }
 
     val route = routes.firstOrNull { it.id == routeId }
-    val config = when (kind) {
+    val ownConfig = when (kind) {
         WidgetKind.STOP -> stop?.let { WidgetConfig(kind, it.id, it.name, info, theme, accent, opacity) }
         WidgetKind.ROUTE -> route?.let { WidgetConfig(kind, it.id, it.name, info, theme, accent, opacity) }
         WidgetKind.ACTIVE -> WidgetConfig(kind, info = info, theme = theme, accent = accent, opacity = opacity)
-    }?.let(WidgetConfigs::clean)
+    }?.copy(action = action, rowCount = count, useAppDefaults = false)
+    val config = (if (useDefaults) defaults else ownConfig)?.let(WidgetConfigs::clean)
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Column(
@@ -125,6 +133,14 @@ private fun WidgetSetup(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("Widget einrichten", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("App-Vorgaben verwenden", fontWeight = FontWeight.Medium)
+                    Hint("Inhalt und Darstellung folgen den Widget-Einstellungen der App.")
+                }
+                Switch(checked = useDefaults, onCheckedChange = { useDefaults = it })
+            }
+            if (!useDefaults) {
             Section("Inhalt") {
                 ChipRow(WidgetKind.entries, kind, { it.label }) { kind = it }
                 Spacer(Modifier.height(4.dp))
@@ -136,6 +152,12 @@ private fun WidgetSetup(
             }
             Section("Informationsmenge") {
                 ChipRow(InfoLevel.entries, info, { it.label }) { info = it }
+                Text("Abfahrten", style = MaterialTheme.typography.labelLarge)
+                ChipRow((1..5).toList(), count, Int::toString) { count = it }
+            }
+            Section("Beim Antippen") {
+                val actions = listOf("preview" to "Vorschau", "departures" to "Abfahrten", "ride" to "Aktive Fahrt", "map" to "Karte")
+                ChipRow(actions, actions.firstOrNull { it.first == action } ?: actions.first(), { it.second }) { action = it.first }
             }
             Section("Darstellung") {
                 ChipRow(ThemeMode.entries, theme, { it.label }) { theme = it }
@@ -156,8 +178,10 @@ private fun WidgetSetup(
             Section("Hintergrund") {
                 ChipRow(WidgetConfigs.OPACITIES, opacity, { if (it == 100) "Deckend" else "$it %" }) { opacity = it }
             }
+            }
             Section("Vorschau") {
                 Preview(config ?: WidgetConfig(kind, info = info, theme = theme, accent = accent, opacity = opacity))
+                if (useDefaults && config == null) Hint("Wähle in den App-Einstellungen zuerst eine Haltestelle oder Route oder verwende eigene Einstellungen.")
             }
         }
         Row(
@@ -279,7 +303,7 @@ private fun Preview(config: WidgetConfig) {
         ) {
             Text(config.targetName.takeIf { it.isNotBlank() }?.let(::shortName) ?: config.kind.label,
                 color = Color(palette.text), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            PreviewRow(palette, "017", "Beispielziel", "4 min", "live", live = true)
+            PreviewRow(palette, "017", "Beispielziel", "14:28", "Prognose · Stand 14:24", live = true)
             if (config.info != InfoLevel.MINIMAL) PreviewRow(palette, "023", "Beispielziel", "14:32", "Plan", live = false)
         }
     }

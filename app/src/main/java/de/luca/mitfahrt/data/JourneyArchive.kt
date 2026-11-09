@@ -7,6 +7,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.time.Instant
@@ -58,7 +62,7 @@ data class JourneyArchiveFilter(
 object JourneyArchive {
     val zone: ZoneId = ZoneId.of("Europe/Berlin")
     const val MAX_ENTRIES = 500
-    const val MAX_TOMBSTONES = 200
+    const val MAX_TOMBSTONES = MAX_ENTRIES
     const val MAX_FILE_BYTES = 4L * 1024 * 1024
     const val MAX_RIDE_CHARS = 64_000
     val RETENTION_OPTIONS = listOf(0, 30, 90, 365)
@@ -69,7 +73,7 @@ object JourneyArchive {
 
     /** Adds or replaces the entry of an explicitly started ride. */
     fun record(state: JourneyArchiveState, ride: Ride, now: Instant): JourneyArchiveState {
-        if (!state.settings.enabled || ride.demo || ride.stops.isEmpty()) return state
+        if (!state.settings.enabled || !validRide(ride)) return state
         val id = id(ride)
         val existing = state.entries.firstOrNull { it.id == id }
         val entry = existing?.copy(ride = ride, updatedAt = now, revision = existing.revision + 1)
@@ -82,9 +86,9 @@ object JourneyArchive {
     fun update(state: JourneyArchiveState, ride: Ride, now: Instant): JourneyArchiveState {
         val id = id(ride)
         val existing = state.entries.firstOrNull { it.id == id } ?: return state
-        if (ride.demo || !state.settings.enabled) return state
+        if (!validRide(ride) || !state.settings.enabled) return state
         val entry = existing.copy(ride = ride, updatedAt = now, revision = existing.revision + 1)
-        return state.copy(entries = state.entries.map { if (it.id == id) entry else it })
+        return prune(state.copy(entries = state.entries.map { if (it.id == id) entry else it }), now)
     }
 
     fun remove(state: JourneyArchiveState, ids: Set<String>): Pair<JourneyArchiveState, JourneyArchiveUndo?> {
@@ -123,13 +127,14 @@ object JourneyArchive {
     fun prune(state: JourneyArchiveState, now: Instant): JourneyArchiveState {
         val days = state.settings.retentionDays
         val kept = state.entries
-            .filter { days <= 0 || !it.startedAt.isBefore(now.minusSeconds(days * 86_400L)) }
+            .filter { validRide(it.ride) && it.id == id(it.ride) &&
+                (days <= 0 || !it.startedAt.isBefore(now.minusSeconds(days.coerceAtMost(3650) * 86_400L))) }
             .distinctBy { it.id }.sortedByDescending { it.startedAt }.take(MAX_ENTRIES)
         return state.copy(entries = kept)
     }
 
     fun withSettings(state: JourneyArchiveState, settings: JourneyArchiveSettings, now: Instant): JourneyArchiveState {
-        val days = RETENTION_OPTIONS.firstOrNull { it == settings.retentionDays } ?: 0
+        val days = settings.retentionDays.coerceIn(0, 3650)
         return prune(state.copy(settings = settings.copy(retentionDays = days)), now)
     }
 
@@ -158,29 +163,49 @@ object JourneyArchive {
         .replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
         .split(' ').joinToString(" ") { part -> if (part.isNotEmpty() && part.all(Char::isDigit)) part.trimStart('0').ifEmpty { "0" } else part }
 
-    fun encode(state: JourneyArchiveState): String = JSONObject().apply {
+    private fun validRide(ride: Ride): Boolean = !ride.demo && ride.boardingIndex in ride.stops.indices
+
+    private fun envelope(state: JourneyArchiveState, entries: JSONArray): JSONObject = JSONObject().apply {
         put("version", 1)
         put("enabled", state.settings.enabled)
         put("retentionDays", state.settings.retentionDays)
         put("sequence", state.sequence)
-        put("tombstones", JSONObject(state.tombstones.mapValues { it.value }))
-        put("entries", JSONArray(state.entries.take(MAX_ENTRIES).mapNotNull { entry ->
-            val ride = RideCodec.encode(entry.ride).takeIf { it.length <= MAX_RIDE_CHARS } ?: return@mapNotNull null
-            JSONObject().apply {
+        put("tombstones", JSONObject(state.tombstones.entries.sortedByDescending { it.value }.take(MAX_TOMBSTONES)
+            .associate { it.key to it.value }))
+        put("entries", entries)
+    }
+
+    /** Byte bound includes escaped JSON, UTF-8 text and metadata, not just ride character counts. */
+    internal fun storage(state: JourneyArchiveState): Pair<JourneyArchiveState, String> {
+        val entries = JSONArray()
+        val kept = mutableListOf<ArchivedJourney>()
+        var bytes = envelope(state, entries).toString().toByteArray(Charsets.UTF_8).size.toLong()
+        for (entry in state.entries.distinctBy { it.id }.sortedByDescending { it.startedAt }.take(MAX_ENTRIES)) {
+            if (!validRide(entry.ride) || entry.id != id(entry.ride)) continue
+            val ride = RideCodec.encode(entry.ride).takeIf { it.length <= MAX_RIDE_CHARS } ?: continue
+            val json = JSONObject().apply {
                 put("id", entry.id); put("ride", ride); put("startedAt", entry.startedAt.toString())
                 put("updatedAt", entry.updatedAt.toString()); put("revision", entry.revision)
             }
-        }))
-    }.toString()
+            val size = json.toString().toByteArray(Charsets.UTF_8).size + if (kept.isEmpty()) 0 else 1
+            if (bytes + size > MAX_FILE_BYTES) continue
+            entries.put(json); kept += entry; bytes += size
+        }
+        val snapshot = state.copy(entries = kept)
+        return snapshot to envelope(snapshot, entries).toString()
+    }
+
+    fun encode(state: JourneyArchiveState): String = storage(state).second
 
     fun decode(value: String, now: Instant): JourneyArchiveState = runCatching {
+        require(value.toByteArray(Charsets.UTF_8).size <= MAX_FILE_BYTES)
         val obj = JSONObject(value)
         val array = obj.optJSONArray("entries")
-        val entries = (0 until (array?.length() ?: 0)).mapNotNull { index ->
+        val entries = (0 until minOf(array?.length() ?: 0, MAX_ENTRIES)).mapNotNull { index ->
             runCatching {
                 val item = array!!.getJSONObject(index)
                 val encoded = item.getString("ride").takeIf { it.length <= MAX_RIDE_CHARS } ?: return@runCatching null
-                val ride = RideCodec.decode(encoded).takeUnless { it.demo } ?: return@runCatching null
+                val ride = RideCodec.decode(encoded).takeIf(::validRide) ?: return@runCatching null
                 val id = item.getString("id").takeIf { it == id(ride) } ?: return@runCatching null
                 ArchivedJourney(id, ride, Instant.parse(item.getString("startedAt")), Instant.parse(item.getString("updatedAt")),
                     item.optLong("revision", 1).coerceAtLeast(1))
@@ -188,9 +213,9 @@ object JourneyArchive {
         }
         val tombstoneJson = obj.optJSONObject("tombstones")
         val tombstones = tombstoneJson?.keys()?.asSequence()?.mapNotNull { key ->
-            tombstoneJson.optLong(key, -1).takeIf { it >= 0 }?.let { key to it }
+            tombstoneJson.optLong(key, -1).takeIf { it >= 0 && key.matches(Regex("[0-9a-f]{32}")) }?.let { key to it }
         }?.take(MAX_TOMBSTONES)?.toMap().orEmpty()
-        val days = obj.optInt("retentionDays", 0).takeIf { it in RETENTION_OPTIONS } ?: 0
+        val days = obj.optInt("retentionDays", 0).coerceIn(0, 3650)
         prune(JourneyArchiveState(JourneyArchiveSettings(obj.optBoolean("enabled", true), days), entries,
             obj.optLong("sequence", 0).coerceAtLeast(tombstones.values.maxOrNull() ?: 0), tombstones), now)
     }.getOrDefault(JourneyArchiveState())
@@ -203,44 +228,69 @@ object JourneyArchive {
 class JourneyArchiveStore(private val file: File, private val clock: () -> Instant = Instant::now) {
     constructor(context: Context) : this(File(context.applicationContext.noBackupFilesDir, "journey_archive.json"))
 
+    private var persisted: String? = null
     private val mutable = MutableStateFlow(read())
     val state: StateFlow<JourneyArchiveState> = mutable.asStateFlow()
+    private val errorState = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = errorState.asStateFlow()
+    fun clearError() { errorState.value = null }
+    init { persist(mutable.value) }
 
-    @Synchronized fun record(ride: Ride) = persist(JourneyArchive.record(mutable.value, ride, clock()))
+    @Synchronized fun record(ride: Ride) { persist(JourneyArchive.record(mutable.value, ride, clock())) }
     @Synchronized fun update(ride: Ride) {
         val updated = JourneyArchive.update(mutable.value, ride, clock())
         if (updated !== mutable.value) persist(updated)
     }
     @Synchronized fun remove(ids: Set<String>): JourneyArchiveUndo? {
         val (updated, undo) = JourneyArchive.remove(mutable.value, ids)
-        if (undo != null) persist(updated)
+        if (undo != null && !persist(updated)) return null
         return undo
     }
     /** Returns the number of restored entries; 0 if a newer change made the undo obsolete. */
     @Synchronized fun restore(undo: JourneyArchiveUndo): Int {
+        val existingIds = mutable.value.entries.map { it.id }.toSet()
         val (updated, count) = JourneyArchive.restore(mutable.value, undo, clock())
-        if (count > 0) persist(updated)
-        return count
+        if (count > 0 && !persist(updated)) return 0
+        return if (count == 0) 0 else undo.entries.count { entry -> entry.id !in existingIds &&
+            mutable.value.entries.any { it.id == entry.id } }
     }
-    @Synchronized fun clear() = persist(JourneyArchive.clear(mutable.value))
-    @Synchronized fun setEnabled(enabled: Boolean) =
+    @Synchronized fun clear() { persist(JourneyArchive.clear(mutable.value)) }
+    @Synchronized fun setEnabled(enabled: Boolean) {
         persist(JourneyArchive.withSettings(mutable.value, mutable.value.settings.copy(enabled = enabled), clock()))
-    @Synchronized fun setRetentionDays(days: Int) =
+    }
+    @Synchronized fun setRetentionDays(days: Int) {
         persist(JourneyArchive.withSettings(mutable.value, mutable.value.settings.copy(retentionDays = days), clock()))
-    @Synchronized fun prune() = persist(JourneyArchive.prune(mutable.value, clock()))
+    }
+    @Synchronized fun prune() { persist(JourneyArchive.prune(mutable.value, clock())) }
 
     private fun read(): JourneyArchiveState = runCatching {
         if (!file.isFile || file.length() > JourneyArchive.MAX_FILE_BYTES) return@runCatching JourneyArchiveState()
-        JourneyArchive.decode(file.readText(Charsets.UTF_8), clock())
+        val encoded = file.readText(Charsets.UTF_8)
+        persisted = encoded
+        JourneyArchive.decode(encoded, clock())
     }.getOrDefault(JourneyArchiveState())
 
-    private fun persist(state: JourneyArchiveState) {
-        mutable.value = state
-        runCatching {
-            file.parentFile?.mkdirs()
-            val temp = File(file.parentFile, file.name + ".tmp")
-            temp.writeText(JourneyArchive.encode(state), Charsets.UTF_8)
-            if (!temp.renameTo(file)) { file.delete(); temp.renameTo(file) }
-        }
+    private fun persist(state: JourneyArchiveState): Boolean {
+        val (snapshot, encoded) = JourneyArchive.storage(state)
+        if (encoded == persisted && file.isFile) { mutable.value = snapshot; return true }
+        val temp = File(file.parentFile, file.name + ".tmp")
+        return try {
+            file.parentFile?.let { check(it.isDirectory || it.mkdirs()) }
+            FileOutputStream(temp).use { output ->
+                output.write(encoded.toByteArray(Charsets.UTF_8)); output.fd.sync()
+            }
+            try {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            mutable.value = snapshot
+            persisted = encoded
+            errorState.value = null
+            true
+        } catch (_: Exception) {
+            errorState.value = "Fahrtenverlauf konnte nicht gespeichert werden."
+            false
+        } finally { temp.delete() }
     }
 }

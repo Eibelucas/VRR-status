@@ -15,7 +15,7 @@ class WidgetPresenterTest {
     private val now = Instant.parse("2026-11-09T07:00:00Z") // 08:00 in Mönchengladbach
     private val stopConfig = WidgetConfig(WidgetKind.STOP, "de:05116:7000", "Mönchengladbach Hbf")
     private val routeConfig = WidgetConfig(WidgetKind.ROUTE, "route-1", "Zur Schule")
-    private val activeConfig = WidgetConfig(WidgetKind.ACTIVE)
+    private val activeConfig = WidgetConfig(WidgetKind.ACTIVE, action = "ride")
 
     private fun departure(
         trip: String = "1", plannedIn: Long = 600, estimatedIn: Long? = null,
@@ -34,11 +34,12 @@ class WidgetPresenterTest {
         assertTrue(model.rows.isEmpty())
     }
 
-    @Test fun `fresh live prediction becomes a countdown`() {
+    @Test fun `fresh live prediction uses an absolute clock and retains source age`() {
         val row = WidgetPresenter.present(stopConfig, snapshot(departure(estimatedIn = 840)), now).rows.single()
         assertEquals(TimeKind.LIVE, row.timeKind)
-        assertEquals("14 min", row.time)
-        assertEquals("live +4", row.timeLabel)
+        assertEquals("08:14", row.time)
+        assertEquals("Prognose +4", row.timeLabel)
+        assertEquals(now.minusSeconds(10), row.sourceAt)
         assertEquals("017", row.badge)
         assertEquals("Rheydt Hbf", row.title)
     }
@@ -105,10 +106,10 @@ class WidgetPresenterTest {
         assertEquals(WidgetAction.Configure, model.open)
     }
 
-    @Test fun `route rows open a preview and the header opens departures`() {
-        val model = WidgetPresenter.present(routeConfig, snapshot(departure()), now)
-        assertEquals(WidgetAction.Open(WidgetKind.ROUTE, "route-1", "departures"), model.open)
-        assertEquals(WidgetAction.Open(WidgetKind.ROUTE, "route-1", "preview"), model.rows.single().action)
+    @Test fun `configured click action applies to header and rows without tracking`() {
+        val model = WidgetPresenter.present(routeConfig.copy(action = "preview"), snapshot(departure()), now)
+        assertEquals(WidgetAction.Open(WidgetKind.ROUTE, "route-1", "preview"), model.open)
+        assertEquals(model.open, model.rows.single().action)
     }
 
     @Test fun `empty route board explains the empty result`() {
@@ -124,7 +125,7 @@ class WidgetPresenterTest {
         assertEquals("Steig 2 · Plan 08:10 · Umleitung", detailed.detail)
     }
 
-    @Test fun `countdown is re-rendered before the live window closes`() {
+    @Test fun `fresh source state is scheduled for expiry without needing a minute countdown`() {
         val model = WidgetPresenter.present(stopConfig, snapshot(departure(estimatedIn = 840)), now)
         val next = model.nextRenderAt!!
         assertTrue(next.isAfter(now))
@@ -155,11 +156,12 @@ class WidgetPresenterTest {
         assertNull(model.mapAction)
     }
 
-    @Test fun `fresh tracked boarding gets a live countdown`() {
+    @Test fun `fresh tracked boarding gets a forecast clock with original source time`() {
         val model = WidgetPresenter.present(activeConfig, WidgetSnapshot(), now, active = ActiveRideInput(ride(), true, false))
         val row = model.rows.first()
         assertEquals(TimeKind.LIVE, row.timeKind)
-        assertEquals("7 min", row.time)
+        assertEquals("08:07", row.time)
+        assertEquals(now.minusSeconds(20), row.sourceAt)
         assertEquals("Einstieg Hbf", row.title)
         assertEquals(WidgetAction.Open(WidgetKind.ACTIVE, null, "map"), model.mapAction)
     }
@@ -182,7 +184,7 @@ class WidgetPresenterTest {
         val model = WidgetPresenter.present(activeConfig, WidgetSnapshot(), now,
             active = ActiveRideInput(ride(boarded = true).copy(gpsPassedIndex = 0), true, false))
         assertEquals("Ziel Rheydt Hbf", model.rows[0].title)
-        assertEquals("22 min", model.rows[0].time)
+        assertEquals("08:22", model.rows[0].time)
         assertEquals("Nächster Halt Bismarckplatz", model.rows[1].title)
         assertNull(model.rows[1].badge)
     }

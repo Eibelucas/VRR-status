@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.json.JSONObject
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -98,8 +99,9 @@ class JourneyArchiveTest {
         assertEquals(2, JourneyArchive.prune(state, now).entries.size)
         val limited = JourneyArchive.withSettings(state, JourneyArchiveSettings(retentionDays = 30), now)
         assertEquals(listOf("new"), limited.entries.map { it.ride.departure.tripCode })
-        // Unsupported values fall back to "no automatic deletion".
-        assertEquals(0, JourneyArchive.withSettings(state, JourneyArchiveSettings(retentionDays = 12), now).settings.retentionDays)
+        // The central settings also allow custom periods, including seven or twelve days.
+        assertEquals(12, JourneyArchive.withSettings(state, JourneyArchiveSettings(retentionDays = 12), now).settings.retentionDays)
+        assertEquals(0, JourneyArchive.withSettings(state, JourneyArchiveSettings(retentionDays = -1), now).settings.retentionDays)
     }
 
     @Test fun `entry limit is enforced`() {
@@ -144,5 +146,70 @@ class JourneyArchiveTest {
         file.writeText("nicht json")
         assertNull(JourneyArchiveStore(file) { now }.state.value.entries.firstOrNull())
         dir.deleteRecursively()
+    }
+
+    @Test fun `entire bulk deletion remains undoable up to archive limit`() {
+        val entries = (0 until JourneyArchive.MAX_ENTRIES).map { index ->
+            val ride = ride("bulk-$index")
+            ArchivedJourney(JourneyArchive.id(ride), ride, now, now)
+        }
+        val state = empty.copy(entries = entries)
+        val (removed, undo) = JourneyArchive.remove(state, entries.map { it.id }.toSet())
+        assertEquals(JourneyArchive.MAX_ENTRIES, removed.tombstones.size)
+        val (restored, count) = JourneyArchive.restore(removed, undo!!, now)
+        assertEquals(JourneyArchive.MAX_ENTRIES, count)
+        assertEquals(JourneyArchive.MAX_ENTRIES, restored.entries.size)
+    }
+
+    @Test fun `escaped unicode entries cannot produce an unreadable oversized archive`() {
+        val longName = "ä\\\"".repeat(4_000)
+        val entries = (0 until 150).map { index ->
+            val ride = ride("large-$index").let { base -> base.copy(stops = base.stops.mapIndexed { at, stop ->
+                if (at == 0) stop.copy(name = longName) else stop
+            }) }
+            ArchivedJourney(JourneyArchive.id(ride), ride, now.minusSeconds(index.toLong()), now)
+        }
+        val encoded = JourneyArchive.encode(empty.copy(entries = entries))
+        assertTrue(encoded.toByteArray(Charsets.UTF_8).size.toLong() <= JourneyArchive.MAX_FILE_BYTES)
+        val decoded = JourneyArchive.decode(encoded, now)
+        assertTrue(decoded.entries.isNotEmpty())
+        assertTrue(decoded.entries.size < entries.size)
+        val dir = Files.createTempDirectory("archive-unicode").toFile()
+        try {
+            val file = File(dir, "archive.json").apply { writeText(encoded) }
+            val store = JourneyArchiveStore(file) { now }
+            store.update(decoded.entries.first().ride.copy(boarded = true))
+            val restarted = JourneyArchiveStore(file) { now }
+            assertEquals(store.state.value.entries, restarted.state.value.entries)
+            assertTrue(file.length() <= JourneyArchive.MAX_FILE_BYTES)
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun `storage failure does not report deletion or mutate visible archive`() {
+        val dir = Files.createTempDirectory("archive-io").toFile()
+        try {
+            val file = File(dir, "archive.json")
+            val store = JourneyArchiveStore(file) { now }
+            store.record(ride())
+            val entry = store.state.value.entries.single()
+            assertTrue(file.renameTo(File(dir, "original.json")))
+            assertTrue(file.mkdir())
+            File(file, "block").writeText("prevent replacement")
+            assertNull(store.remove(setOf(entry.id)))
+            assertEquals(listOf(entry), store.state.value.entries)
+            assertNotNull(store.error.value)
+            assertTrue(File(dir, "original.json").isFile)
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun `malformed boarding index is rejected and custom retention also applies on update`() {
+        assertTrue(JourneyArchive.record(empty, ride().copy(boardingIndex = -1), now).entries.isEmpty())
+        val state = JourneyArchive.record(empty, ride(), now)
+        val json = JSONObject(JourneyArchive.encode(state))
+        val entry = json.getJSONArray("entries").getJSONObject(0)
+        entry.put("ride", JSONObject(entry.getString("ride")).put("boardingIndex", 999).toString())
+        assertTrue(JourneyArchive.decode(json.toString(), now).entries.isEmpty())
+        val limited = JourneyArchive.withSettings(state, JourneyArchiveSettings(retentionDays = 7), now)
+        assertTrue(JourneyArchive.update(limited, ride(), now.plusSeconds(8 * 86400L)).entries.isEmpty())
     }
 }

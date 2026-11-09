@@ -27,7 +27,7 @@ object NrwSchoolHolidays {
     /** RdErl. vom 19.05.2022, zuletzt geändert durch RdErl. vom 14.10.2024 (ABl. NRW. 11/24). */
     val SOURCE_AMENDED: LocalDate = LocalDate.of(2024, 10, 14)
     val RETRIEVED: LocalDate = LocalDate.of(2026, 11, 8)
-    const val SCOPE = "Alle Schulen in Nordrhein-Westfalen, ohne schulinterne bewegliche Ferientage"
+    const val SCOPE = "Schulen in Nordrhein-Westfalen; bewegliche Ferientage und abweichende Termine landwirtschaftlicher Fachschulen ausgenommen"
 
     val periods: List<SchoolHolidayPeriod> = listOf(
         p("Sommerferien", "2026-07-20", "2026-09-01"),
@@ -51,7 +51,7 @@ object NrwSchoolHolidays {
     )
     /** First day covered by the source data (start of summer holidays 2026). */
     val coverageStart: LocalDate = LocalDate.of(2026, 7, 20)
-    /** The summer holidays 2030 are not yet published; later dates are unknown. */
+    /** Last date included from this source; later dates are not bundled here. */
     val coverageEnd: LocalDate = LocalDate.of(2030, 4, 27)
 
     private fun p(name: String, start: String, end: String) = SchoolHolidayPeriod(name, LocalDate.parse(start), LocalDate.parse(end))
@@ -60,6 +60,7 @@ object NrwSchoolHolidays {
 /** Statutory public holidays in North Rhine-Westphalia, computed from the Gregorian Easter date. */
 object NrwPublicHolidays {
     fun easterSunday(year: Int): LocalDate {
+        require(year in 1583..4099) { "Gregorian Easter calculation supports years 1583–4099" }
         // Anonymous Gregorian algorithm (Meeus/Jones/Butcher).
         val a = year % 19
         val b = year / 100
@@ -95,7 +96,7 @@ object NrwPublicHolidays {
         )
     }
 
-    fun name(date: LocalDate): String? = holidays(date.year)[date]
+    fun name(date: LocalDate): String? = if (date.year in 1583..4099) holidays(date.year)[date] else null
 }
 
 enum class SchoolDayReason { SCHOOL_DAY, WEEKEND, PUBLIC_HOLIDAY, SCHOOL_HOLIDAY, CUSTOM_FREE, CUSTOM_SCHOOL_DAY, CALENDAR_OFF }
@@ -137,6 +138,7 @@ data class FreePeriod(val start: LocalDate, val end: LocalDate, val label: Strin
 object SchoolCalendar {
     const val MAX_CUSTOM_DAYS = 400
     const val MAX_LABEL = 40
+    private const val MAX_JSON_LENGTH = 256_000
 
     fun status(
         date: LocalDate, settings: SchoolCalendarSettings,
@@ -219,19 +221,20 @@ object SchoolCalendar {
     }.toString()
 
     fun decode(value: String): SchoolCalendarSettings = runCatching {
+        require(value.length <= MAX_JSON_LENGTH)
         val obj = JSONObject(value)
         val free = obj.optJSONArray("free")
         val school = obj.optJSONArray("school")
-        val freeDays = (0 until (free?.length() ?: 0)).mapNotNull { index ->
+        val freeDays = (0 until minOf(free?.length() ?: 0, MAX_CUSTOM_DAYS * 4)).mapNotNull { index ->
             runCatching {
                 val item = free!!.getJSONObject(index)
                 LocalDate.parse(item.getString("date")).takeIf(::validDate)?.let { it to cleanLabel(item.optString("label", "")) }
             }.getOrNull()
         }.take(MAX_CUSTOM_DAYS).toMap()
-        val schoolDays = (0 until (school?.length() ?: 0)).mapNotNull { index ->
+        val schoolDays = (0 until minOf(school?.length() ?: 0, MAX_CUSTOM_DAYS * 4)).mapNotNull { index ->
             runCatching { LocalDate.parse(school!!.getString(index)).takeIf(::validDate) }.getOrNull()
-        }.take(MAX_CUSTOM_DAYS).toSet() - freeDays.keys
-        SchoolCalendarSettings(obj.optBoolean("enabled", true), freeDays, schoolDays)
+        }.take(MAX_CUSTOM_DAYS).toSet()
+        SchoolCalendarSettings(obj.optBoolean("enabled", true), freeDays - schoolDays, schoolDays)
     }.getOrDefault(SchoolCalendarSettings())
 }
 
@@ -241,15 +244,20 @@ class SchoolCalendarStore(context: Context) {
     private val mutable = MutableStateFlow(SchoolCalendar.decode(runCatching { prefs.getString("settings", "{}") }.getOrNull() ?: "{}"))
     val state: StateFlow<SchoolCalendarSettings> = mutable.asStateFlow()
 
-    fun status(date: LocalDate): SchoolDayStatus = SchoolCalendar.status(date, mutable.value)
+    /** Refresh before writes so another store instance cannot erase newer changes. */
+    @Synchronized fun current(): SchoolCalendarSettings = SchoolCalendar.decode(
+        runCatching { prefs.getString("settings", "{}") }.getOrNull() ?: "{}")
+        .also { mutable.value = it }
 
-    @Synchronized fun setEnabled(enabled: Boolean) = persist(mutable.value.copy(enabled = enabled))
+    fun status(date: LocalDate): SchoolDayStatus = SchoolCalendar.status(date, current())
+
+    @Synchronized fun setEnabled(enabled: Boolean) = persist(current().copy(enabled = enabled))
     @Synchronized fun addFreeDay(date: LocalDate, label: String = ""): Boolean =
-        SchoolCalendar.withFreeDay(mutable.value, date, label)?.also(::persist) != null
-    @Synchronized fun removeFreeDay(date: LocalDate) = persist(mutable.value.copy(freeDays = mutable.value.freeDays - date))
+        SchoolCalendar.withFreeDay(current(), date, label)?.also(::persist) != null
+    @Synchronized fun removeFreeDay(date: LocalDate) = current().let { persist(it.copy(freeDays = it.freeDays - date)) }
     @Synchronized fun markSchoolDay(date: LocalDate): Boolean =
-        SchoolCalendar.withSchoolDay(mutable.value, date)?.also(::persist) != null
-    @Synchronized fun removeSchoolDay(date: LocalDate) = persist(mutable.value.copy(schoolDays = mutable.value.schoolDays - date))
+        SchoolCalendar.withSchoolDay(current(), date)?.also(::persist) != null
+    @Synchronized fun removeSchoolDay(date: LocalDate) = current().let { persist(it.copy(schoolDays = it.schoolDays - date)) }
 
     private fun persist(settings: SchoolCalendarSettings) {
         prefs.edit().putString("settings", SchoolCalendar.encode(settings)).apply()

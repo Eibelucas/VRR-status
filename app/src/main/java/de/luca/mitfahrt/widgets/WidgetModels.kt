@@ -58,25 +58,31 @@ data class WidgetConfig(
     val info: InfoLevel = InfoLevel.NORMAL,
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val accent: WidgetAccent = WidgetAccent.BERRY,
-    val opacity: Int = 100
+    val opacity: Int = 100,
+    /** App defaults remain live until the user chooses per-widget customization. */
+    val useAppDefaults: Boolean = false,
+    val action: String = "departures",
+    val rowCount: Int = 3
 ) {
     val needsTarget: Boolean get() = kind != WidgetKind.ACTIVE
     fun isComplete(): Boolean = !needsTarget || (targetId.isNotBlank() && targetName.isNotBlank())
 }
 
 object WidgetConfigs {
-    val OPACITIES = listOf(100, 85, 70, 50)
+    val OPACITIES = listOf(100, 85, 70, 50, 20)
     private const val MAX_ID = 256
     private const val MAX_NAME = 120
 
     /** Returns a storable configuration or null when it cannot describe a usable widget. */
     fun clean(config: WidgetConfig): WidgetConfig? {
-        val opacity = OPACITIES.minByOrNull { kotlin.math.abs(it - config.opacity) } ?: 100
-        if (!config.needsTarget) return config.copy(targetId = "", targetName = "", opacity = opacity)
+        val base = config.copy(opacity = config.opacity.coerceIn(20, 100), rowCount = config.rowCount.coerceIn(1, 5),
+            action = config.action.takeIf { it in WidgetIntents.ACTIONS } ?: "departures")
+        if (!config.needsTarget) return base.copy(targetId = "", targetName = "")
         val id = config.targetId.trim()
         val name = config.targetName.trim()
-        if (id.isEmpty() || id.length > MAX_ID || id.startsWith("demo:") || name.isEmpty()) return null
-        return config.copy(targetId = id, targetName = name.take(MAX_NAME), opacity = opacity)
+        if (id.isEmpty() || id.length > MAX_ID || id.startsWith("demo:") || name.isEmpty() ||
+            id.any { it.isWhitespace() || it.isISOControl() } || id.contains('/') || id.contains('\\')) return null
+        return base.copy(targetId = id, targetName = name.take(MAX_NAME))
     }
 }
 
@@ -115,7 +121,7 @@ data class WidgetSnapshot(
 
 enum class WidgetStatus { READY, NOT_CONFIGURED, TARGET_MISSING, LOADING, OFFLINE, STALE, ERROR, EMPTY }
 
-/** LIVE may be a countdown; every other kind is shown as a clock time with its source. */
+/** All widget times are clock times: host/Doze delays cannot freeze a misleading live countdown. */
 enum class TimeKind { LIVE, PROGNOSIS, SCHEDULE, CANCELLED }
 
 sealed interface WidgetAction {
@@ -132,7 +138,8 @@ data class WidgetRow(
     val timeKind: TimeKind,
     val detail: String?,
     val description: String,
-    val action: WidgetAction
+    val action: WidgetAction,
+    val sourceAt: Instant? = null
 )
 
 data class WidgetModel(

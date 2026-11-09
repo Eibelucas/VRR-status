@@ -16,10 +16,10 @@ object WidgetSizing {
     private const val HEADER_WITH_STATUS = 44
     private const val ROW = 40
     private const val DETAIL_ROW = 52
-    const val MAX_ROWS = 4
+    const val MAX_ROWS = 5
     const val MIN_HEIGHT_FOR_HEADER = 96
 
-    fun spec(widthDp: Int, heightDp: Int, info: InfoLevel, kind: WidgetKind): WidgetLayoutSpec {
+    fun spec(widthDp: Int, heightDp: Int, info: InfoLevel, kind: WidgetKind, rowLimit: Int = info.maxRows): WidgetLayoutSpec {
         val width = widthDp.coerceAtLeast(40)
         val height = heightDp.coerceAtLeast(40)
         val showHeader = height >= MIN_HEIGHT_FOR_HEADER
@@ -29,7 +29,7 @@ object WidgetSizing {
         val header = when { !showHeader -> 0; showStatusLine -> HEADER_WITH_STATUS; else -> HEADER }
         val fitting = ((height - PADDING - header) / rowHeight).coerceIn(1, MAX_ROWS)
         return WidgetLayoutSpec(
-            rows = minOf(fitting, info.maxRows),
+            rows = minOf(fitting, rowLimit.coerceIn(1, MAX_ROWS)),
             showHeader = showHeader,
             showStatusLine = showStatusLine,
             showDetail = showDetail,

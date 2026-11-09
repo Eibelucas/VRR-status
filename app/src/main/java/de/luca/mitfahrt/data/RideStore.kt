@@ -19,7 +19,7 @@ data class TrackingState(
     val wifiBusDetected: Boolean = false
 )
 
-class RideStore(context: Context) {
+class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}) {
     private val settings = AppSettingsStore(context)
     private val prefs = context.getSharedPreferences("ride", Context.MODE_PRIVATE)
     // Keep deleted journeys hidden when their active tracking session refreshes or resumes.
@@ -63,6 +63,7 @@ class RideStore(context: Context) {
         }.apply()
         if (rememberedRide != null) last.value = rememberedRide
         if (!settings.current().bool("history_enabled", true)) last.value = null
+        savedRide?.let(onRideUpdated)
     }
 
     @Synchronized

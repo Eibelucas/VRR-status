@@ -12,8 +12,8 @@ android {
         applicationId = "de.luca.mitfahrt"
         minSdk = 30
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.15.0"
+        versionCode = 16
+        versionName = "0.16.0"
     }
     val releaseStore = System.getenv("MITFAHRT_KEYSTORE")?.takeIf { it.isNotBlank() }
     signingConfigs {

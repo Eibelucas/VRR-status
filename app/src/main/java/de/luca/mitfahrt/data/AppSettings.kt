@@ -80,6 +80,7 @@ object SettingsCatalog {
         b("manual_only", "Nur eigene Haltestellen & Routen", "home", false),
         t("excluded_stops", "Ausgeblendete Haltestellen", "home", hint = "Haltestellenkennungen, durch Kommas getrennt."),
         t("preferred_stops", "Bevorzugte Haltestellen", "home", hint = "Haltestellenkennungen in der gewünschten Reihenfolge."),
+        b("calendar_enabled", "NRW-Schulkalender berücksichtigen", "routes", true),
         b("routes_school_paused", "Schulrouten pausieren", "routes", false),
         t("routes_free_dates", "Eigene freie Tage", "routes", hint = "Datum als JJJJ-MM-TT, mehrere Tage durch Kommas getrennt."),
         n("routes_default_walk_minutes", "Fußweg in Minuten", "routes", 5, 0..60),

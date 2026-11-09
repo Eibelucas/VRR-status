@@ -34,8 +34,15 @@ object CustomizationPolicy {
                 when (settings.string("transport_filter", "all")) { "bus" -> !rail; "rail" -> rail; else -> true }
         }.sortedBy { it.effective }
     }
-    fun active(plan: RoutePlan, now: Instant, stops: List<Stop>, settings: AppSettings): Boolean = RoutePlans.active(
-        plan, now, stops, settings.bool("routes_school_paused", false), tokens(settings.string("routes_free_dates")).toSet())
+    fun active(plan: RoutePlan, now: Instant, stops: List<Stop>, settings: AppSettings,
+        overrides: List<RouteDayOverride> = emptyList(), calendar: SchoolCalendarSettings? = null): Boolean {
+        val date = now.atZone(RouteDayOverrides.zone).toLocalDate()
+        val freeDates = (tokens(settings.string("routes_free_dates")).toSet() +
+            if (calendar != null && SchoolCalendar.status(date, calendar).free) setOf(date.toString()) else emptySet())
+            .let { dates -> if (calendar?.enabled == true && date in calendar.schoolDays) dates - date.toString() else dates }
+        return RoutePlans.active(plan, now, stops, settings.bool("routes_school_paused", false), freeDates,
+            RouteDayOverrides.decision(overrides, plan.id, now, plan.effectiveWindows()))
+    }
     fun refreshMillis(settings: AppSettings, waiting: Boolean = true): Long {
         return when (settings.string("refresh_mode", "balanced")) {
             "frequent" -> 15_000L

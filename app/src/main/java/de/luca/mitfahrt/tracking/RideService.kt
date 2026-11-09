@@ -62,7 +62,9 @@ class RideService : Service(), LocationListener {
             val ride = store.state.value.ride
             if (ride != null && !ride.demo) {
                 if (intent.action == BOARD) store.setRide(ride.copy(boarded = true), preserveStatus = true)
-                else {
+                else if (!customization.current().bool("arrival_store", true)) {
+                    store.update { it.copy(message = "Speichern eigener Ankünfte ist ausgeschaltet.") }
+                } else {
                     val stop = if (ride.boarded) ride.exitTargetStop() ?: ride.displayTarget()
                         else ride.stops.getOrNull(ride.boardingIndex)
                     stop?.let { app.arrivals.record(Stop(it.id, it.name, it.point)) }
@@ -76,9 +78,11 @@ class RideService : Service(), LocationListener {
             return START_NOT_STICKY
         }
         if (intent?.action == STOP) { store.clear(); stopSelf(); return START_NOT_STICKY }
+        var explicitlyStarted: Ride? = null
         if (intent?.action == START_RIDE) {
             val ride = runCatching { RideCodec.decode(intent.getStringExtra("ride") ?: "") }.getOrNull()
             if (ride == null) { stopSelf(); return START_NOT_STICKY }
+            if (store.state.value.ride?.departure?.key != ride.departure.key) explicitlyStarted = ride
             store.setRide(ride)
             store.update { it.copy(monitoring = false, candidates = emptyList()) }
             approaching = null
@@ -99,6 +103,7 @@ class RideService : Service(), LocationListener {
             store.update { it.copy(running = false, monitoring = false, message = "Bitte Standortzugriff in den App-Einstellungen erlauben und erneut starten.") }
             stopSelf(); return START_NOT_STICKY
         }
+        explicitlyStarted?.takeUnless { it.demo }?.let(app.archive::record)
         if (loop == null) {
             sessionStart = SystemClock.elapsedRealtime()
             startSensors()

@@ -1,6 +1,12 @@
 package de.luca.mitfahrt
 
 import android.app.Application
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.drop
+import de.luca.mitfahrt.widgets.MitfahrtWidgets
 import de.luca.mitfahrt.data.RideStore
 import de.luca.mitfahrt.data.ArrivalStore
 import de.luca.mitfahrt.data.VrrClient
@@ -9,7 +15,17 @@ import de.luca.mitfahrt.watch.WatchPublisher
 import de.luca.mitfahrt.data.RouteHistoryStore
 
 class MitfahrtApplication : Application() {
-    val store by lazy { RideStore(this) }
+    private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val settings by lazy { de.luca.mitfahrt.data.AppSettingsStore(this) }
+    val archive by lazy { de.luca.mitfahrt.data.JourneyArchiveStore(this).apply {
+        setEnabled(settings.current().bool("history_enabled", true))
+        setRetentionDays(settings.current().int("history_days", 0))
+    } }
+    val dayOverrides by lazy { de.luca.mitfahrt.data.RouteDayOverridesStore(this) }
+    val schoolCalendar by lazy { de.luca.mitfahrt.data.SchoolCalendarStore(this).apply {
+        setEnabled(settings.current().bool("calendar_enabled", true))
+    } }
+    val store by lazy { RideStore(this, onRideUpdated = archive::update) }
     val vrr by lazy { VrrClient() }
     val newVehicles by lazy { de.luca.mitfahrt.data.NewVehicleClient() }
     val liveBusTracker by lazy { de.luca.mitfahrt.data.LiveBusTracker(newVehicles::fetch, newVehicles::vehicle) }
@@ -25,5 +41,10 @@ class MitfahrtApplication : Application() {
         super.onCreate()
         runCatching { watch.start() }
         runCatching { de.luca.mitfahrt.updates.UpdateScheduler.schedule(this) }
+        widgetScope.launch { store.state.collect { runCatching { MitfahrtWidgets.trackingChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } }
     }
 }

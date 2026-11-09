@@ -84,12 +84,12 @@
             android:textColor="@color/mitfahrt_widget_text"
             android:textSize="15sp" />
 
-        <TextView
+        <Chronometer
             android:id="@+id/mitfahrt_widget_row_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:textColor="@color/mitfahrt_widget_muted"
-            android:textSize="11sp" />
+            android:textSize="10sp" />
     </LinearLayout>
 </LinearLayout>

@@ -33,4 +33,9 @@ class WidgetSizingTest {
         assertFalse(WidgetSizing.spec(120, 180, InfoLevel.NORMAL, WidgetKind.ACTIVE).showMap)
         assertFalse(WidgetSizing.spec(250, 180, InfoLevel.NORMAL, WidgetKind.STOP).showMap)
     }
+
+    @Test fun `explicit widget count can show five rows when the launcher provides enough height`() {
+        assertEquals(5, WidgetSizing.spec(300, 420, InfoLevel.NORMAL, WidgetKind.STOP, rowLimit = 5).rows)
+        assertEquals(1, WidgetSizing.spec(300, 420, InfoLevel.DETAILED, WidgetKind.STOP, rowLimit = 1).rows)
+    }
 }

@@ -19,7 +19,7 @@ object ArrivalHistory {
         else -> null
     }
 
-    fun stops(marks: List<ArrivalMark>): List<StopOption> = marks.groupBy { stopKey(it.stopId) }
+    fun stops(marks: List<ArrivalMark>): List<StopOption> = marks.distinctBy { it.id }.groupBy { stopKey(it.stopId) }
         .map { (key, items) -> StopOption(key, items.maxBy { it.at }.stopName, items.size) }
         .sortedWith(compareByDescending<StopOption> { it.count }.thenBy { it.name })
 

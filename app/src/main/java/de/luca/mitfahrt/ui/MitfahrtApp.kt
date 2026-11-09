@@ -72,6 +72,8 @@ fun MitfahrtApp(
 ) {
     val context = LocalContext.current
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val dayOverrides by vm.dayOverrides.collectAsStateWithLifecycle()
+    val schoolCalendar by vm.schoolCalendar.collectAsStateWithLifecycle()
     val reports by vm.reports.collectAsStateWithLifecycle()
     val lastRide by vm.lastRide.collectAsStateWithLifecycle()
     val arrivals by vm.arrivals.collectAsStateWithLifecycle()
@@ -96,6 +98,7 @@ fun MitfahrtApp(
     var arrivalRide by remember { mutableStateOf<Ride?>(null) }
     var page by rememberSaveable { mutableIntStateOf(if (settings.string("start_page") == "stops") 1 else 0) }
     var showCustomization by rememberSaveable { mutableStateOf(false) }
+    var personalModule by rememberSaveable { mutableStateOf<String?>(null) }
     var showDataManagement by rememberSaveable { mutableStateOf(false) }
     var showAll by rememberSaveable { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
@@ -156,11 +159,11 @@ fun MitfahrtApp(
         }
     }
     val nearbyForPlans = home.stops.takeIf { home.status == NearbyStatus.READY }.orEmpty()
-    val visiblePlans = routePlans.routes.filter { CustomizationPolicy.active(it, now, nearbyForPlans, settings) }.take(settings.int("routes_visible_count", 3))
+    val visiblePlans = routePlans.routes.filter { CustomizationPolicy.active(it, now, nearbyForPlans, settings, dayOverrides, schoolCalendar) }.take(settings.int("routes_visible_count", 3))
     val suggestedRoutes = if (routePlans.automaticLearning && settings.bool("learn_routes", true) && !settings.bool("manual_only", false)) routes.filter { it.count >= settings.int("suggestion_threshold", 3) } else emptyList()
     val cardOrder = settings.csv("home_cards").let { if (settings.bool("map_home", false) && "map" !in it) it + "map" else it }
     val gap = when (settings.string("density")) { "compact" -> 12.dp; "comfortable" -> 28.dp; else -> 20.dp }
-    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization) {
+    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization && personalModule == null) {
         keyboard?.hide(); focus.clearFocus()
         if (page == 1 && search.selectedStop != null) vm.backToStops() else page = 0
     }
@@ -170,8 +173,8 @@ fun MitfahrtApp(
     }
     LaunchedEffect(settings) { vm.applySettings() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(page, tracking.ride?.departure?.key, search.selectedStop?.id, showRoutePlans, showCustomization, lifecycle) {
-        if (!showRoutePlans && !showCustomization && (page == 0 && tracking.ride == null || page == 1)) {
+    LaunchedEffect(page, tracking.ride?.departure?.key, search.selectedStop?.id, showRoutePlans, showCustomization, personalModule, lifecycle) {
+        if (!showRoutePlans && !showCustomization && personalModule == null && (page == 0 && tracking.ride == null || page == 1)) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 vm.openHome(lookupNearby = page == 0 || search.selectedStop == null)
                 try { kotlinx.coroutines.awaitCancellation() } finally { vm.closeHome() }
@@ -210,7 +213,9 @@ fun MitfahrtApp(
         }
     }
     MitfahrtTheme {
-        if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false }, onNotice = { message -> scope.launch { snackbar.showSnackbar(message) } })
+        if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate()) { personalModule = null }
+        else if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false },
+            onNotice = { message -> scope.launch { snackbar.showSnackbar(message) } }, onOpenModule = { personalModule = it })
         else if (showRoutePlans) RoutePlansScreen(routePlans, shownSavedStops, nearbyForPlans,
             onBack = { showRoutePlans = false }, onAutomaticLearning = vm::setAutomaticLearning,
             onSave = vm::saveRoutePlan, onRemove = ::removeRoutePlan, searchStops = vm::findRouteStops,
@@ -338,7 +343,7 @@ fun MitfahrtApp(
                                     onStart = vm::chooseRoutePlan, onOpen = { vm.selectRoutePlan(it); page = 1 }) }
                                 planDepartures.error?.let { message -> item { Text(message, color = Amber, fontSize = 13.sp) } }
                             }
-                            "school" -> item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
+                            "school" -> if (!settings.bool("routes_school_paused", false) && !SchoolCalendar.status(now.atZone(RouteDayOverrides.zone).toLocalDate(), schoolCalendar).free) item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
                             "favorites" -> item { SavedStopsSection(shownSavedStops.copy(recent = emptyList()), ::selectStop, ::toggleFavorite, vm::removeRecentStop, compact = true) }
                             "nearby", "suggestions" -> if (!settings.bool("manual_only", false)) {
                                 if (card == "suggestions") item { SavedStopsSection(shownSavedStops.copy(favorites = emptyList()), ::selectStop, ::toggleFavorite, vm::removeRecentStop, compact = true) }
@@ -350,11 +355,11 @@ fun MitfahrtApp(
                             }
                             "map" -> item { BusMapShortcut { showLiveMap = true } }
                             "last" -> lastRide?.let { previous -> item {
-                                AppCard(onClick = { vm.previewLastRide(previous) }, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+                                AppCard(onClick = { page = 2 }, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                                     Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("Letzte Fahrt", style = MaterialTheme.typography.titleMedium)
                                         Text("${previous.departure.line} · ${shortName(previous.departure.destination)}")
-                                        Text("${clockTime(previous.departure.planned)} · Vorschau öffnen", color = Soft, fontSize = 12.sp)
+                                        Text("${clockTime(previous.departure.planned)} · Berichte öffnen", color = Soft, fontSize = 12.sp)
                                     }
                                 }
                             } }
@@ -362,7 +367,7 @@ fun MitfahrtApp(
                         item {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 OutlinedButton(onClick = { showLiveMap = true }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Map, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Livekarte") }
-                                OutlinedButton(onClick = onMonitor, modifier = Modifier.weight(1f), enabled = !tracking.monitoring) { Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Bus finden") }
+                                OutlinedButton(onClick = if (tracking.monitoring) onStop else onMonitor, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (tracking.monitoring) "Suche stoppen" else "Bus finden") }
                             }
                         }
                         if (tracking.monitoring && settings.bool("wifi_confirm", true)) item { DetectionCard(tracking, onMonitor, onStop) }
@@ -377,14 +382,14 @@ fun MitfahrtApp(
                 }
                 1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite)
                 2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport,
-                    onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide,
+                    onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide, onOpenModule = { personalModule = it },
                     onSave = { id -> reports.entries.firstOrNull { it.id == id }?.let { evidence ->
                         savingReportId = id
                         savePdf.launch(de.luca.mitfahrt.reports.ReportCustomization.from(settings).exportName(evidence))
                     } })
                 else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration, alertPreferences, vm::setArrivalAlert, vm::setExitAlert, vm::setAlertLead,
                     routePlans, vm::setAutomaticLearning, { newRoutePlan = false; showRoutePlans = true },
-                    onCustomize = { showCustomization = true }, onManageData = { showDataManagement = true })
+                    onCustomize = { showCustomization = true }, onManageData = { showDataManagement = true }, onOpenModule = { personalModule = it })
             }
         }
         search.previewRide?.let { preview -> JourneyPreviewSheet(preview, now, vm::confirmPreview, vm::dismissPreview) }
@@ -745,7 +750,7 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit, hapticTest: de.luca.mitfahrt.alerts.HapticTestState, onHapticTest: () -> Unit,
     alertPreferences: AlertPreferences, onArrival: (Boolean) -> Unit, onExit: (Boolean) -> Unit, onLead: (Int) -> Unit,
     routePlans: RoutePlansState, onAutomaticLearning: (Boolean) -> Unit, onManageRoutes: () -> Unit,
-    onCustomize: () -> Unit, onManageData: () -> Unit) {
+    onCustomize: () -> Unit, onManageData: () -> Unit, onOpenModule: (String) -> Unit) {
     val context = LocalContext.current
     val manager = context.getSystemService(NotificationManager::class.java)
     var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
@@ -784,6 +789,7 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
                 }
             }
         }
+        item { PersonalModuleLinks(onOpenModule) }
         item { AppearanceCard() }
         item { AlertPreferencesCard(alertPreferences, onArrival, onExit, onLead) }
         item { TextButton(onClick = onIntro) { Icon(Icons.Outlined.HelpOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Einführung ansehen") } }
@@ -912,10 +918,16 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
 
 @Composable
 private fun ReportsPage(state: ReportsState, lastRide: Ride?, modifier: Modifier,
-    onCreate: (Ride) -> Unit, onShare: (String) -> Unit, onDeleteReport: (String) -> Unit, onDeleteRide: (Ride) -> Unit, onSave: (String) -> Unit) {
+    onCreate: (Ride) -> Unit, onShare: (String) -> Unit, onDeleteReport: (String) -> Unit, onDeleteRide: (Ride) -> Unit, onSave: (String) -> Unit, onOpenModule: (String) -> Unit) {
     var confirmDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item { Header("Berichte", "FÜR DEINE UNTERLAGEN", Icons.Outlined.Description) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onOpenModule("archive") }, modifier = Modifier.weight(1f)) { Text("Fahrtenarchiv") }
+                OutlinedButton(onClick = { onOpenModule("arrivals") }, modifier = Modifier.weight(1f)) { Text("Ankünfte") }
+            }
+        }
         if (lastRide != null) item {
             AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

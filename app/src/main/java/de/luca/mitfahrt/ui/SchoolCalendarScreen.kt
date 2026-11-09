@@ -1,6 +1,7 @@
 package de.luca.mitfahrt.ui
 
 import android.app.DatePickerDialog
+import android.app.Dialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +39,7 @@ import de.luca.mitfahrt.data.NrwSchoolHolidays
 import de.luca.mitfahrt.data.SchoolCalendar
 import de.luca.mitfahrt.data.SchoolCalendarSettings
 import java.time.LocalDate
+import java.time.ZoneId
 
 /** School calendar for NRW. Data from `SchoolCalendarStore.state`, actions via callbacks. */
 @Composable
@@ -54,10 +57,21 @@ fun SchoolCalendarScreen(
     var checked by remember { mutableStateOf<LocalDate?>(null) }
     var addingFree by remember { mutableStateOf<LocalDate?>(null) }
     var showAdvanced by remember { mutableStateOf(false) }
+    var actionFailed by remember { mutableStateOf(false) }
+    val dialogs = remember(context) { mutableListOf<Dialog>() }
+    DisposableEffect(context) {
+        onDispose { dialogs.toList().forEach { it.dismiss() }; dialogs.clear() }
+    }
 
     fun pickDate(onPicked: (LocalDate) -> Unit) {
-        DatePickerDialog(context, { _, year, month, day -> onPicked(LocalDate.of(year, month + 1, day)) },
-            today.year, today.monthValue - 1, today.dayOfMonth).show()
+        val dialog = DatePickerDialog(context, { _, year, month, day -> onPicked(LocalDate.of(year, month + 1, day)) },
+            today.year, today.monthValue - 1, today.dayOfMonth).apply {
+            datePicker.minDate = LocalDate.of(2000, 1, 1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            datePicker.maxDate = LocalDate.of(2200, 12, 31).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }
+        dialogs += dialog
+        dialog.setOnDismissListener { dialogs.remove(dialog) }
+        dialog.show()
     }
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(16.dp),
@@ -122,9 +136,10 @@ fun SchoolCalendarScreen(
                 settings.schoolDays.filter { !it.isBefore(today) }.sorted().forEach { date ->
                     DayRow(SchoolCalendar.dateLabel(date), null) { onRemoveSchoolDay(date) }
                 }
-                OutlinedButton(onClick = { pickDate { onMarkSchoolDay(it) } }, modifier = Modifier.heightIn(min = 48.dp)) {
+                OutlinedButton(onClick = { pickDate { actionFailed = !onMarkSchoolDay(it) } }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("Schultag markieren")
                 }
+                if (actionFailed) Text("Der Schultag konnte nicht gespeichert werden.", color = MaterialTheme.colorScheme.error)
             }
         }
 
