@@ -169,3 +169,22 @@ Watch, Ausstiegsalarm, GPS-Haltestellen). `JourneyCompanion` (in `journey_compan
   bisher einzeln im Fahrtenarchiv. Vorschau und Suche schreiben nichts ins Archiv.
 - Karte: Fußwege und Fahrten ohne `leg.coords` erscheinen nur als Punkte.
 - Kein Android-SDK in der Entwicklungsumgebung: Oberfläche nicht im Emulator geprüft, keine Screenshots.
+
+## 9. Tatsächlich durchgeführte Prüfungen (09.11.2026)
+- **GitHub Actions „Android“** (workflow_dispatch auf diesem Branch, Lauf 42595922438): `:shared:test`,
+  `:app:testDebugUnitTest` (inkl. Robolectric), `:wear:testDebugUnitTest`, `:app:lintDebug`, `:wear:lintDebug`,
+  `:app:assembleDebug`, `:wear:assembleDebug` – **erfolgreich**. Keine Compiler-Warnungen aus den neuen Dateien.
+  Vorherige Läufe deckten zwei Testfehler auf (org.json lehnt NaN ab; `captureToImage` wartet unter Robolectric
+  vergeblich auf einen Hardware-Frame) – beide behoben.
+- Neue Tests: `TripPlanningTest` (Parameter, Tauschen, Abfahrt/Ankunft, Optionen, Parser mit Bahn + NEW-Bus,
+  zwei Umstiege, Plan vs. live, Anschlussbewertung, Ausfall, Geometrie), `TripSearchTest` (späte Antworten,
+  schnelle Änderungen, früher/später, Aktualisieren mit Verspätung/Ausfall, Fehler, Cache, Verlauf ohne Standort),
+  `JourneyCompanionTest`, `SettingsMigrationTest`, `HomeSectionsTest` (kein Routenbereich ohne Routen, Zeitfenster,
+  Tagesausnahmen, Schulkalender, nur-in-der-Nähe-Routen, Nearby nie auf der Startseite), `TripPlacesStoreTest`
+  (Robolectric) und `PlannerScreenshotTest` (Robolectric, rendert Startseite hell/dunkel, ohne Routen, Ergebnisse,
+  Details, In der Nähe mit/ohne Standort).
+- **Screenshots:** `PlannerScreenshotTest` legt PNGs mit synthetischen Daten unter `app/build/reports/screenshots/`
+  ab; sie sind im CI-Artefakt `android-reports` enthalten. Aus der Entwicklungsumgebung ließ sich das Artefakt nicht
+  herunterladen, die Bilder wurden daher hier **nicht angesehen**.
+- **Nicht geprüft:** Emulator/Gerät, echte VRR-Antworten der Verbindungssuche, Bedienung mit TalkBack, echte Fahrt mit
+  Umstieg, Watch-Hardware.
