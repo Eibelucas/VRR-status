@@ -98,3 +98,74 @@ NEW-spezifische Funktionen (Livekarte, Fahrzeugerkennung) werden nur für Abschn
 - „Mein Standort“ wird nur als Marker gespeichert, **nie mit Koordinaten**. Gespeichert werden höchstens die
   öffentlichen Koordinaten einer gewählten Haltestelle/Adresse.
 - Eine Suche oder Vorschau erzeugt **keine** gespeicherte Route und **keinen** Archiveintrag.
+
+## 5. Navigation und Startseite
+Untere Navigation (Reihenfolge weiter unter „Darstellung → Navigation & Reihenfolge“ anpassbar):
+**Start · In der Nähe · Berichte · Einstellungen**. Die aktive Fahrt ist kein eigener Tab mehr, sondern eine
+Leiste direkt über der Navigation (auf allen Tabs außer der Fahrtansicht) und öffnet die bekannte Fahrtansicht.
+
+Migration (beim Lesen der Einstellungen, `SettingsMigration`):
+| Einstellung | alt | neu |
+|---|---|---|
+| `nav_order` | `ride`, `stops` | `home`, `nearby` (eigene Reihenfolge bleibt, keine Duplikate) |
+| `start_page` | `ride` / `stops` | `home` / `nearby`; `routes`, `map` unverändert |
+| `home_cards` | `nearby`, `favorites` | entfallen (liegen jetzt im Tab „In der Nähe“); übrige Reihenfolge bleibt |
+| `nearby_radius`, `nearby_expand`, `departure_count`, `stop_sort`, Ausblend-/Bevorzugungslisten | Gruppe „Startseite“ | Gruppe „In der Nähe“, Werte unverändert |
+
+Startseite: oben „Wohin?“ (Start „Mein Standort“ nur bei freigegebenem Standort und Einstellung „„Mein Standort“ als Start“,
+sonst „Start wählen“), Tauschen, gespeicherte Ziele als Chips. Darunter in einstellbarer Reihenfolge nur Bereiche, die
+gerade etwas zeigen: eigene Routen (nur wenn mindestens eine Route jetzt aktiv ist – sonst gar nichts), Schulweg,
+automatische Vorschläge (getrennt von eigenen Routen), letzte Fahrt, Karte. Nahe Haltestellen gibt es nur noch im Tab.
+Die Startseite fragt den VRR nur nach nahen Haltestellen, wenn ein angezeigter Bereich sie braucht (Routen „nur in der Nähe“,
+Vorschläge, Schulweg).
+
+Routenkarten: Name, Start → Ziel, nächste passende NEW-Abfahrt mit Quelle („VRR live +2 Min“ / „Fahrplan“), Buttons
+„Vorschau“ (startet nichts) und „Begleiten“ (ausdrücklich), dazu „Abfahrten“ und „Verbindungen“ (öffnet die Suche
+Start → Ziel). Zeitfenster, Tagesausnahmen und Schulkalender wirken wie bisher (`CustomizationPolicy.active`).
+Neue Routen: Routen-Verwaltung (Einstellungen), „Als Route speichern“ in den Verbindungsdetails (nur für direkte
+NEW-Verbindungen, weil gespeicherte Routen Haltestelle → Haltestelle mit NEW-Abfahrten sind).
+
+## 6. „In der Nähe“
+Derselbe Code wie zuvor (`openHome`/`NearbyHomeLoader`, `nearby_radius`, `nearby_expand`, Filter und Sortierung aus
+`CustomizationPolicy`) – keine zweite Haltestellensuche. Neu: Radius-Chips (300 m – 2 km, schreiben `nearby_radius`),
+Linienfilter aus den geladenen Abfahrten, Liste oder Karte (`nearby_view`), Entfernung + geschätzter Fußweg,
+Favoriten-Stern je Haltestelle, Datenstand, Aktualisieren, bei fehlender Freigabe eine Freigabe-Aktion; die
+Haltestellensuche per Name steht immer oben.
+
+## 7. Verbindungsdetails und Begleitung
+Details: alle Abschnitte, Fußwege (Dauer, Länge, Treppe/Rolltreppe/Aufzug/Rampe soweit gemeldet), Zwischenhalte
+(aufklappbar), Gleis/Steig, Hinweise, Ausfall, Anschlussbewertung (nur live), Karte mit `leg.coords`
+(Fahrten durchgezogen, Fußwege gestrichelt – nur wenn VRR Koordinaten liefert) und Haltestellenpunkten.
+Fußwege: Button „Weg in Karten-App“ (Google Maps bzw. OpenStreetMap je nach `map_external`). **Keine eigene
+Abbiegenavigation.**
+
+„Fahrt begleiten“ (`RideViewModel.startJourney`) lädt die erste Fahrt per `XML_TRIPSTOPTIMES_REQUEST`, setzt den
+Ausstieg auf die Umstiegshaltestelle und startet die vorhandene Einzelfahrt-Verfolgung (Benachrichtigung/Now Bar,
+Watch, Ausstiegsalarm, GPS-Haltestellen). `JourneyCompanion` (in `journey_companion` gespeichert, ohne Standort):
+- Der aktuelle Abschnitt wechselt **nur** über „Ausgestiegen · weiter mit …“ bzw. „Nächsten Abschnitt begleiten“.
+  Eine verstrichene Fahrplanzeit markiert nichts als begonnen.
+- Ein Abschnitt gilt erst als gelaufen, wenn seine Fahrt tatsächlich verfolgt wurde (`markSeen` im App-Prozess).
+- Umstiegshinweis in Benachrichtigung und Ausstiegsalarm („Bald umsteigen … Umstieg: RE8 um 08:20, Gleis 2 (Plan)“).
+  Die Watch bekommt den Ausstiegsalarm und danach die neue Fahrt; das Watch-Protokoll wurde **nicht** erweitert,
+  einen eigenen Umstiegstext zeigt die Uhr daher nicht.
+- Der nächste Abschnitt wird alle 60 s nachgeladen (nur bei sichtbarer App). Anschluss „knapp/nicht erreichbar“ nur
+  mit frischen Prognosen beider Fahrten; bei Ausfall oder Gefährdung „Alternativen suchen“ = neue Verbindungssuche ab
+  der Umstiegshaltestelle zum ursprünglichen Ziel.
+- NEW-Livepositionen, Fahrzeugerkennung und NEW-Karte nur für NEW-Fahrten (`Departure.newOperated`). Für Züge und
+  andere Betreiber liest die Verfolgung die Abfahrtstafel **ohne** NEW-Filter (`departures(newOnly = false)`).
+
+## 8. Lücken und Einschränkungen (ehrlich)
+- Live-Prüfung gegen `openservice.vrr.de` war hier nicht möglich; Parameter folgen der EFA-Dokumentation. Abweichungen der
+  VRR-Instanz (z. B. Produktklassen-Nummern für `exclMOT_*`, Koordinateneingabe `type_origin=coord`) sind möglich.
+- **Umstiegspuffer** (Mindestumstiegszeit) bietet die Schnittstelle nicht dokumentiert an → kein Schalter. Nur
+  Gehgeschwindigkeit (`changeSpeed`) beeinflusst Umstiegszeiten.
+- **Aufenthalt am Zwischenziel** nicht dokumentiert → nur „über“ ohne Aufenthaltsdauer.
+- **Frühere/spätere** über Zeitversatz, nicht über einen Server-Cursor.
+- Verkehrsmittel-Gruppen bilden EFA-Klassen 0–19 ab; unbekannte Klassen werden nie ausgeschlossen.
+- Barrierefreiheit: VRR berücksichtigt die Wünsche nach eigenen Daten; die App zeigt nur gemeldete Fußweg-Elemente.
+  Ob eine Verbindung tatsächlich stufenfrei ist, wird nicht behauptet.
+- Gespeicherte Routen bleiben NEW-Routen Haltestelle → Haltestelle; Verbindungen mit Umstieg werden als Ziel gespeichert.
+- Begleitung über mehrere Abschnitte nutzt die Einzelfahrt-Verfolgung je Abschnitt; jede gestartete Fahrt erscheint wie
+  bisher einzeln im Fahrtenarchiv. Vorschau und Suche schreiben nichts ins Archiv.
+- Karte: Fußwege und Fahrten ohne `leg.coords` erscheinen nur als Punkte.
+- Kein Android-SDK in der Entwicklungsumgebung: Oberfläche nicht im Emulator geprüft, keine Screenshots.

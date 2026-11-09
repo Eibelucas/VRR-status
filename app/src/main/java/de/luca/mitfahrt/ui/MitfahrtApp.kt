@@ -34,6 +34,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +65,9 @@ import java.time.format.DateTimeFormatter
 
 internal val Shape = RoundedCornerShape(24.dp)
 
+/** Page of the active ride; reached from the ride bar above the navigation, not a tab of its own. */
+private const val RIDE_PAGE = 4
+
 @Composable
 fun MitfahrtApp(
     tracking: TrackingState, search: SearchState, vm: RideViewModel, notice: String?, updates: UpdateState,
@@ -88,6 +93,12 @@ fun MitfahrtApp(
     val alternatives by vm.alternatives.collectAsStateWithLifecycle()
     val hapticTest by vm.hapticTest.collectAsStateWithLifecycle()
     val actionMessage by vm.actionMessage.collectAsStateWithLifecycle()
+    val planner: de.luca.mitfahrt.TripPlannerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val plannerForm by planner.form.collectAsStateWithLifecycle()
+    val tripPlaces by planner.places.collectAsStateWithLifecycle()
+    val companion by vm.companion.collectAsStateWithLifecycle()
+    val companionSeen by vm.companionSeen.collectAsStateWithLifecycle()
+    val companionNext by vm.companionNext.collectAsStateWithLifecycle()
     var reportRide by remember { mutableStateOf<Ride?>(null) }
     var savingReportId by rememberSaveable { mutableStateOf<String?>(null) }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -96,7 +107,8 @@ fun MitfahrtApp(
     }
     val navigation by vm.navigation.collectAsStateWithLifecycle()
     var arrivalRide by remember { mutableStateOf<Ride?>(null) }
-    var page by rememberSaveable { mutableIntStateOf(if (settings.string("start_page") == "stops") 1 else 0) }
+    var page by rememberSaveable { mutableIntStateOf(if (settings.string("start_page") == "nearby") 1 else 0) }
+    var showPlanner by rememberSaveable { mutableStateOf(false) }
     var showCustomization by rememberSaveable { mutableStateOf(false) }
     var personalModule by rememberSaveable { mutableStateOf<String?>(null) }
     var showDataManagement by rememberSaveable { mutableStateOf(false) }
@@ -162,32 +174,66 @@ fun MitfahrtApp(
     val visiblePlans = routePlans.routes.filter { CustomizationPolicy.active(it, now, nearbyForPlans, settings, dayOverrides, schoolCalendar) }.take(settings.int("routes_visible_count", 3))
     val suggestedRoutes = if (routePlans.automaticLearning && settings.bool("learn_routes", true) && !settings.bool("manual_only", false)) routes.filter { it.count >= settings.int("suggestion_threshold", 3) } else emptyList()
     val cardOrder = settings.csv("home_cards").let { if (settings.bool("map_home", false) && "map" !in it) it + "map" else it }
+    val locationOff = settings.string("location_mode", "active") == "off"
+    val locationUsable = !locationOff && home.status != NearbyStatus.NO_PERMISSION && home.status != NearbyStatus.LOCATION_OFF
+    // The start page asks VRR for nearby stops only when one of its sections needs them.
+    val homeNeedsNearby = !settings.bool("manual_only", false) &&
+        ("planned" in cardOrder && routePlans.routes.any { it.enabled && it.nearbyOnly } ||
+            "suggestions" in cardOrder && suggestedRoutes.isNotEmpty() || "school" in cardOrder && schoolTrips.isNotEmpty())
+    val companionPhase = companion?.let { JourneyCompanions.phase(it, tracking.ride?.departure?.key, companionSeen) }
     val gap = when (settings.string("density")) { "compact" -> 12.dp; "comfortable" -> 28.dp; else -> 20.dp }
-    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization && personalModule == null) {
+    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization && personalModule == null && !showPlanner) {
         keyboard?.hide(); focus.clearFocus()
         if (page == 1 && search.selectedStop != null) vm.backToStops() else page = 0
     }
     LaunchedEffect(navigation) {
-        when (navigation) { "settings" -> page = 3; "map" -> showLiveMap = true; "stops" -> page = 1; "ride" -> page = 0 }
+        when (navigation) {
+            "settings" -> page = 3; "map" -> showLiveMap = true; "stops" -> { showPlanner = false; page = 1 }
+            "ride" -> { showPlanner = false; page = if (tracking.ride != null) RIDE_PAGE else 0 }
+        }
         if (navigation != null) vm.consumeNavigation()
     }
     LaunchedEffect(settings) { vm.applySettings() }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(page, tracking.ride?.departure?.key, search.selectedStop?.id, showRoutePlans, showCustomization, personalModule, lifecycle) {
-        if (!showRoutePlans && !showCustomization && personalModule == null && (page == 0 && tracking.ride == null || page == 1)) {
+    LaunchedEffect(page, search.selectedStop?.id, showRoutePlans, showCustomization, personalModule, homeNeedsNearby, lifecycle) {
+        if (!showRoutePlans && !showCustomization && personalModule == null && (page == 0 || page == 1)) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                vm.openHome(lookupNearby = page == 0 || search.selectedStop == null)
+                vm.openHome(lookupNearby = if (page == 1) search.selectedStop == null else homeNeedsNearby)
                 try { kotlinx.coroutines.awaitCancellation() } finally { vm.closeHome() }
             }
         }
     }
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { now = Instant.now(); vm.settingsStore.refresh(); delay(1000) } } }
-    LaunchedEffect(tracking.ride?.departure?.key) { if (tracking.ride != null) { page = 0; showAll = false } }
+    LaunchedEffect(tracking.ride?.departure?.key) {
+        val key = tracking.ride?.departure?.key
+        if (key != null) {
+            if (companion?.trackedKey == key) showPlanner = false
+            if (!showPlanner) page = RIDE_PAGE
+            showAll = false
+        } else if (page == RIDE_PAGE) page = 0
+    }
+    // Position for "Mein Standort": in memory only, from the same location source as "In der Nähe".
+    LaunchedEffect(home.point, home.pointAt, locationUsable) {
+        planner.updatePosition(home.point?.takeIf { home.pointAt?.let { Instant.now().epochSecond - it.epochSecond in -10..120 } == true },
+            unavailable = !locationUsable)
+    }
+    LaunchedEffect(locationUsable) { planner.applyDefaultOrigin(locationUsable) }
+    // Live data of the next leg while a journey is accompanied and the app is visible.
+    LaunchedEffect(companion?.journey?.key, companion?.legIndex, lifecycle) {
+        if (companion?.nextLeg != null) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) { vm.refreshCompanionNext(); delay(60_000) }
+        }
+    }
+    LaunchedEffect(companionPhase) {
+        if (companionPhase == CompanionPhase.FINISHED) {
+            vm.endJourney(); snackbar.showSnackbar("Reise beendet")
+        }
+    }
     LaunchedEffect(actionMessage) {
         actionMessage?.let { snackbar.showSnackbar(it); vm.clearActionMessage() }
     }
     LaunchedEffect(tracking.ride?.departure?.key, tracking.ride?.departure?.cancelled, tracking.ride?.boarded, page, lifecycle) {
-        if (page == 0 && tracking.ride?.departure?.cancelled == true && tracking.ride?.boarded == false) {
+        if (page == RIDE_PAGE && tracking.ride?.departure?.cancelled == true && tracking.ride?.boarded == false) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) { vm.refreshAlternatives(); delay(30_000) }
             }
@@ -227,22 +273,31 @@ fun MitfahrtApp(
             containerColor = Ink,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
+                Column {
+                    tracking.ride?.takeIf { page != RIDE_PAGE }?.let { ride ->
+                        ActiveRideBar(ride, tracking, now, companion?.takeIf { companionPhase == CompanionPhase.TRACKING }) { page = RIDE_PAGE }
+                    }
                 NavigationBar(containerColor = Ink, tonalElevation = 0.dp) {
-                    val tabs = mapOf("ride" to Triple(0, "Fahrt", Icons.Outlined.DirectionsBus), "stops" to Triple(1, "Haltestellen", Icons.Outlined.Search),
+                    val tabs = mapOf("home" to Triple(0, "Start", Icons.Outlined.Home), "nearby" to Triple(1, "In der Nähe", Icons.Outlined.NearMe),
                         "reports" to Triple(2, "Berichte", Icons.Outlined.Description), "settings" to Triple(3, "Einstellungen", Icons.Outlined.Tune))
                     (settings.csv("nav_order") + tabs.keys).distinct().mapNotNull(tabs::get).forEach { (index, title, icon) ->
-                        NavigationBarItem(selected = page == index, onClick = { page = index },
+                        NavigationBarItem(selected = page == index, onClick = {
+                            if (index == 1 && page == 1 && search.selectedStop != null) vm.backToStops()
+                            page = index
+                        },
                             icon = { Icon(icon, contentDescription = null) }, label = { Text(title) },
                             colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onPrimary, indicatorColor = Lime,
                                 selectedTextColor = Paper, unselectedTextColor = Soft, unselectedIconColor = Soft))
                     }
                 }
+                }
             }
         ) { insets ->
             when (page) {
-                0 -> LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
+                RIDE_PAGE -> LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
                     item {
-                        if (tracking.ride != null) Header("Deine Fahrt", if (tracking.ride.boarded) "UNTERWEGS" else "DEIN BUS", Icons.Outlined.Close) { confirmStop = true }
+                        if (tracking.ride != null) Header("Deine Fahrt", if (tracking.ride.boarded) "UNTERWEGS" else
+                            if (tracking.ride.departure.newOperated) "DEIN BUS" else "DEINE FAHRT", Icons.Outlined.Close) { confirmStop = true }
                         else Header("Mitfahrt", "MÖNCHENGLADBACH", Icons.Outlined.DirectionsBus)
                     }
                     val ride = tracking.ride
@@ -268,6 +323,12 @@ fun MitfahrtApp(
                             }
                         }
                         item { RideHero(ride, now, tracking.running && !tracking.lastRefreshFailed) }
+                        companion?.takeIf { companionPhase == CompanionPhase.TRACKING }?.let { current -> item {
+                            CompanionCard(current, CompanionPhase.TRACKING, ride, companionNext, now, search.loading,
+                                onContinue = vm::continueJourney, onResume = vm::resumeJourney,
+                                onAlternatives = { vm.journeyAlternatives()?.let { planner.planQuery(it); showPlanner = true } },
+                                onEnd = vm::endJourney)
+                        } }
                         val offeredStop = de.luca.mitfahrt.reports.ReportOfferPolicy.candidate(ride, settings, now)
                         if (offeredStop != null && !dismissedReportOffer) item {
                             AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -283,10 +344,11 @@ fun MitfahrtApp(
                         if (!ride.boarded && !ride.departure.cancelled) item {
                             Button(onClick = vm::boardBus, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                                 Icon(Icons.Outlined.DirectionsBus, null, Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp)); Text("Bin im Bus")
+                                Spacer(Modifier.width(8.dp)); Text(if (ride.departure.newOperated) "Bin im Bus" else "Bin eingestiegen")
                             }
                         }
-                        if (!ride.demo && tracking.running) item {
+                        // NEW live positions only for NEW trips; trains and other operators have none.
+                        if (!ride.demo && tracking.running && ride.departure.newOperated) item {
                             LiveBusCard(ride, tracking.liveBus, now,
                                 onSelect = { vm.selectLiveVehicle(ride.departure.key, it) },
                                 onClear = { vm.clearLiveVehicle(ride.departure.key) },
@@ -312,7 +374,7 @@ fun MitfahrtApp(
                                 Text("Eigene Ankunft: ${shortName(mark.stopName)} · ${clockTime(mark.at)}", color = Lime, fontSize = 12.sp)
                             }
                         }
-                        if (!ride.demo) item { TextButton(onClick = { showLiveMap = true }) { Icon(Icons.Outlined.Map, null); Spacer(Modifier.width(8.dp)); Text("NEW-Livekarte") } }
+                        if (!ride.demo && ride.departure.newOperated) item { TextButton(onClick = { showLiveMap = true }) { Icon(Icons.Outlined.Map, null); Spacer(Modifier.width(8.dp)); Text("NEW-Livekarte") } }
                         item {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Fahrtverlauf", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -336,55 +398,71 @@ fun MitfahrtApp(
                                 Text("Fahrt beenden", color = Paper)
                             }
                         }
-                    } else {
-                        item { OutlinedButton(onClick = { page = 1 }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Outlined.Search, null); Spacer(Modifier.width(8.dp)); Text("Haltestelle suchen")
-                        } }
-                        cardOrder.forEach { card -> when (card) {
-                            "planned" -> {
-                                item { PlannedRoutesCard(visiblePlans, routePlans.routes.size, planDepartures.departures,
-                                    planDepartures.loading, now, search.choosing, onManage = { newRoutePlan = routePlans.routes.isEmpty(); showRoutePlans = true },
-                                    onStart = vm::chooseRoutePlan, onOpen = { vm.selectRoutePlan(it); page = 1 }) }
-                                planDepartures.error?.let { message -> item { Text(message, color = Amber, fontSize = 13.sp) } }
-                            }
-                            "school" -> if (!settings.bool("routes_school_paused", false) && !SchoolCalendar.status(now.atZone(RouteDayOverrides.zone).toLocalDate(), schoolCalendar).free) item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
-                            "favorites" -> item { SavedStopsSection(shownSavedStops.copy(recent = emptyList()), ::selectStop, ::toggleFavorite, vm::removeRecentStop, compact = true) }
-                            "nearby", "suggestions" -> if (!settings.bool("manual_only", false)) {
-                                if (card == "suggestions") item { SavedStopsSection(shownSavedStops.copy(favorites = emptyList()), ::selectStop, ::toggleFavorite, vm::removeRecentStop, compact = true) }
-                                item { HomeOverview(home, suggestedRoutes, now, search.loading, search.choosing,
-                                    onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome, onStop = ::selectStop,
-                                    onAllStops = { vm.nearby(); page = 1 }, onRoute = { vm.selectRoute(it); page = 1 },
-                                    onDeparture = vm::chooseHomeDeparture, onClearHistory = ::clearRouteHistory, onRemoveRoute = ::removeRoute,
-                                    showNearby = card == "nearby", showRoutes = card == "suggestions", showSearch = false) }
-                            }
-                            "map" -> item { BusMapShortcut { showLiveMap = true } }
-                            "last" -> lastRide?.let { previous -> item {
-                                AppCard(onClick = { page = 2 }, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                                    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text("Letzte Fahrt", style = MaterialTheme.typography.titleMedium)
-                                        Text("${previous.departure.line} · ${shortName(previous.departure.destination)}")
-                                        Text("${clockTime(previous.departure.planned)} · Berichte öffnen", color = Soft, fontSize = 12.sp)
-                                    }
-                                }
-                            } }
-                        } }
-                        item {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                OutlinedButton(onClick = { showLiveMap = true }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Map, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Livekarte") }
-                                OutlinedButton(onClick = if (tracking.monitoring) onStop else onMonitor, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (tracking.monitoring) "Suche stoppen" else "Bus finden") }
-                            }
+                    } else item { EmptyState("Keine aktive Fahrt", "Wähle eine Verbindung auf der Startseite.") }
+                }
+                0 -> LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(gap)) {
+                    item { Header("Mitfahrt", "MÖNCHENGLADBACH", Icons.Outlined.DirectionsBus) }
+                    companion?.takeIf { companionPhase != null && companionPhase != CompanionPhase.TRACKING }?.let { current -> item {
+                        CompanionCard(current, companionPhase!!, tracking.ride, companionNext, now, search.loading,
+                            onContinue = vm::continueJourney, onResume = vm::resumeJourney,
+                            onAlternatives = { vm.journeyAlternatives()?.let { planner.planQuery(it); showPlanner = true } },
+                            onEnd = vm::endJourney)
+                    } }
+                    item {
+                        WhereToCard(plannerForm, tripPlaces.saved,
+                            onOrigin = { planner.openPlaceSearch(de.luca.mitfahrt.PlaceField.ORIGIN); showPlanner = true },
+                            onDestination = { planner.openPlaceSearch(de.luca.mitfahrt.PlaceField.DESTINATION); showPlanner = true },
+                            onSwap = { planner.swap(); if (planner.form.value.complete) showPlanner = true },
+                            onSaved = { place -> planner.setPlace(de.luca.mitfahrt.PlaceField.DESTINATION, place); showPlanner = true })
+                    }
+                    cardOrder.forEach { card -> when (card) {
+                        // Shown only when at least one saved route is active now: no empty heading or card.
+                        "planned" -> if (visiblePlans.isNotEmpty()) {
+                            item { PlannedRoutesCard(visiblePlans, routePlans.routes.size, planDepartures.departures,
+                                planDepartures.loading, now, search.choosing, onManage = { newRoutePlan = false; showRoutePlans = true },
+                                onStart = vm::chooseRoutePlan, onPreview = vm::previewRoutePlan, onOpen = { vm.selectRoutePlan(it); page = 1 },
+                                onConnections = { planner.planRoute(it); showPlanner = true }) }
+                            planDepartures.error?.let { message -> item { Text(message, color = Amber, fontSize = 13.sp) } }
                         }
-                        if (tracking.monitoring && settings.bool("wifi_confirm", true)) item { DetectionCard(tracking, onMonitor, onStop) }
-                        if (tracking.candidates.isNotEmpty()) {
-                            item { Text("Dein Bus?", fontSize = 21.sp, fontWeight = FontWeight.SemiBold) }
-                            items(tracking.candidates, key = { it.key }) { departure ->
-                                DepartureRow(departure, now, search.choosing == departure.key,
-                                    enabled = !search.loading, showStop = true) { vm.chooseHomeDeparture(departure) }
+                        "school" -> if (schoolTrips.isNotEmpty() && !settings.bool("routes_school_paused", false) && !SchoolCalendar.status(now.atZone(RouteDayOverrides.zone).toLocalDate(), schoolCalendar).free) item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
+                        // Automatic suggestions stay separate from saved routes.
+                        "suggestions" -> if (!settings.bool("manual_only", false) && suggestedRoutes.isNotEmpty()) item {
+                            HomeOverview(home, suggestedRoutes, now, search.loading, search.choosing,
+                                onSearch = { page = 1 }, onLocation = onNearbyLocation, onRefresh = vm::retryHome, onStop = ::selectStop,
+                                onAllStops = { vm.nearby(); page = 1 }, onRoute = { vm.selectRoute(it); page = 1 },
+                                onDeparture = vm::chooseHomeDeparture, onClearHistory = ::clearRouteHistory, onRemoveRoute = ::removeRoute,
+                                showNearby = false, showRoutes = true, showSearch = false)
+                        }
+                        "map" -> item { BusMapShortcut { showLiveMap = true } }
+                        "last" -> lastRide?.let { previous -> item {
+                            AppCard(onClick = { page = 2 }, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+                                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Letzte Fahrt", style = MaterialTheme.typography.titleMedium)
+                                    Text("${previous.departure.line} · ${shortName(previous.departure.destination)}")
+                                    Text("${clockTime(previous.departure.planned)} · Berichte öffnen", color = Soft, fontSize = 12.sp)
+                                }
                             }
+                        } }
+                    } }
+                    if (tracking.ride == null) item {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { showLiveMap = true }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                                Icon(Icons.Outlined.Map, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Livekarte") }
+                            TextButton(onClick = if (tracking.monitoring) onStop else onMonitor, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                                Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (tracking.monitoring) "Suche stoppen" else "Bus finden") }
+                        }
+                    }
+                    if (tracking.monitoring && settings.bool("wifi_confirm", true)) item { DetectionCard(tracking, onMonitor, onStop) }
+                    if (tracking.candidates.isNotEmpty()) {
+                        item { Text("Dein Bus?", fontSize = 21.sp, fontWeight = FontWeight.SemiBold) }
+                        items(tracking.candidates, key = { it.key }) { departure ->
+                            DepartureRow(departure, now, search.choosing == departure.key,
+                                enabled = !search.loading, showStop = true) { vm.chooseHomeDeparture(departure) }
                         }
                     }
                 }
-                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite)
+                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings)
                 2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport,
                     onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide, onOpenModule = { personalModule = it },
                     onSave = { id -> reports.entries.firstOrNull { it.id == id }?.let { evidence ->
@@ -398,6 +476,17 @@ fun MitfahrtApp(
         }
         search.previewRide?.let { preview -> JourneyPreviewSheet(preview, now, vm::confirmPreview, vm::dismissPreview) }
         if (showLiveMap) BusMapOverview(onBack = { showLiveMap = false })
+        if (showPlanner) {
+            JourneyPlannerScreen(planner, now, locationUsable,
+                positionNote = if (home.approximate) "Mein Standort (ungefähr) an VRR übermittelt" else "Mein Standort an VRR übermittelt",
+                onRequestLocation = onNearbyLocation, onClose = { showPlanner = false },
+                onAccompany = vm::startJourney, accompanyBusy = search.choosing != null,
+                onSaveRoute = { plan -> scope.launch {
+                    snackbar.showSnackbar(if (vm.saveRoutePlan(plan)) "Route „${plan.name}“ gespeichert" else "Route konnte nicht gespeichert werden.")
+                } })
+            // Messages (e.g. a leg that cannot be accompanied) must stay visible above the planner.
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) { SnackbarHost(snackbar, Modifier.navigationBarsPadding()) }
+        }
         if (showDataManagement) DataManagementDialog(vm, onClose = { showDataManagement = false })
         tracking.pendingArrivalStopId?.let { id ->
             val stop = tracking.ride?.stops?.firstOrNull { stopKey(it.id) == stopKey(id) }
@@ -452,7 +541,7 @@ private fun LiveMapCard(onClick: () -> Unit) {
 }
 
 @Composable
-private fun Header(title: String, subtitle: String, icon: ImageVector, onAction: (() -> Unit)? = null) {
+internal fun Header(title: String, subtitle: String, icon: ImageVector, onAction: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(subtitle, color = Soft, fontSize = 10.sp, letterSpacing = 1.6.sp, fontWeight = FontWeight.Medium)
@@ -619,7 +708,8 @@ private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean
 
 @Composable
 private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier,
-    home: HomeState, routes: List<FrequentRoute>, onNearbyLocation: () -> Unit, savedStops: SavedStopsState, onFavorite: (Stop) -> Unit) {
+    home: HomeState, routes: List<FrequentRoute>, onNearbyLocation: () -> Unit, savedStops: SavedStopsState, onFavorite: (Stop) -> Unit,
+    settings: AppSettings) {
     var waitingNearby by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -636,7 +726,7 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (search.selectedStop == null) {
-            item { Header("Haltestellen", "DEINEN BUS FINDEN", Icons.Outlined.Search) }
+            item { Header("In der Nähe", "HALTESTELLEN & ABFAHRTEN", Icons.Outlined.NearMe) }
             item {
                 OutlinedTextField(value = search.query, onValueChange = { waitingNearby = false; vm.query(it) },
                     modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(18.dp),
@@ -645,16 +735,13 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                     keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); focus.clearFocus(); waitingNearby = false; vm.search() }),
                     trailingIcon = { if (search.query.isNotEmpty()) IconButton(onClick = { vm.query("") }) { Icon(Icons.Outlined.Close, "Suche leeren") } })
             }
-            item { TextButton(onClick = {
-                keyboard?.hide(); focus.clearFocus()
-                if (home.status == NearbyStatus.READY || tracking.location != null) vm.nearby()
-                else { waitingNearby = true; onNearbyLocation() }
-            }, enabled = !search.loading) { Icon(Icons.Outlined.MyLocation, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("In meiner Nähe") } }
-            item { SavedStopsSection(savedStops, ::select, onFavorite, vm::removeRecentStop, query = search.query) }
-            if (search.query.isBlank() && !search.searched) {
-                if (home.stops.isNotEmpty()) item { Text("In deiner Nähe", style = MaterialTheme.typography.titleMedium) }
-                items(home.stops.take(6), key = { "near/${it.id}" }) { stop -> StopRow(stop) { select(stop) } }
+            if (search.query.isBlank() && !search.searched) item {
+                NearbyOverview(home, now, settings, savedStops, search.choosing, search.loading,
+                    onLocation = onNearbyLocation, onRefresh = vm::retryHome,
+                    onSetting = { key, value -> vm.settingsStore.set(key, value); if (key == "nearby_radius") vm.retryHome() },
+                    onStop = ::select, onFavorite = onFavorite, onDeparture = { keyboard?.hide(); vm.chooseHomeDeparture(it) })
             }
+            item { SavedStopsSection(savedStops, ::select, onFavorite, vm::removeRecentStop, query = search.query) }
             if (search.stops.isNotEmpty()) item { Text("Suchergebnisse", color = Soft, fontSize = 13.sp) }
             items(search.stops, key = { "result/${it.id}" }) { stop -> StopRow(stop) { select(stop) } }
             if (search.searched && search.stops.isEmpty() && !search.loading && search.error == null) item {
@@ -1080,7 +1167,7 @@ private fun NoticeCard(title: String, subtitle: String, button: String, onClick:
 }
 
 @Composable
-private fun EmptyState(title: String, text: String) {
+internal fun EmptyState(title: String, text: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Outlined.DirectionsBus, null, tint = Soft, modifier = Modifier.size(32.dp))
         Spacer(Modifier.height(14.dp))
@@ -1096,4 +1183,31 @@ private fun sourceText(ride: Ride, now: Instant): String = when {
     ride.displayTarget().estimated != null -> "VRR-Echtzeitdaten · Stand ${clockTime(ride.fetchedAt)}"
     ride.departure.estimated != null -> "Ankunft anhand der letzten Verspätung geschätzt · Stand ${clockTime(ride.departure.observedAt)}"
     else -> "Zeiten laut Fahrplan · Stand ${clockTime(ride.fetchedAt)}"
+}
+
+/** Compact access to the active ride from every tab, without covering the journey search. */
+@Composable
+private fun ActiveRideBar(ride: Ride, tracking: TrackingState, now: Instant, companion: JourneyCompanion?, onOpen: () -> Unit) {
+    val live = if (tracking.running && !tracking.lastRefreshFailed) ride.liveBoardingTime(now) else null
+    val status = when {
+        ride.departure.cancelled -> "Fällt aus"
+        !ride.boarded -> live?.at?.takeIf { it.isAfter(now) }?.let { "${if (live.isArrival) "kommt" else "fährt"} in ${countdownUntil(it, now)}" }
+            ?: "Fahrplan ${clockTime(ride.stops.getOrNull(ride.boardingIndex)?.planned ?: ride.departure.planned)}"
+        else -> "bis ${shortName(ride.displayTarget().name)}" +
+            (ride.displayTarget().estimated?.takeIf { !ride.isStale(now) }?.let { " · ${minutesUntil(it, now)} Min" } ?: "")
+    }
+    val prefix = companion?.let { "Abschnitt ${it.position}/${it.count} · " }.orEmpty()
+    Surface(onClick = onOpen, color = BrandBerry, contentColor = Color.White,
+        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Aktive Fahrt öffnen: Linie ${ride.departure.line}, $status" }) {
+        Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            LineBadge(ride.departure.line, dark = true)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("$prefix${shortName(ride.departure.destination)}", fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(status, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Outlined.ChevronRight, null)
+        }
+    }
 }

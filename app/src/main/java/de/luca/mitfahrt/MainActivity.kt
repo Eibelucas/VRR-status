@@ -175,7 +175,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             LaunchedEffect(search.pendingRide) {
-                search.pendingRide?.let { selected -> selectRide(selected); vm.consumeRide() }
+                search.pendingRide?.let { selected -> if (search.replaceRide) begin(selected) else selectRide(selected); vm.consumeRide() }
             }
             if (showIntro) FirstTimeSetup(locationAllowed, notificationsAllowed,
                 onLocation = ::requestNearbyLocation,
