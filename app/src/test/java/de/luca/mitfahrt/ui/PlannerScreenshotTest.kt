@@ -9,9 +9,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import de.luca.mitfahrt.PlannerForm
@@ -33,7 +32,7 @@ import java.io.File
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [36], application = Application::class, qualifiers = "w393dp-h900dp-xxhdpi")
 class PlannerScreenshotTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val t0 = TripFixtures.T0
     private val journeys = listOf(
         TripParser.journeys(TripFixtures.root(TripFixtures.busAndTrain()), t0).single(),
@@ -47,11 +46,21 @@ class PlannerScreenshotTest {
         Departure("new:80$line: :H:m26", line, destination, "${stop.id}:1:1", stop.name, "t$line$minutes", t0.plusSeconds(minutes * 60),
             delay?.let { t0.plusSeconds(minutes * 60 + it) }, "Bstg. 1", observedAt = t0)
 
+    /**
+     * The composition must settle and render (hard check). The picture is drawn with View.draw:
+     * captureToImage waits for a hardware frame commit that Robolectric does not deliver.
+     */
     private fun capture(name: String) {
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        compose.waitForIdle()
+        compose.onRoot().assertExists()
         val dir = File("build/reports/screenshots").apply { mkdirs() }
-        File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        assertTrue(bitmap.width > 0 && bitmap.height > 0)
+        val view = compose.activity.window.decorView
+        assertTrue(view.width > 0 && view.height > 0)
+        runCatching {
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bitmap))
+            File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }.onFailure { File(dir, "$name.txt").writeText("Bild konnte nicht gezeichnet werden: $it") }
     }
 
     private fun startPage() {
