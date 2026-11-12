@@ -58,12 +58,17 @@ import de.luca.mitfahrt.data.*
 import de.luca.mitfahrt.tracking.RideNotifications
 import de.luca.mitfahrt.tracking.NowBarSupport
 import de.luca.mitfahrt.reports.DelayEvidence
+import de.luca.mitfahrt.data.BoardingPhase
+import de.luca.mitfahrt.data.BoardingState
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal val Shape = RoundedCornerShape(24.dp)
+/** Containers that group content. */
+internal val Shape = RoundedCornerShape(20.dp)
+/** Buttons, fields and rows inside a container: clearly less round than the container. */
+internal val ControlShape = RoundedCornerShape(12.dp)
 
 /** Page of the active ride; reached from the ride bar above the navigation, not a tab of its own. */
 private const val RIDE_PAGE = 4
@@ -99,11 +104,13 @@ fun MitfahrtApp(
     val companion by vm.companion.collectAsStateWithLifecycle()
     val companionSeen by vm.companionSeen.collectAsStateWithLifecycle()
     val companionNext by vm.companionNext.collectAsStateWithLifecycle()
-    var reportRide by remember { mutableStateOf<Ride?>(null) }
+    val journeyReports by vm.journeyReports.collectAsStateWithLifecycle()
+    var openReportId by rememberSaveable { mutableStateOf<String?>(null) }
     var savingReportId by rememberSaveable { mutableStateOf<String?>(null) }
+    var savingJourneyReport by rememberSaveable { mutableStateOf(false) }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         val id = savingReportId; savingReportId = null
-        if (uri != null && id != null) vm.saveReport(id, uri)
+        if (uri != null && id != null) { if (savingJourneyReport) vm.exportJourneyReport(id, uri) else vm.saveReport(id, uri) }
     }
     val navigation by vm.navigation.collectAsStateWithLifecycle()
     var arrivalRide by remember { mutableStateOf<Ride?>(null) }
@@ -336,18 +343,16 @@ fun MitfahrtApp(
                             AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
-                                        Text("Verspätung festhalten", fontWeight = FontWeight.SemiBold)
-                                        TextButton(onClick = { vm.createReport(ride, offeredStop); dismissedReportOffer = true }) { Text("Beleg erstellen") }
+                                        Text("Verspätung gemeldet", fontWeight = FontWeight.SemiBold)
+                                        TextButton(onClick = { openReportId = vm.currentReportId(); dismissedReportOffer = true }) { Text("Bericht ansehen") }
                                     }
-                                    IconButton(onClick = { dismissedReportOffer = true }) { Icon(Icons.Outlined.Close, "Belegvorschlag schließen") }
+                                    IconButton(onClick = { dismissedReportOffer = true }) { Icon(Icons.Outlined.Close, "Hinweis schließen") }
                                 }
                             }
                         }
-                        if (!ride.boarded && !ride.departure.cancelled) item {
-                            Button(onClick = vm::boardBus, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                                Icon(Icons.Outlined.DirectionsBus, null, Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp)); Text(if (ride.departure.newOperated) "Bin im Bus" else "Bin eingestiegen")
-                            }
+                        if (!ride.departure.cancelled && !ride.demo) item {
+                            BoardingControls(ride, tracking.boarding, settings.bool("boarding_auto", true) && tracking.location != null,
+                                onBoard = vm::boardBus, onNotOnBoard = vm::notOnBoard, onStillOnBoard = vm::stillOnBoard, onEnd = { confirmStop = true })
                         }
                         // NEW live positions only for NEW trips; trains and other operators have none.
                         if (!ride.demo && tracking.running && ride.departure.newOperated) item {
@@ -364,12 +369,12 @@ fun MitfahrtApp(
                         if (!ride.demo && !ride.departure.cancelled) item { ExitTargetCard(ride, alertPreferences.exitEnabled, vm::setExitTarget, vm::saveSchoolTrip) }
                         if (!ride.demo) item {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                OutlinedButton(onClick = { arrivalRide = ride }, enabled = settings.bool("arrival_store", true), modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
+                                OutlinedButton(onClick = { arrivalRide = ride }, enabled = settings.bool("arrival_store", true), shape = ControlShape, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
                                     Icon(Icons.Outlined.LocationOn, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Ankunft merken")
                                 }
-                                OutlinedButton(onClick = { reportRide = ride }, enabled = !reports.busy,
+                                OutlinedButton(onClick = { openReportId = vm.currentReportId() }, shape = ControlShape,
                                     modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
-                                    Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (reports.busy) "Lädt …" else "Beleg")
+                                    Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Bericht")
                                 }
                             }
                             ArrivalMark.forRide(arrivals, ride, now).lastOrNull()?.let { mark ->
@@ -465,10 +470,11 @@ fun MitfahrtApp(
                     }
                 }
                 1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings)
-                2 -> ReportsPage(reports, lastRide, Modifier.padding(insets), onCreate = { reportRide = it }, onShare = vm::shareReport,
+                2 -> ReportsPage(reports, journeyReports, lastRide, Modifier.padding(insets), onOpen = { openReportId = it },
+                    onCreate = { openReportId = vm.archivedReportId(it) }, onShare = vm::shareReport,
                     onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide, onOpenModule = { personalModule = it },
                     onSave = { id -> reports.entries.firstOrNull { it.id == id }?.let { evidence ->
-                        savingReportId = id
+                        savingReportId = id; savingJourneyReport = false
                         savePdf.launch(de.luca.mitfahrt.reports.ReportCustomization.from(settings).exportName(evidence))
                     } })
                 else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration, alertPreferences, vm::setArrivalAlert, vm::setExitAlert, vm::setAlertLead,
@@ -502,10 +508,14 @@ fun MitfahrtApp(
             text = { Text("Die Fahrtanzeige wird geschlossen.") },
             confirmButton = { TextButton(onClick = { confirmStop = false; onStop() }) { Text("Beenden") } },
             dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("Weiterfahren") } })
-        reportRide?.let { selected ->
-            ReportStopPicker(selected, onDismiss = { reportRide = null }) { index ->
-                vm.createReport(selected, index); reportRide = null
-            }
+        journeyReports.firstOrNull { it.id == openReportId }?.let { report ->
+            JourneyReportScreen(report, de.luca.mitfahrt.reports.ReportCustomization.from(settings), now, reports.busy,
+                onBack = { openReportId = null }, onShare = { vm.exportJourneyReport(report.id) },
+                onSave = { savingReportId = report.id; savingJourneyReport = true; savePdf.launch(vm.exportName(report.id)) },
+                onObserve = { vm.addObservation(report.id, it) }, onRemoveObservation = { vm.removeObservation(report.id, it) },
+                onShareExport = { vm.shareExport(report.id, it) },
+                onDelete = { openReportId = null; vm.deleteJourneyReport(report.id) })
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) { SnackbarHost(snackbar, Modifier.navigationBarsPadding().padding(bottom = 84.dp)) }
         }
         arrivalRide?.let { selected ->
             AlertDialog(onDismissRequest = { arrivalRide = null },
@@ -1026,46 +1036,43 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
 }
 
 @Composable
-private fun ReportsPage(state: ReportsState, lastRide: Ride?, modifier: Modifier,
-    onCreate: (Ride) -> Unit, onShare: (String) -> Unit, onDeleteReport: (String) -> Unit, onDeleteRide: (Ride) -> Unit, onSave: (String) -> Unit, onOpenModule: (String) -> Unit) {
+private fun ReportsPage(state: ReportsState, journeys: List<de.luca.mitfahrt.reports.JourneyReport>, lastRide: Ride?, modifier: Modifier,
+    onOpen: (String) -> Unit, onCreate: (Ride) -> Unit, onShare: (String) -> Unit, onDeleteReport: (String) -> Unit,
+    onDeleteRide: (Ride) -> Unit, onSave: (String) -> Unit, onOpenModule: (String) -> Unit) {
     var confirmDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        item { Header("Berichte", "FÜR DEINE UNTERLAGEN", Icons.Outlined.Description) }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onOpenModule("archive") }, modifier = Modifier.weight(1f)) { Text("Fahrtenarchiv") }
-                OutlinedButton(onClick = { onOpenModule("arrivals") }, modifier = Modifier.weight(1f)) { Text("Ankünfte") }
-            }
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp)) {
+        item { Header("Berichte", "", Icons.Outlined.Description) }
+        if (journeys.isEmpty() && state.entries.isEmpty()) item {
+            EmptyState("Noch keine Berichte", "Wenn du eine Verbindung begleitest, entsteht hier ihr Bericht.")
         }
-        if (lastRide != null) item {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Letzte Fahrt", color = Soft, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { onDeleteRide(lastRide) }, enabled = !state.busy) {
-                            Icon(Icons.Outlined.DeleteOutline, "Gespeicherte letzte Fahrt löschen", tint = Soft)
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        LineBadge(lastRide.departure.line)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(shortName(lastRide.departure.destination), fontWeight = FontWeight.SemiBold)
-                            Text(reportDate(lastRide.departure.planned), color = Soft, fontSize = 12.sp)
-                        }
-                    }
-                    Button(onClick = { onCreate(lastRide) }, enabled = !state.busy,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                        Text(if (state.busy && state.deletingId == null) "Wird erstellt …" else "Bericht erstellen")
-                    }
+        items(journeys, key = { "j" + it.id }) { report ->
+            JourneyReportRow(report) { onOpen(report.id) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .3f))
+        }
+        // Offered only while the last ride has no report yet, e.g. with automatic reports switched off.
+        if (lastRide != null && journeys.none { report -> report.legs.any { it.key == lastRide.departure.key } }) item {
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Letzte Fahrt: Linie ${lastRide.departure.line}", fontWeight = FontWeight.SemiBold)
+                    Text("${shortName(lastRide.departure.destination)} · ${reportDate(lastRide.departure.planned)}", color = Soft, fontSize = 13.sp)
+                }
+                TextButton(onClick = { onCreate(lastRide) }) { Text("Bericht") }
+                IconButton(onClick = { onDeleteRide(lastRide) }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Outlined.DeleteOutline, "Gespeicherte letzte Fahrt löschen", tint = Soft)
                 }
             }
         }
-        if (state.entries.isEmpty()) item {
-            EmptyState("Noch keine Berichte", "Erstelle einen Bericht während oder nach deiner Fahrt.")
+        item {
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onOpenModule("archive") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Fahrtenarchiv") }
+                TextButton(onClick = { onOpenModule("arrivals") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Eigene Ankünfte") }
+            }
+        }
+        if (state.entries.isNotEmpty()) item {
+            Text("Ältere Einzelbelege", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
         }
         items(state.entries, key = { it.id }) { report ->
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+            AppCard(modifier = Modifier.padding(bottom = 10.dp), shape = ControlShape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("${report.line} · ${shortName(report.stopName)}", fontSize = 17.sp,
@@ -1076,7 +1083,7 @@ private fun ReportsPage(state: ReportsState, lastRide: Ride?, modifier: Modifier
                         }
                     }
                     Text("${reportDate(report.planned)} · ${report.event}", color = Soft, fontSize = 12.sp)
-                    Text(report.delayText, color = if (report.delaySeconds > 0) Amber else Lime, fontSize = 14.sp)
+                    Text(report.delayText, color = if (report.delaySeconds > 0) Amber else Paper, fontSize = 14.sp)
                     if (report.personalArrivals.isNotEmpty()) Text("Eigene Ankunft im Bericht enthalten", color = Soft, fontSize = 12.sp)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("Privater VRR-Datenbericht", color = Soft, fontSize = 11.sp, modifier = Modifier.weight(1f))
@@ -1117,31 +1124,30 @@ private fun PersonalArrivalCard(stop: Stop, arrivals: List<ArrivalMark>, onRecor
     }
 }
 
+/** Boarding is detected by the app; these controls are the manual correction in both directions. */
 @Composable
-private fun ReportStopPicker(ride: Ride, onDismiss: () -> Unit, onSelect: (Int) -> Unit) {
-    val choices = remember(ride) { (ride.boardingIndex..ride.stops.lastIndex).map { index ->
-        Triple(index, ride.stops[index], DelayEvidence.timingFor(ride, index))
-    } }
-    AlertDialog(onDismissRequest = onDismiss,
-        title = { Text("Haltestelle wählen") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Nur Halte mit gemeldeten Zeiten sind auswählbar.", color = Soft, fontSize = 13.sp)
-                LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(choices, key = { it.first }) { (index, stop, timing) ->
-                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                            .clickable(enabled = timing != null) { onSelect(index) }.padding(vertical = 12.dp, horizontal = 8.dp)) {
-                            Text(shortName(stop.name), color = if (timing == null) Soft else Paper, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(4.dp))
-                            Text(timing?.let { "${it.event} ${clockTime(it.estimated)} · ${it.shortDelay}" }
-                                ?: "Keine gemeldete Prognose", color = if (timing == null) Soft else Lime, fontSize = 12.sp)
-                        }
-                    }
-                }
-                Text("Privater Bericht aus VRR-Daten. Keine offizielle Bescheinigung.", color = Soft, fontSize = 11.sp)
+private fun BoardingControls(ride: Ride, boarding: BoardingState?, detecting: Boolean,
+    onBoard: () -> Unit, onNotOnBoard: () -> Unit, onStillOnBoard: () -> Unit, onEnd: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (!ride.boarded) {
+            val label = if (ride.departure.newOperated) "Bin im Bus" else "Bin eingestiegen"
+            if (detecting) OutlinedButton(onClick = onBoard, shape = ControlShape, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(label) }
+            else Button(onClick = onBoard, shape = ControlShape, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(label) }
+            if (detecting) Text(if (boarding?.phase == BoardingPhase.POSSIBLE_BOARDING) "Einstieg wird geprüft."
+                else "Mitfahrt erkennt den Einstieg selbst. Du kannst ihn auch hier bestätigen.", color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
+        } else if (boarding?.phase == BoardingPhase.ENDED) {
+            Text("Ausgestiegen?", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+            Text("Dein Handy bewegt sich nicht mehr mit dem Bus.", color = Soft, fontSize = 14.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onStillOnBoard, shape = ControlShape, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Noch im Bus") }
+                Button(onClick = onEnd, shape = ControlShape, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Fahrt beenden") }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } })
+        } else Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(listOfNotNull("Im Bus", ride.boardedAt?.let { "seit ${clockTime(it)}" },
+                "erkannt".takeIf { ride.boardedBy == "auto" }).joinToString(" · "), color = Soft, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = onNotOnBoard) { Text("Doch nicht im Bus") }
+        }
+    }
 }
 
 private fun reportDate(time: Instant): String = time.atZone(ZoneId.of("Europe/Berlin"))

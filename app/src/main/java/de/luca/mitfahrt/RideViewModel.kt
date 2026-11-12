@@ -434,6 +434,54 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- journey reports: one per accompanied connection, exported only on request ---
+    val journeyReports = app.journeyReports.state
+    private fun reportSnapshot(): de.luca.mitfahrt.reports.ReportSnapshot {
+        val state = tracking.value
+        val live = state.liveBus
+        return de.luca.mitfahrt.reports.ReportSnapshot(state.ride, companion.value, state.lastRefreshFailed,
+            live.vehicle?.id?.takeIf { live.journeyKey == state.ride?.departure?.key &&
+                (live.confirmed || live.selectedVehicleId != null || live.auto.holdsVehicle) }, arrivals.value)
+    }
+    /** Report of the running accompaniment; created now if automatic preparation is off. */
+    fun currentReportId(): String? = app.journeyReports.ensure(reportSnapshot())?.id
+        ?: null.also { reportState.value = reportState.value.copy(error = "Für diese Fahrt kann kein Bericht angelegt werden.") }
+    fun archivedReportId(ride: Ride): String? = app.journeyReports.forArchived(ride, arrivals.value)?.id
+        ?: null.also { reportState.value = reportState.value.copy(error = "Der Bericht konnte nicht gespeichert werden.") }
+    fun addObservation(id: String, text: String) { app.journeyReports.observe(id, text) }
+    fun removeObservation(id: String, eventId: String) { app.journeyReports.removeObservation(id, eventId) }
+    fun deleteJourneyReport(id: String) {
+        actionState.value = if (runCatching { app.journeyReports.delete(id) }.getOrDefault(false)) "Bericht gelöscht"
+            else "Der Bericht konnte nicht gelöscht werden. Bitte erneut versuchen."
+    }
+    /** Writes a new PDF on request and hands it to the share sheet or to a chosen file. */
+    fun exportJourneyReport(id: String, target: android.net.Uri? = null) {
+        if (reportState.value.busy) return
+        reportState.value = reportState.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    app.journeyReports.export(id).also { pdf ->
+                        if (target != null) (app.contentResolver.openOutputStream(target, "wt") ?: error("Speicherort nicht verfügbar"))
+                            .use { output -> pdf.inputStream().use { it.copyTo(output) } }
+                    }
+                }
+                reportState.value = reportState.value.copy(busy = false, share = file.takeIf { target == null })
+                if (target != null) actionState.value = "PDF gespeichert"
+            } catch (e: CancellationException) { throw e
+            } catch (_: Exception) {
+                reportState.value = reportState.value.copy(busy = false, error = "Die PDF konnte nicht erstellt werden.")
+            }
+        }
+    }
+    fun shareExport(id: String, export: de.luca.mitfahrt.reports.ReportExport) {
+        val file = app.journeyReports.exportFile(id, export)
+        reportState.value = reportState.value.copy(share = file, error = if (file == null) "Diese PDF ist nicht mehr vorhanden." else null)
+    }
+    fun exportName(id: String): String = journeyReports.value.firstOrNull { it.id == id }?.let { report ->
+        de.luca.mitfahrt.reports.ReportCustomization.from(settingsStore.current()).exportName(report, (report.exports.maxOfOrNull { it.number } ?: 0) + 1)
+    } ?: "Mitfahrt-Fahrtbericht.pdf"
+
     fun deleteReport(id: String) {
         val state = reportState.value
         if (state.busy || state.entries.none { it.id == id }) return
@@ -486,7 +534,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                 "reports" -> check(app.reports.clear())
                 "map" -> { val path = File(app.cacheDir, "waiting-map"); check(!path.exists() || path.deleteRecursively()) }
             } }
-            if (area == "reports") reportState.value = ReportsState()
+            if (area == "reports") { reportState.value = ReportsState(); app.journeyReports.reload() }
             actionState.value = "Daten gelöscht"
         } catch (e: CancellationException) { throw e
         } catch (_: Exception) { actionState.value = "Löschen fehlgeschlagen. Bitte erneut versuchen." }
@@ -510,8 +558,17 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         val found = app.vrr.nearbyWithin(point, radius)
         return if (found.isEmpty() && selected.bool("nearby_expand", true)) app.vrr.nearbyWithin(point, 3000) else found
     }
-    fun boardBus() {
-        tracking.value.ride?.let { app.store.setRide(it.copy(boarded = true), preserveStatus = true) }
+    fun boardBus() { correctBoarding(de.luca.mitfahrt.tracking.RideService.BOARD) { it.board("manual", Instant.now()) } }
+    /** "Doch nicht im Bus": back to waiting; the detection pauses for a few minutes. */
+    fun notOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.UNBOARD) { it.unboard() } }
+    fun stillOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.STILL_ON_BOARD) { it } }
+    private fun correctBoarding(action: String, change: (Ride) -> Ride) {
+        val state = tracking.value
+        val ride = state.ride ?: return
+        // The running service owns the detection state; without it the ride is changed directly.
+        if (state.running && !ride.demo) runCatching { de.luca.mitfahrt.tracking.RideService.correct(app, action) }
+            .onFailure { app.store.setRide(change(ride), preserveStatus = true) }
+        else app.store.setRide(change(ride), preserveStatus = true)
     }
 
     fun query(value: String) {

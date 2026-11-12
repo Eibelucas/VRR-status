@@ -33,6 +33,8 @@ class MitfahrtApplication : Application() {
     val routeShapes by lazy { de.luca.mitfahrt.data.RouteShapeRepository(vrr::tripPath,
         de.luca.mitfahrt.data.RouteShapeCache(java.io.File(cacheDir, "route_shapes.json"))) }
     val reports by lazy { ReportFiles(this) }
+    /** One report per accompanied connection; stays on the device until exported by hand. */
+    val journeyReports by lazy { de.luca.mitfahrt.reports.JourneyReportStore(this) }
     val arrivals by lazy { ArrivalStore(this) }
     val watch by lazy { WatchPublisher(this, store) }
     val routePlans by lazy { de.luca.mitfahrt.data.RoutePlansStore(this) }
@@ -51,6 +53,17 @@ class MitfahrtApplication : Application() {
         widgetScope.launch { store.state.collect { runCatching { MitfahrtWidgets.trackingChanged(this@MitfahrtApplication) } } }
         // A leg counts as started only once its ride is really tracked, never by timetable time.
         widgetScope.launch { store.state.collect { state -> state.ride?.departure?.key?.let { runCatching { companion.markSeen(it) } } } }
+        widgetScope.launch {
+            kotlinx.coroutines.flow.combine(store.state, companion.state, arrivals.marks) { state, journey, marks -> Triple(state, journey, marks) }
+                .collect { (state, journey, marks) -> runCatching {
+                    val live = state.liveBus
+                    val vehicle = live.vehicle?.id?.takeIf { live.journeyKey == state.ride?.departure?.key &&
+                        (live.confirmed || live.selectedVehicleId != null || live.auto.holdsVehicle) }
+                    journeyReports.sync(de.luca.mitfahrt.reports.ReportSnapshot(state.ride, journey, state.lastRefreshFailed, vehicle, marks),
+                        settings.current().bool("report_auto", true))
+                } }
+        }
+        widgetScope.launch { runCatching { journeyReports.prune() } }
         widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
         widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
         widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
