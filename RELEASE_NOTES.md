@@ -1,3 +1,12 @@
+## In Arbeit nach 0.18.0 (noch nicht veröffentlicht)
+
+- **Fahrtbericht:** „Bericht“ öffnet den Bericht der ganzen Verbindung, ohne Haltestellenauswahl, auch ohne Prognose oder Störung. Er entsteht bei jeder Begleitung auf dem Gerät; geteilt wird nur auf Tippen.
+- **Einstieg und Ausstieg:** Mitfahrt erkennt beides selbst. „Bin im Bus“ und „Doch nicht im Bus“ bleiben als Korrektur.
+- **Bus und Karte:** Der Bus wird automatisch zugeordnet; nach dem Verschieben der Karte gibt es „Bus folgen“. Ohne Busposition zeigt die Karte deine eigene GPS-Position, so benannt.
+- **Oberfläche:** ruhigere Farben, Linienschild, gruppierte Einstellungen, Uhr zeigt zuerst die Fahrt.
+
+Nicht am Gerät und nicht auf einer echten Fahrt geprüft. Einzelheiten: `docs/AUTOMATIK_UND_BERICHTE.md`, Gestaltung: `DESIGN.md`.
+
 ## Mitfahrt 0.18.0
 
 - **Neue Startseite:** Große „Wohin?“-Suche mit Standort als Start, gespeicherten Zielen und passenden Routen darunter. Ohne passende Routen entfällt der ganze Abschnitt.
