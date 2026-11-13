@@ -56,8 +56,24 @@ class ReportPdfInstrumentation : Instrumentation() {
                 .putExtra(Intent.EXTRA_STREAM, uri)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 .apply { clipData = android.content.ClipData.newRawUri("Fahrtbericht", uri) }
+            startActivitySync(Intent(targetContext, de.luca.mitfahrt.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync()
             targetContext.startActivity(Intent.createChooser(share, "Testbericht teilen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            result.putString("result", "PASS: PDF written, $pageCount pages opened and rendered through FileProvider, frozen export preserved, share sheet launched")
+            val deadline = android.os.SystemClock.elapsedRealtime() + 10_000
+            var visible = false
+            while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                val root = uiAutomation.rootInActiveWindow
+                if (root?.findAccessibilityNodeInfosByText("Testbericht teilen")?.isNotEmpty() == true) {
+                    visible = true
+                    break
+                }
+                android.os.SystemClock.sleep(100)
+            }
+            check(visible) { "Share sheet was not visible" }
+            val screenshot = checkNotNull(uiAutomation.takeScreenshot())
+            File(directory, "share.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            screenshot.recycle()
+            result.putString("result", "PASS: PDF written, $pageCount pages opened and rendered through FileProvider, frozen export preserved, share sheet visibly verified")
             finish(Activity.RESULT_OK, result)
         } catch (e: Throwable) {
             result.putString("failure", e.stackTraceToString())
