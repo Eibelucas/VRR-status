@@ -110,7 +110,7 @@ fun NewLiveMapScreen(onClose: () -> Unit) {
                     if (error != null) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(error!!, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = { error = null; loading = true; retry++ }) { Text("Erneut versuchen") }
+                        Button(shape = ControlShape, onClick = { error = null; loading = true; retry++ }) { Text("Erneut versuchen") }
                         TextButton(onClick = { openBrowser() }) { Text("Im Browser öffnen") }
                     }
                 }

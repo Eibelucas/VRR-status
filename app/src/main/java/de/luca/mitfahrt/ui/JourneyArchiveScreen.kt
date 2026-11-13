@@ -142,7 +142,7 @@ fun JourneyArchiveScreen(
                         TextButton(onClick = { selecting = !selecting; selected = emptySet() }, modifier = Modifier.heightIn(min = 48.dp)) {
                             Text(if (selecting) "Fertig" else "Auswählen")
                         }
-                        if (selecting && selected.isNotEmpty()) Button(onClick = { delete(selected) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        if (selecting && selected.isNotEmpty()) Button(shape = ControlShape, onClick = { delete(selected) }, modifier = Modifier.heightIn(min = 48.dp)) {
                             Text("${selected.size} löschen")
                         }
                     }

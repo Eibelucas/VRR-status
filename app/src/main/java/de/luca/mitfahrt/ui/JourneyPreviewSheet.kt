@@ -101,7 +101,7 @@ fun JourneyPreviewSheet(ride: Ride, now: Instant, onStart: () -> Unit, onDismiss
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (target.cancelled && !ride.departure.cancelled && !boarding.cancelled)
                         Text("Zielhaltestelle entfällt", color = Amber, fontSize = 13.sp)
-                    Button(onClick = onStart, enabled = canStart, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                    Button(shape = ControlShape, onClick = onStart, enabled = canStart, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                         Icon(Icons.Outlined.DirectionsBus, null, Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp)); Text("Fahrt verfolgen")
                     }

@@ -51,11 +51,11 @@ fun SchoolTripCard(trips: List<SchoolTrip>, home: HomeState, now: Instant, busy:
                 Text(if (next.departure.liveEstimate(now) != null) "Abfahrt in ${countdownUntil(next.departure.effective, now)}"
                     else "Fahrplan ${clockTime(next.departure.planned)}", fontWeight = FontWeight.Bold, color = Lime, fontSize = 24.sp)
                 JourneyOptions.walking(next.stop)?.let { Text(it.label, color = Soft, fontSize = 12.sp) }
-                Button(onClick = { onStart(trip, next.departure) }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
+                Button(shape = ControlShape, onClick = { onStart(trip, next.departure) }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
                     Text(if (busy) "Fahrt wird geladen …" else "Diesen Bus verfolgen")
                 }
                 TextButton(onClick = { onSelect(trip) }) { Text("Weitere Abfahrten") }
-            } else Button(onClick = { onSelect(trip) }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text("Abfahrten anzeigen") }
+            } else Button(shape = ControlShape, onClick = { onSelect(trip) }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text("Abfahrten anzeigen") }
         }
     }
 }

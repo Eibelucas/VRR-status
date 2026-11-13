@@ -68,7 +68,7 @@ class PlannerScreenshotTest {
         compose.setContent {
             MitfahrtTheme {
                 Column(Modifier.fillMaxSize().background(Ink).padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Header("Mitfahrt", "MÖNCHENGLADBACH", Icons.Outlined.DirectionsBus)
+                    Header("Mitfahrt", "", Icons.Outlined.DirectionsBus)
                     WhereToCard(PlannerForm(origin = TripPlace.MY_LOCATION), listOf(SavedPlace(TripPlace(PlaceKind.STOP, "de:05116:23007", "MG Hbf"), "Bahnhof"),
                         SavedPlace(TripPlace(PlaceKind.ADDRESS, "streetID:1", "Hauptstraße 10"), "Zuhause")), {}, {}, {}, {})
                     PlannedRoutesCard(listOf(plan), 1, mapOf("schule" to listOf(departure("017", "Rheydt Hbf", bismarck, 4, 120))), false, t0, null,
@@ -147,5 +147,77 @@ class PlannerScreenshotTest {
             }
         }
         capture("6-in-der-naehe-ohne-standort")
+    }
+
+    // --- journey report, boarding controls: synthetic data ---
+
+    private val reportSample: de.luca.mitfahrt.reports.JourneyReport get() {
+        val leg1 = de.luca.mitfahrt.reports.ReportLeg("a", line = "017", direction = "Rheydt Hbf", operator = "NEW", tracked = true, fetchedAt = t0.plusSeconds(600), stops = listOf(
+            de.luca.mitfahrt.reports.ReportStop("1", "Mönchengladbach Bismarckplatz", "Bstg. 1", null, t0.plusSeconds(360), null, t0.plusSeconds(600), t0.plusSeconds(300)),
+            de.luca.mitfahrt.reports.ReportStop("2", "MG Schillerplatz", plannedArrival = t0.plusSeconds(480)),
+            de.luca.mitfahrt.reports.ReportStop("3", "MG Hbf /Europaplatz", plannedArrival = t0.plusSeconds(720), forecastArrival = t0.plusSeconds(1020), forecastFetchedAt = t0.plusSeconds(600))))
+        val leg2 = de.luca.mitfahrt.reports.ReportLeg("leg/2", line = "RE8", direction = "Köln Messe/Deutz", operator = "DBNW", fetchedAt = t0, stops = listOf(
+            de.luca.mitfahrt.reports.ReportStop("4", "Mönchengladbach Hbf", "Gleis 2", null, t0.plusSeconds(1200)),
+            de.luca.mitfahrt.reports.ReportStop("5", "Köln Hbf", plannedArrival = t0.plusSeconds(4200))))
+        fun event(id: String, type: de.luca.mitfahrt.reports.ReportEventType, source: de.luca.mitfahrt.reports.ReportSource, seconds: Long, text: String) =
+            de.luca.mitfahrt.reports.ReportEvent(id, type, source, t0.plusSeconds(seconds), text, "a")
+        return de.luca.mitfahrt.reports.JourneyReport("33333333-3333-4333-8333-333333333333", "journey/x", t0, t0.plusSeconds(1300),
+            de.luca.mitfahrt.reports.ReportState.FINISHED, "Mönchengladbach Bismarckplatz", "Köln Hbf", listOf(leg1, leg2), listOf(
+                event("s", de.luca.mitfahrt.reports.ReportEventType.TRACKING_STARTED, de.luca.mitfahrt.reports.ReportSource.APP, 0, "Begleitung gestartet"),
+                event("b", de.luca.mitfahrt.reports.ReportEventType.BOARDED, de.luca.mitfahrt.reports.ReportSource.GPS, 640, "Einstieg in Linie 017 an Bismarckplatz"),
+                event("x", de.luca.mitfahrt.reports.ReportEventType.EXITED, de.luca.mitfahrt.reports.ReportSource.GPS, 1100, "Ausstieg an Hbf /Europaplatz erkannt"),
+                event("o", de.luca.mitfahrt.reports.ReportEventType.OBSERVATION, de.luca.mitfahrt.reports.ReportSource.OWN, 1250, "RE8 war schon weg")),
+            exports = listOf(de.luca.mitfahrt.reports.ReportExport(1, t0.plusSeconds(900), true, "x.pdf")))
+    }
+
+    private fun reportScreen(report: de.luca.mitfahrt.reports.JourneyReport = reportSample) {
+        compose.setContent { MitfahrtTheme {
+            JourneyReportScreen(report, de.luca.mitfahrt.reports.ReportCustomization(), t0.plusSeconds(1300), false, {}, {}, {}, {}, {}, {}, {})
+        } }
+    }
+
+    @Test fun `journey report`() { reportScreen(); capture("7-bericht") }
+
+    @Config(qualifiers = "+night")
+    @Test fun `journey report dark`() { reportScreen(); capture("7-bericht-dunkel") }
+
+    @Config(qualifiers = "w320dp-h900dp-xxhdpi")
+    @Test fun `journey report on a narrow screen with large font`() {
+        org.robolectric.RuntimeEnvironment.setFontScale(1.5f)
+        reportScreen(); capture("7-bericht-schmal-grosse-schrift")
+    }
+
+    @Test fun `journey report of a wait without a bus`() {
+        val ride = RouteFixtures.ride().copy(trackingStartedAt = t0)
+        var report = de.luca.mitfahrt.reports.JourneyReportRecorder.start("44444444-4444-4444-8444-444444444444", ride, null, t0)
+        report = de.luca.mitfahrt.reports.JourneyReportRecorder.update(report, de.luca.mitfahrt.reports.ReportSnapshot(ride), t0)
+        report = de.luca.mitfahrt.reports.JourneyReportRecorder.finish(report, ride, de.luca.mitfahrt.reports.RideEnd.MANUAL, t0.plusSeconds(1500), false)
+        report = de.luca.mitfahrt.reports.JourneyReportRecorder.observe(report, "1", "Bus ist nicht gekommen", t0.plusSeconds(1510))
+        reportScreen(report); capture("8-bericht-warten-ohne-bus")
+    }
+
+    private fun ridePage(ride: Ride, boarding: BoardingState?) {
+        compose.setContent { MitfahrtTheme {
+            Column(Modifier.fillMaxSize().background(Ink).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Header(if (ride.boarded) "Unterwegs" else "Deine Fahrt", "", Icons.Outlined.DirectionsBus)
+                RideHero(ride, RouteFixtures.T0.plusSeconds(30), true)
+                BoardingControls(ride, boarding, true, {}, {}, {}, {})
+            }
+        } }
+    }
+
+    @Test fun `ride page while waiting`() {
+        ridePage(RouteFixtures.ride(delaySeconds = 120L), BoardingState(phase = BoardingPhase.POSSIBLE_BOARDING)); capture("9-fahrt-warten")
+    }
+
+    @Config(qualifiers = "+night")
+    @Test fun `ride page after detected boarding dark`() {
+        ridePage(RouteFixtures.ride(delaySeconds = 120L).board("auto", RouteFixtures.T0.plusSeconds(20)), BoardingState(phase = BoardingPhase.ON_BOARD))
+        capture("9-fahrt-im-bus-dunkel")
+    }
+
+    @Test fun `ride page asks after an exit away from the chosen stop`() {
+        ridePage(RouteFixtures.ride(delaySeconds = 120L).board("auto", RouteFixtures.T0.plusSeconds(20)), BoardingState(phase = BoardingPhase.ENDED))
+        capture("9-fahrt-ausgestiegen")
     }
 }

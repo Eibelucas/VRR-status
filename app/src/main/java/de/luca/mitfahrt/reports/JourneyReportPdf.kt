@@ -8,8 +8,8 @@ import java.io.File
 
 /** Draws report blocks on A4 pages. Rows are never split; headings stay with their first row. */
 object JourneyReportPdf {
-    private const val WIDTH = 595
-    private const val HEIGHT = 842
+    const val PAGE_WIDTH = 595
+    const val PAGE_HEIGHT = 842
     private const val LEFT = 48f
     private const val RIGHT = 547f
     private const val TOP = 56f
@@ -19,13 +19,38 @@ object JourneyReportPdf {
     private val berry = Color.rgb(180, 0, 85)
     private val rule = Color.rgb(205, 205, 212)
 
-    /** Returns the number of pages written. */
+    /** Where pages go: the PDF file on a device, bitmaps in layout tests. */
+    interface Pages {
+        fun start(number: Int): android.graphics.Canvas
+        fun finish()
+        fun close() {}
+    }
+
+    private class PdfPages(private val target: File) : Pages {
+        private val document = PdfDocument()
+        private var page: PdfDocument.Page? = null
+        override fun start(number: Int): android.graphics.Canvas =
+            document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, number).create()).also { page = it }.canvas
+        override fun finish() { page?.let(document::finishPage); page = null }
+        fun write() = target.outputStream().use(document::writeTo)
+        override fun close() = document.close()
+    }
+
+    /** Writes the PDF and returns the number of pages. */
     fun render(blocks: List<ReportBlock>, target: File): Int {
-        val document = PdfDocument()
+        val pages = PdfPages(target)
         try {
+            val count = render(blocks, pages)
+            pages.write()
+            return count
+        } finally { pages.close() }
+    }
+
+    fun render(blocks: List<ReportBlock>, pages: Pages): Int {
+        run {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG)
             var number = 0
-            var page: PdfDocument.Page? = null
+            var canvas: android.graphics.Canvas? = null
             var y = TOP
             fun style(size: Float, bold: Boolean = false, color: Int = ink) {
                 paint.textSize = size; paint.color = color
@@ -33,11 +58,11 @@ object JourneyReportPdf {
             }
             fun footer() {
                 style(8f, color = muted)
-                page!!.canvas.drawText("Mitfahrt · Fahrtbericht · Seite $number", LEFT, 812f, paint)
+                canvas!!.drawText("Mitfahrt · Fahrtbericht · Seite $number", LEFT, 812f, paint)
             }
             fun newPage() {
-                page?.let { footer(); document.finishPage(it) }
-                page = document.startPage(PdfDocument.PageInfo.Builder(WIDTH, HEIGHT, ++number).create())
+                if (canvas != null) { footer(); pages.finish() }
+                canvas = pages.start(++number)
                 y = TOP
             }
             fun wrap(text: String, width: Float): List<String> {
@@ -54,18 +79,18 @@ object JourneyReportPdf {
                 }
                 return lines.ifEmpty { listOf("") }
             }
-            fun need(height: Float) { if (page == null || y + height > BOTTOM) newPage() }
+            fun need(height: Float) { if (canvas == null || y + height > BOTTOM) newPage() }
             /** Draws wrapped text in a column and returns its height; the caller reserves the space first. */
             fun column(text: String, x: Float, width: Float, size: Float, bold: Boolean = false, color: Int = ink, draw: Boolean = true): Float {
                 style(size, bold, color)
                 val lines = wrap(text, width)
                 val leading = size * 1.38f
-                if (draw) lines.forEachIndexed { index, line -> page!!.canvas.drawText(line, x, y + size + index * leading, paint) }
+                if (draw) lines.forEachIndexed { index, line -> canvas!!.drawText(line, x, y + size + index * leading, paint) }
                 return lines.size * leading
             }
             fun line(color: Int = rule) {
                 paint.color = color; paint.strokeWidth = 0.7f
-                page!!.canvas.drawLine(LEFT, y, RIGHT, y, paint)
+                canvas!!.drawLine(LEFT, y, RIGHT, y, paint)
             }
             fun paragraph(text: String, size: Float, bold: Boolean = false, color: Int = ink, gap: Float = 4f) {
                 style(size, bold, color)
@@ -74,7 +99,7 @@ object JourneyReportPdf {
                 wrap(text, RIGHT - LEFT).forEach { row ->
                     need(leading)
                     style(size, bold, color)
-                    page!!.canvas.drawText(row, LEFT, y + size, paint)
+                    canvas!!.drawText(row, LEFT, y + size, paint)
                     y += leading
                 }
                 y += gap
@@ -85,7 +110,7 @@ object JourneyReportPdf {
             blocks.forEachIndexed { index, block ->
                 when (block) {
                     is ReportBlock.Title -> {
-                        style(10f, true, berry); page!!.canvas.drawText("MITFAHRT", LEFT, y, paint); y += 12f
+                        style(10f, true, berry); canvas!!.drawText("MITFAHRT", LEFT, y, paint); y += 12f
                         y += column(block.text, LEFT, RIGHT - LEFT, 24f, bold = true) + 2f
                         y += column(block.subtitle, LEFT, RIGHT - LEFT, 13f, color = muted) + 12f
                     }
@@ -141,9 +166,8 @@ object JourneyReportPdf {
                 }
             }
             footer()
-            document.finishPage(page!!)
-            target.outputStream().use(document::writeTo)
+            pages.finish()
             return number
-        } finally { document.close() }
+        }
     }
 }

@@ -81,7 +81,9 @@ object JourneyReportText {
             }
         }
         report.events(ReportEventType.TRANSFER_RISK).lastOrNull()?.let { lines += it.text + " (${it.source.label})." }
-        report.events(ReportEventType.OBSERVATION).forEach { lines += "Eigene Angabe: ${it.text}" }
+        val own = report.events(ReportEventType.OBSERVATION)
+        if (own.size <= 2) own.forEach { lines += "Eigene Angabe: ${it.text}" }
+        else lines += "${own.size} eigene Angaben, siehe Verlauf."
         return lines
     }
 

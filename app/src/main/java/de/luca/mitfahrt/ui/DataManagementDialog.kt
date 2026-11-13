@@ -17,7 +17,7 @@ fun DataManagementDialog(vm: RideViewModel, onClose: () -> Unit) {
         "reports" to "Alle Belege", "map" to "Kartenspeicher")
     AlertDialog(onDismissRequest = onClose, title = { Text("Gespeicherte Daten") }, text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(areas) { area -> OutlinedButton(onClick = { selected = area }, modifier = Modifier.fillMaxWidth()) { Text("${area.second} löschen") } }
+            items(areas) { area -> OutlinedButton(shape = ControlShape, onClick = { selected = area }, modifier = Modifier.fillMaxWidth()) { Text("${area.second} löschen") } }
             item { Text("Favoriten und Routen werden dabei behalten; gespeicherte Ziele nur, wenn du sie nicht ausdrücklich löschst.", color = Soft) }
         }
     }, confirmButton = { TextButton(onClick = onClose) { Text("Schließen") } })

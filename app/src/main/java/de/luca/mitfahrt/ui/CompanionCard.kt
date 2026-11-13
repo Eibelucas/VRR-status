@@ -78,14 +78,14 @@ fun CompanionCard(companion: JourneyCompanion, phase: CompanionPhase, tracked: R
             }
             when (phase) {
                 CompanionPhase.TRACKING, CompanionPhase.TRANSFER -> if (nextLeg != null) {
-                    if (phase == CompanionPhase.TRANSFER) Button(onClick = onContinue, enabled = !busy && !nextCancelled,
+                    if (phase == CompanionPhase.TRANSFER) Button(shape = ControlShape, onClick = onContinue, enabled = !busy && !nextCancelled,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Nächsten Abschnitt begleiten") }
-                    else OutlinedButton(onClick = onContinue, enabled = !busy && !nextCancelled,
+                    else OutlinedButton(shape = ControlShape, onClick = onContinue, enabled = !busy && !nextCancelled,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Ausgestiegen · weiter mit ${nextLeg.line.ifBlank { "nächster Fahrt" }}") }
                     if (nextCancelled || transfer?.risk == TransferRisk.MISSED || transfer?.risk == TransferRisk.TIGHT)
-                        OutlinedButton(onClick = onAlternatives, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Alternativen suchen") }
+                        OutlinedButton(shape = ControlShape, onClick = onAlternatives, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Alternativen suchen") }
                 }
-                CompanionPhase.DETACHED -> Button(onClick = onResume, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                CompanionPhase.DETACHED -> Button(shape = ControlShape, onClick = onResume, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Text("Abschnitt ${companion.position} begleiten")
                 }
                 CompanionPhase.FINISHED -> Unit

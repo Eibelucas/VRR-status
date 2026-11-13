@@ -58,7 +58,7 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
                     when {
                         locationOff -> Unit
                         home.status == NearbyStatus.LOCATING -> AppLinearProgressIndicator(Modifier.fillMaxWidth())
-                        else -> Button(onClick = onLocation, modifier = Modifier.heightIn(min = 48.dp)) {
+                        else -> Button(shape = ControlShape, onClick = onLocation, modifier = Modifier.heightIn(min = 48.dp)) {
                             Text(when (home.status) {
                                 NearbyStatus.NO_PERMISSION -> "Standort freigeben"
                                 NearbyStatus.LOCATION_OFF -> "Standort einschalten"
@@ -70,7 +70,9 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
             }
             return@Column
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Wraps instead of scrolling sideways, so no filter is cut off at the edge.
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val radius = settings.int("nearby_radius", 500)
             listOf(300, 500, 1000, 2000).forEach { value ->
                 FilterChip(selected = radius == value, onClick = { onSetting("nearby_radius", value.toString()) },

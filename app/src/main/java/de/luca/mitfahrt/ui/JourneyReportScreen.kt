@@ -101,13 +101,20 @@ internal fun JourneyReportScreen(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .4f))
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // With a large font both labels do not fit side by side on a narrow phone: stack them.
+            val shareLabel = if (busy) "PDF wird erstellt" else if (running) "Vorläufig teilen" else "Als PDF teilen"
+            if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.25f) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onShare, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = ControlShape) { Text(shareLabel) }
+                    OutlinedButton(onClick = onSave, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = ControlShape) { Text("Speichern") }
+                }
+            } else Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = onSave, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = ControlShape) {
                     Icon(Icons.Outlined.SaveAlt, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Speichern", maxLines = 1)
                 }
                 Button(onClick = onShare, enabled = !busy, modifier = Modifier.weight(1.4f).heightIn(min = 52.dp), shape = ControlShape) {
                     Icon(Icons.Outlined.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                    Text(if (busy) "PDF wird erstellt" else if (running) "Vorläufig teilen" else "Als PDF teilen", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(shareLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

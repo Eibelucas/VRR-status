@@ -63,23 +63,23 @@ fun WhereToCard(form: PlannerForm, saved: List<SavedPlace>, onOrigin: () -> Unit
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     PlaceLine("Von", form.origin, "Start wählen", Icons.Outlined.TripOrigin, onOrigin)
-                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(18.dp)).background(Ink)
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(ControlShape).background(Ink)
                         .clickable(role = Role.Button, onClickLabel = "Ziel suchen", onClick = onDestination).padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Search, null, tint = Lime)
+                        Icon(Icons.Outlined.Search, null, tint = Paper)
                         Spacer(Modifier.width(12.dp))
                         Text(form.destination?.let(::placeTitle) ?: "Wohin?", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
                             color = if (form.destination == null) Soft else Paper, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 IconButton(onClick = onSwap, enabled = form.origin != null || form.destination != null, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.SwapVert, "Start und Ziel tauschen", tint = Lime)
+                    Icon(Icons.Outlined.SwapVert, "Start und Ziel tauschen", tint = Paper)
                 }
             }
             if (saved.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 saved.take(6).forEach { place ->
                     AssistChip(onClick = { onSaved(place.place) }, label = { Text(place.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingIcon = { Icon(Icons.Outlined.Star, null, Modifier.size(16.dp), tint = Lime) },
+                        leadingIcon = { Icon(Icons.Outlined.Star, null, Modifier.size(16.dp), tint = Soft) },
                         modifier = Modifier.heightIn(min = 48.dp))
                 }
             }
@@ -154,8 +154,8 @@ fun JourneyPlannerScreen(planner: TripPlannerViewModel, now: Instant, locationUs
                             Text(if (locationUsable) "Standort wird bestimmt …" else "Standort nicht verfügbar", fontWeight = FontWeight.SemiBold)
                             if (locationUsable) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (!locationUsable) Button(onClick = onRequestLocation, modifier = Modifier.heightIn(min = 48.dp)) { Text("Standort freigeben") }
-                                OutlinedButton(onClick = { planner.openPlaceSearch(if (form.origin?.isMyLocation == true) PlaceField.ORIGIN else PlaceField.DESTINATION) },
+                                if (!locationUsable) Button(shape = ControlShape, onClick = onRequestLocation, modifier = Modifier.heightIn(min = 48.dp)) { Text("Standort freigeben") }
+                                OutlinedButton(shape = ControlShape, onClick = { planner.openPlaceSearch(if (form.origin?.isMyLocation == true) PlaceField.ORIGIN else PlaceField.DESTINATION) },
                                     modifier = Modifier.heightIn(min = 48.dp)) { Text("Selbst wählen") }
                             }
                         }
@@ -193,7 +193,7 @@ private fun PlannerFormCard(form: PlannerForm, onField: (PlaceField) -> Unit, on
                     Icon(Icons.Outlined.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Zwischenhalt")
                 }
             }
-            IconButton(onClick = onSwap, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.SwapVert, "Start und Ziel tauschen", tint = Lime) }
+            IconButton(onClick = onSwap, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.SwapVert, "Start und Ziel tauschen", tint = Paper) }
         }
     }
 }
@@ -320,7 +320,7 @@ internal fun JourneyRow(journey: TripJourney, now: Instant, onClick: () -> Unit)
         if (risk == TransferRisk.MISSED) append(" Anschluss laut Live-Daten nicht erreichbar.")
         if (risk == TransferRisk.TIGHT) append(" Anschluss knapp.")
     }
-    AppCard(onClick = onClick, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Panel),
+    AppCard(onClick = onClick, shape = ControlShape, colors = CardDefaults.cardColors(containerColor = Panel),
         modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = summary }) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
@@ -365,7 +365,9 @@ internal fun JourneyRow(journey: TripJourney, now: Instant, onClick: () -> Unit)
 @Composable
 internal fun TimeText(expected: Instant?, planned: Instant?, live: Boolean, size: Int) {
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(clockTime(expected), fontSize = size.sp, fontWeight = FontWeight.Bold, color = if (live) Lime else Paper)
+        // Colour marks a deviation only; a live time that is on schedule looks like the timetable.
+        val late = live && planned != null && expected != null && expected.epochSecond - planned.epochSecond >= 60
+        Text(clockTime(expected), fontSize = size.sp, fontWeight = FontWeight.Bold, color = if (late) Amber else Paper)
         if (planned != null && expected != null && planned.epochSecond / 60 != expected.epochSecond / 60)
             Text(" ${clockTime(planned)}", fontSize = (size * .6).sp, color = Soft, textDecoration = TextDecoration.LineThrough,
                 modifier = Modifier.semantics { contentDescription = "geplant ${clockTime(planned)}" })
@@ -379,12 +381,10 @@ internal fun LegBadge(leg: TripLeg) {
         ProductGroup.LIGHT_RAIL -> Icons.Outlined.Tram
         else -> Icons.Outlined.DirectionsBus
     }
-    Row(Modifier.clip(RoundedCornerShape(10.dp)).background(if (leg.cancelled) Amber.copy(alpha = .15f) else Lime.copy(alpha = .12f))
-        .padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = if (leg.cancelled) Amber else Lime, modifier = Modifier.size(15.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = Soft, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(4.dp))
-        Text(leg.line.ifBlank { leg.lineName }.ifBlank { leg.productName }, color = if (leg.cancelled) Amber else Lime,
-            fontWeight = FontWeight.Bold, fontSize = 14.sp, textDecoration = if (leg.cancelled) TextDecoration.LineThrough else null)
+        LineSign(leg.line.ifBlank { leg.lineName }.ifBlank { leg.productName }, cancelled = leg.cancelled)
     }
 }
 
@@ -564,8 +564,8 @@ private fun TripOptionsSheet(initial: TripOptions, onApply: (TripOptions) -> Uni
             }
             item {
                 Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { options = TripOptions() }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Zurücksetzen") }
-                    Button(onClick = { onApply(options) }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Übernehmen") }
+                    OutlinedButton(shape = ControlShape, onClick = { options = TripOptions() }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Zurücksetzen") }
+                    Button(shape = ControlShape, onClick = { onApply(options) }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Übernehmen") }
                 }
             }
         }

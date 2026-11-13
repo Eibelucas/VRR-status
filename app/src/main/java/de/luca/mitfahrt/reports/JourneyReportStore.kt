@@ -16,7 +16,8 @@ import java.util.UUID
  * PDF plus the exact data it was made from, and neither is touched again afterwards.
  */
 class JourneyReportStore(private val directory: File, private val options: () -> ReportCustomization,
-    private val retentionDays: () -> Int = { 0 }, private val clock: () -> Instant = Instant::now) {
+    private val retentionDays: () -> Int = { 0 }, private val clock: () -> Instant = Instant::now,
+    private val writer: (List<ReportBlock>, File) -> Int = JourneyReportPdf::render) {
     constructor(context: Context) : this(context, AppSettingsStore(context))
     private constructor(context: Context, settings: AppSettingsStore) : this(File(File(context.filesDir, "reports"), "journeys"),
         { ReportCustomization.from(settings.current()) }, { settings.current().int("report_retention_days", 0) })
@@ -125,7 +126,7 @@ class JourneyReportStore(private val directory: File, private val options: () ->
         val target = File(folder, name)
         val temporary = File(folder, "$name.tmp")
         try {
-            JourneyReportPdf.render(JourneyReportText.build(report, custom, now), temporary)
+            writer(JourneyReportText.build(report, custom, now), temporary)
             check(temporary.renameTo(target)) { "Bericht konnte nicht gespeichert werden." }
             File(folder, "export-$number.json").writeText(report.encode())
         } catch (e: Exception) { temporary.delete(); throw e }

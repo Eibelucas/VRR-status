@@ -311,8 +311,8 @@ object JourneyReportRecorder {
         }
         if (moreLegs && boarded) return report.copy(events = events, updatedAt = now)
         if (!boarded) {
-            once(ReportEvent("waitend/$key", ReportEventType.WAIT_ENDED, if (end == RideEnd.MANUAL) ReportSource.OWN else ReportSource.APP, now,
-                "Warten beendet, kein Einstieg erfasst", key))
+            once(ReportEvent("waitend/$key", ReportEventType.WAIT_ENDED, ReportSource.APP, now,
+                if (end == RideEnd.MANUAL) "Begleitung von dir beendet, kein Einstieg erfasst" else "Begleitung beendet, kein Einstieg erfasst", key))
             if (events.none { it.type == ReportEventType.VEHICLE_ASSIGNED && it.legKey == key })
                 once(ReportEvent("nobus/$key", ReportEventType.DATA_GAP, ReportSource.APP, now,
                     "Während des Wartens hat die App kein passendes Fahrzeug erkannt", key))

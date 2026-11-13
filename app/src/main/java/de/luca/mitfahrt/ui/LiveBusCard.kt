@@ -77,16 +77,11 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
         }
         if (current != null) {
             Text(when {
-                state.confirmed -> "Deiner Abfahrt zugeordnet"
-                detected && auto.basis == AutoMatchBasis.CO_MOVEMENT -> "Fahrzeug anhand gemeinsamer Bewegung erkannt"
-                detected -> "Wahrscheinliches Fahrzeug: Linie, Richtung und Annäherung passen"
-                else -> "Ausgewähltes Linienfahrzeug"
-            }, color = if (state.confirmed) Lime else Soft, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            if (!state.confirmed) Text(if (detected) "Automatisch erkannt, nicht vom Verkehrsunternehmen bestätigt."
-                else "Zuordnung zu deiner Abfahrt nicht bestätigt.", color = Amber, fontSize = 12.sp, lineHeight = 18.sp)
-            if (detected) auto.ranking.firstOrNull { it.id == current.id }?.reasons?.take(3)?.takeIf { it.isNotEmpty() }?.let {
-                Text("Grund: ${it.joinToString(", ")}", color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
-            }
+                state.confirmed -> "Dein Bus laut NEW-Fahrplanweg"
+                detected && auto.basis == AutoMatchBasis.CO_MOVEMENT -> "Dein Bus: bewegt sich mit deinem Handy"
+                detected -> "Vermutlich dein Bus: Linie, Richtung und Anfahrt passen"
+                else -> "Von dir gewählt"
+            }, color = Soft, fontSize = 14.sp, lineHeight = 19.sp)
             if (current.destination.isNotBlank()) Text("${if (current.directionReliable) "Richtung" else "Anzeige am Bus"} ${shortName(current.destination)}",
                 color = Soft, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
@@ -94,17 +89,22 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                 routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
                 otherVehicles = candidates, selectedVehicleId = current.id,
                 onSelectVehicle = onSelect)
-            Text("Quelle: NEW · ${vehicleAge(current.observedAt, now)}", color = Soft, fontSize = 12.sp)
             if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+            // No usable bus position: show the phone's own measured progress on the real line, clearly named as GPS.
+            val ownPoint = progress?.takeIf { ride.boarded && GpsStopProgress.confident(it, now) }?.confirmedPoint
+            val ownAt = progress?.confirmedAt
+            if (ownPoint != null && ownAt != null) {
+                Text("Keine Busposition von NEW. Die Karte zeigt deine eigene Position.", color = Soft, fontSize = 14.sp, lineHeight = 19.sp)
+                WaitingBusMap(ownPoint, boarding, "Per GPS erkannt", ownAt, now, route = mapRoute.copy(phone = null),
+                    routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true)
+            } else AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Outlined.DirectionsBus, null, tint = Lime)
                     Text(when {
                         stale != null -> "Positionsdaten veraltet"
                         state.selectedVehicleId != null -> "Keine aktuelle Fahrzeugposition"
                         state.loading -> "Busposition wird gesucht …"
-                        candidates.isNotEmpty() -> "Linienfahrzeug auswählen"
+                        candidates.isNotEmpty() -> "Bus wird noch zugeordnet"
                         else -> "Keine Live-Position verfügbar"
                     }, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     when {
@@ -112,19 +112,19 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                             color = Soft, fontSize = 13.sp)
                         state.selectedVehicleId != null -> Text("Ausgewählt: Fahrzeug ${state.selectedVehicleId}",
                             color = Soft, fontSize = 13.sp)
-                        candidates.isNotEmpty() -> Text("Für deine Linie gibt es aktuelle Positionen. Wähle das Fahrzeug nach Linie und Richtung.",
+                        candidates.isNotEmpty() -> Text("Mitfahrt ordnet den Bus zu, sobald er eindeutig ist. Du kannst ihn auch selbst wählen.",
                             color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
                         !state.loading && state.error == null -> Text("NEW meldet gerade keine zuordenbare Position.",
                             color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
                     }
                     if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (candidates.isEmpty()) OutlinedButton(onClick = onRefresh, enabled = !state.loading,
+                    if (candidates.isEmpty()) OutlinedButton(shape = ControlShape, onClick = onRefresh, enabled = !state.loading,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Erneut laden") }
                 }
             }
         }
         if (auto.status == AutoMatchStatus.RECHECKING && current == null)
-            Text("Erkanntes Fahrzeug meldet gerade keine aktuelle Position – wird erneut geprüft.", color = Amber, fontSize = 13.sp, lineHeight = 19.sp)
+            Text("Dein Bus meldet gerade keine Position. Mitfahrt prüft weiter.", color = Amber, fontSize = 13.sp, lineHeight = 19.sp)
         val suggested = auto.vehicleId?.takeIf { auto.status == AutoMatchStatus.SUGGESTED && state.selectedVehicleId == null }
             ?.let { id -> candidates.firstOrNull { it.id == id } }
         if (suggested != null) AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -136,36 +136,36 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                     Text(it.joinToString(", "), color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { onSelect(suggested) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Ja") }
-                    OutlinedButton(onClick = { onReject(suggested.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Nein") }
+                    Button(shape = ControlShape, onClick = { onSelect(suggested) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Ja") }
+                    OutlinedButton(shape = ControlShape, onClick = { onReject(suggested.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Nein") }
                 }
             }
         }
         val choices = if (auto.status == AutoMatchStatus.AMBIGUOUS && current == null && state.selectedVehicleId == null)
             auto.choices.mapNotNull { id -> candidates.firstOrNull { it.id == id } } else emptyList()
         if (choices.size >= 2) {
-            Text("Mehrere Busse passen – welcher ist deiner?", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            Text("Welcher Bus ist deiner?", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             choices.forEach { vehicle ->
                 VehicleChoiceRow(vehicle, boarding, now, false) { onSelect(vehicle) }
             }
         }
         state.error?.let { Text(it, color = Amber, fontSize = 13.sp, lineHeight = 19.sp) }
         if (candidates.isNotEmpty() || state.selectedVehicleId != null) {
-            if (current == null && state.selectedVehicleId == null) Button(onClick = { chooseVehicle = true },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text("Fahrzeug auswählen") }
+            if (current == null && state.selectedVehicleId == null) OutlinedButton(shape = ControlShape, onClick = { chooseVehicle = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text("Bus selbst wählen") }
             else TextButton(onClick = { onClear(); chooseVehicle = true }, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Fahrzeug wechseln")
+                Text("Anderer Bus")
             }
         }
         if (state.selectedVehicleId != null) TextButton(onClick = onClear,
-            modifier = Modifier.heightIn(min = 48.dp)) { Text("Auswahl aufheben") }
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("Wieder automatisch zuordnen") }
     }
 
     if (chooseVehicle) ModalBottomSheet(onDismissRequest = { chooseVehicle = false }, containerColor = Panel) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Fahrzeug auswählen", style = MaterialTheme.typography.headlineSmall)
-            Text("Linie und Richtung vergleichen. Die Abfahrt ist damit nicht bestätigt.",
+            Text("Vergleiche Richtung und Entfernung. Deine Wahl bleibt, bis du sie aufhebst.",
                 color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
             if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
