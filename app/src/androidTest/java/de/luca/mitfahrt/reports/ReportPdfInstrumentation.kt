@@ -18,9 +18,10 @@ class ReportPdfInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
     override fun onStart() {
         val result = Bundle()
+        val directory = File(targetContext.filesDir, "reports/instrumented")
         try {
             val now = Instant.parse("2026-11-13T07:00:00Z")
-            val directory = File(targetContext.filesDir, "reports/instrumented").apply { deleteRecursively() }
+            directory.deleteRecursively()
             val store = JourneyReportStore(directory, { ReportCustomization() }, clock = { now })
             val stops = (0..65).map { i ->
                 val at = now.plusSeconds(i * 120L)
@@ -56,28 +57,37 @@ class ReportPdfInstrumentation : Instrumentation() {
                 .putExtra(Intent.EXTRA_STREAM, uri)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 .apply { clipData = android.content.ClipData.newRawUri("Fahrtbericht", uri) }
-            startActivitySync(Intent(targetContext, de.luca.mitfahrt.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val activity = startActivitySync(Intent(targetContext, de.luca.mitfahrt.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             waitForIdleSync()
-            targetContext.startActivity(Intent.createChooser(share, "Testbericht teilen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            activity.runOnUiThread { activity.startActivity(Intent.createChooser(share, "Testbericht teilen")) }
             val deadline = android.os.SystemClock.elapsedRealtime() + 10_000
             var visible = false
             while (android.os.SystemClock.elapsedRealtime() < deadline) {
-                val root = uiAutomation.rootInActiveWindow
-                if (root?.findAccessibilityNodeInfosByText("Testbericht teilen")?.isNotEmpty() == true) {
+                val activities = activityDump()
+                if (activities.lineSequence().any { it.contains("mResumedActivity") && it.contains("ChooserActivity") }) {
                     visible = true
                     break
                 }
                 android.os.SystemClock.sleep(100)
             }
             check(visible) { "Share sheet was not visible" }
-            val screenshot = checkNotNull(uiAutomation.takeScreenshot())
-            File(directory, "share.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            screenshot.recycle()
+            saveScreenshot(directory)
             result.putString("result", "PASS: PDF written, $pageCount pages opened and rendered through FileProvider, frozen export preserved, share sheet visibly verified")
             finish(Activity.RESULT_OK, result)
         } catch (e: Throwable) {
+            runCatching { saveScreenshot(directory) }
             result.putString("failure", e.stackTraceToString())
+            result.putString("activeWindow", runCatching { activityDump().lineSequence().filter { it.contains("Resumed") || it.contains("mFocused") }.joinToString("\n") }.getOrDefault("unavailable"))
             finish(Activity.RESULT_CANCELED, result)
         }
+    }
+
+    private fun activityDump(): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+        uiAutomation.executeShellCommand("dumpsys activity activities")).bufferedReader().use { it.readText() }
+
+    private fun saveScreenshot(directory: File) {
+        val screenshot = checkNotNull(uiAutomation.takeScreenshot())
+        File(directory, "share.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        screenshot.recycle()
     }
 }

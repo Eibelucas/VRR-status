@@ -87,9 +87,9 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w de.luca.mitfahrt.test/de.luca.mitfahrt.reports.ReportPdfInstrumentation | tee app/build/reports/device/result.txt
-            grep -q 'PASS: PDF written' app/build/reports/device/result.txt
             adb exec-out run-as de.luca.mitfahrt cat files/reports/instrumented/share.png > app/build/reports/device/share.png
             adb exec-out run-as de.luca.mitfahrt tar -C files/reports -cf - instrumented > app/build/reports/device/pdf-reports.tar
+            grep -q 'PASS: PDF written' app/build/reports/device/result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
