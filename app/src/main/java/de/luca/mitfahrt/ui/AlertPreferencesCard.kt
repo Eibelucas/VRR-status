@@ -15,7 +15,7 @@ fun AlertPreferencesCard(preferences: AlertPreferences, onArrival: (Boolean) -> 
     onExit: (Boolean) -> Unit, onLeadSeconds: (Int) -> Unit) {
     AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Vibrationshinweise", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+            Text("Hinweise mit Vibration", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
             AlertSwitch("Bus kommt", "Vor dem Einsteigen · Handy und Uhr", preferences.arrivalEnabled, onArrival)
             if (preferences.arrivalEnabled) {
                 Text("Wie früh?", color = Soft, fontSize = 13.sp)
@@ -27,8 +27,8 @@ fun AlertPreferencesCard(preferences: AlertPreferences, onArrival: (Boolean) -> 
                 }
             }
             AlertSwitch("Ausstieg", "Einen Halt vor deinem gewählten Ziel", preferences.exitEnabled, onExit)
-            Text("Weitere Vorwarnungen, Geräte und Muster unter Anpassen. Nicht stören gilt weiterhin.",
-                color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
+            Text("Mehr dazu unter „Alle Einstellungen“. „Nicht stören“ gilt weiter.",
+                color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
         }
     }
 }
@@ -39,7 +39,7 @@ private fun AlertSwitch(title: String, subtitle: String, checked: Boolean, onCha
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
             Spacer(Modifier.height(4.dp))
-            Text(subtitle, color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(subtitle, color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }

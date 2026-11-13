@@ -146,7 +146,7 @@ private fun OverrideDialog(
         title = { Text("Ausnahme") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
+                OutlinedButton(shape = ControlShape, onClick = {
                     show(DatePickerDialog(context, { _, year, month, day -> date = LocalDate.of(year, month + 1, day) },
                         date.year, date.monthValue - 1, date.dayOfMonth).apply {
                         datePicker.minDate = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -165,12 +165,12 @@ private fun OverrideDialog(
                 if (mode == DayOverrideMode.TIMES) {
                     windows.forEachIndexed { index, window ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedButton(onClick = { pickTime(window.startMinute) { start ->
+                            OutlinedButton(shape = ControlShape, onClick = { pickTime(window.startMinute) { start ->
                                 windows = windows.toMutableList().also { it[index] = window.copy(startMinute = start) } } },
                                 modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                                 Text("Von ${RouteDayOverrides.time(window.startMinute)}")
                             }
-                            OutlinedButton(onClick = { pickTime(window.endMinute) { end ->
+                            OutlinedButton(shape = ControlShape, onClick = { pickTime(window.endMinute) { end ->
                                 windows = windows.toMutableList().also { it[index] = window.copy(endMinute = end) } } },
                                 modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                                 Text("Bis ${RouteDayOverrides.time(window.endMinute)}")

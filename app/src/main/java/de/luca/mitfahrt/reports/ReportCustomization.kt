@@ -20,6 +20,12 @@ data class ReportCustomization(
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm"))
         return "$prefix-$day-${evidence.id.take(8)}.pdf"
     }
+    fun exportName(report: JourneyReport, number: Int): String {
+        val prefix = filename.trim().replace(Regex("[^\\p{L}\\p{N} _.-]"), "_")
+            .trim(' ', '.').take(60).ifBlank { "Mitfahrt" }
+        val day = report.serviceDay.atZone(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        return "$prefix-Fahrtbericht-$day-${report.id.take(8)}-$number.pdf"
+    }
     companion object {
         fun from(settings: AppSettings) = ReportCustomization(
             settings.string("report_name").trim().take(100).takeIf { settings.bool("report_personal", false) }.orEmpty(),

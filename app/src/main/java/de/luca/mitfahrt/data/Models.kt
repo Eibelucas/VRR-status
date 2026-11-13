@@ -53,7 +53,9 @@ data class Ride(
     val departure: Departure, val stops: List<RideStop>, val boardingIndex: Int,
     val fetchedAt: Instant, val demo: Boolean = false, val gpsPassedIndex: Int = -1,
     val boarded: Boolean = true, val trackingStartedAt: Instant? = null,
-    val targetStopId: String? = null, val targetStopIndex: Int? = null
+    val targetStopId: String? = null, val targetStopIndex: Int? = null,
+    /** When and how boarding was set: "manual" by the user, "auto" by the local detection. */
+    val boardedAt: Instant? = null, val boardedBy: String? = null
 ) {
     val offsetSeconds: Long get() = departure.estimated?.let { it.epochSecond - departure.planned.epochSecond } ?: 0
     // A departure delay is only an extrapolation for later stops, never a live ETA.
@@ -79,6 +81,13 @@ data class Ride(
             (end.epochSecond - begin.epochSecond).coerceAtLeast(1)).coerceIn(0f, 1f)
     }
 }
+
+/** Marks the ride as boarded once; a later call keeps the first time and origin. */
+fun Ride.board(by: String, now: Instant): Ride =
+    if (boarded) this else copy(boarded = true, boardedAt = now, boardedBy = by)
+
+/** Manual correction "doch nicht im Bus": back to waiting. */
+fun Ride.unboard(): Ride = copy(boarded = false, boardedAt = null, boardedBy = null, gpsPassedIndex = -1)
 
 data class BoardingTime(val at: Instant, val isArrival: Boolean, val live: Boolean, val observedAt: Instant? = null) {
     fun isFresh(now: Instant): Boolean = !live || observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } == true

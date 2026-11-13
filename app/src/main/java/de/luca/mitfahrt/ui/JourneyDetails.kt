@@ -72,16 +72,16 @@ fun JourneyDetailsScreen(journey: TripJourney, results: TripResultsState, now: I
                 }
             }
             Column(Modifier.fillMaxWidth().background(Panel).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onAccompany, enabled = !accompanyBusy && trackable && !journey.cancelled,
+                Button(shape = ControlShape, onClick = onAccompany, enabled = !accompanyBusy && trackable && !journey.cancelled,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     if (accompanyBusy) { AppCircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
                     Text(if (accompanyBusy) "Wird geladen …" else "Fahrt begleiten")
                 }
                 if (!trackable) Text("Für diese Verbindung fehlt eine VRR-Fahrtkennung; sie kann nur angesehen werden.", color = Soft, fontSize = 12.sp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (onSaveDestination != null && !destinationSaved) OutlinedButton(onClick = onSaveDestination,
+                    if (onSaveDestination != null && !destinationSaved) OutlinedButton(shape = ControlShape, onClick = onSaveDestination,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Ziel speichern", maxLines = 1) }
-                    if (canSaveRoute) OutlinedButton(onClick = { routeName = "" }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    if (canSaveRoute) OutlinedButton(shape = ControlShape, onClick = { routeName = "" }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                         Text("Als Route speichern", maxLines = 1)
                     }
                 }

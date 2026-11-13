@@ -85,7 +85,9 @@ data class MapRoute(
 fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, positionAt: Instant,
     now: Instant, modifier: Modifier = Modifier, route: MapRoute = MapRoute(),
     routeStops: List<Stop> = emptyList(), otherVehicles: List<NewVehicle> = emptyList(),
-    selectedVehicleId: String? = null, overview: Boolean = false, onSelectVehicle: ((NewVehicle) -> Unit)? = null) {
+    selectedVehicleId: String? = null, overview: Boolean = false, onSelectVehicle: ((NewVehicle) -> Unit)? = null,
+    /** Set when the marker is the phone's own measured position instead of a NEW vehicle. */
+    gpsSource: Boolean = false) {
     if (!busPoint.mapValid() || now.epochSecond - positionAt.epochSecond !in -15..90) return
     val context = LocalContext.current
     val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
@@ -99,6 +101,7 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
     var controller by remember { mutableStateOf<WaitingMapController?>(null) }
     var viewportVisible by remember { mutableStateOf(false) }
     var linkError by remember { mutableStateOf(false) }
+    var moved by remember { mutableStateOf(false) }
     val vehicles = otherVehicles.filter { it.isFresh(now) && it.point.mapValid() && it.id != selectedVehicleId }
     val visibleVehicles = if (overview || settings.bool("map_other_buses", false)) vehicles else emptyList()
     val shape = route.shape?.takeIf { settings.bool("map_route", true) && it.points.all { point -> point.mapValid() } }
@@ -120,10 +123,8 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                 Column(Modifier.weight(1f)) {
                     Text(vehicleLabel, fontWeight = FontWeight.SemiBold, fontSize = 17.sp,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(positionLabel(positionAt, now), color = Soft, fontSize = 12.sp)
-                }
-                IconButton(onClick = { controller?.recenter() }) {
-                    Icon(Icons.Outlined.CenterFocusStrong, "Karte zentrieren", tint = Lime)
+                    Text(if (gpsSource) positionLabel(positionAt, now).replace("NEW", "GPS deines Handys") else positionLabel(positionAt, now),
+                        color = Soft, fontSize = 13.sp)
                 }
             }
             Box(Modifier.fillMaxWidth().height(if (overview || settings.string("map_size", "normal") == "large") 400.dp else 260.dp)
@@ -135,6 +136,7 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                         rootBounds.width > 0 && rootBounds.height > 0 && bounds.overlaps(rootBounds)
                 }, factory = { viewContext ->
                     WaitingMapController(viewContext).also {
+                        it.onMoved = { value -> moved = value }
                         controller = it
                         it.update(busPoint, boarding, vehicleLabel, settings, dark, mapRoute, stops,
                             visibleVehicles, onSelectVehicle, overview)
@@ -146,6 +148,13 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                     view.owner?.close()
                     if (controller?.map === view) controller = null
                 })
+                // Shown only after the map was moved by hand: one tap returns to the live position.
+                if (moved) Button(onClick = { controller?.recenter() }, shape = ControlShape,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).heightIn(min = 48.dp)) {
+                    Icon(Icons.Outlined.CenterFocusStrong, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    Text(if (gpsSource) "Position folgen" else "Bus folgen")
+                }
                 Surface(Modifier.align(Alignment.BottomEnd), color = Color.White.copy(alpha = .96f),
                     shape = RoundedCornerShape(topStart = 8.dp)) {
                     TextButton(onClick = { open("https://www.openstreetmap.org/copyright") },
@@ -156,7 +165,7 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.DirectionsBus, null, tint = BrandBerry, modifier = Modifier.size(17.dp))
-                Text(" Bus", color = Soft, fontSize = 12.sp)
+                Text(if (gpsSource) " Deine Position" else " Bus", color = Soft, fontSize = 12.sp)
                 if (boarding?.point?.mapValid() == true && settings.bool("map_stops", true)) {
                     Spacer(Modifier.width(12.dp))
                     Icon(Icons.Outlined.RadioButtonChecked, null, tint = Color(0xFF20824B), modifier = Modifier.size(16.dp))
@@ -223,6 +232,8 @@ private class WaitingMapController(private val context: Context) {
     private var cameraIdentity: String? = null
     private var needsFit = false
     private var manualSince = 0L
+        set(value) { val changed = (field == 0L) != (value == 0L); field = value; if (changed) onMoved?.invoke(value != 0L) }
+    var onMoved: ((Boolean) -> Unit)? = null
     private var busPoint: GeoPoint? = null
     private var boarding: Stop? = null
     private var routePoints: List<GeoPoint> = emptyList()
@@ -394,7 +405,7 @@ private class WaitingMapController(private val context: Context) {
         if (cameraKey != cameraIdentity) {
             cameraIdentity = cameraKey; recenter()
         } else if (canFollow && changedPoint) {
-            needsFit = true; fitIfSized()
+            manualSince = 0L; needsFit = true; fitIfSized()
         }
         map.invalidate()
     }

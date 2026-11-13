@@ -76,7 +76,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
                         else -> "Standort wird gesucht …"
                     }, fontWeight = FontWeight.SemiBold)
                     if (home.status == NearbyStatus.LOCATING) AppLinearProgressIndicator(Modifier.fillMaxWidth())
-                    else Button(onClick = onLocation) { Text(when (home.status) {
+                    else Button(shape = ControlShape, onClick = onLocation) { Text(when (home.status) {
                         NearbyStatus.NO_PERMISSION -> "Standort erlauben"
                         NearbyStatus.LOCATION_OFF -> "Standort öffnen"
                         else -> "Erneut versuchen"

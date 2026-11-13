@@ -93,16 +93,16 @@ object JourneyCompanions {
      */
     fun transfer(companion: JourneyCompanion, incoming: Ride?, outgoing: Ride?, now: Instant): CompanionTransfer? {
         val next = companion.nextLeg ?: return null
-        if (outgoing != null && outgoing.departure.cancelled) return CompanionTransfer(Long.MIN_VALUE, TransferRisk.MISSED, true)
+        val nextRide = outgoing?.takeIf { it.departure.key == next.asDeparture(companion.journey.fetchedAt)?.key &&
+            now.epochSecond - it.fetchedAt.epochSecond in -30..180 } ?: return null
+        if (nextRide.departure.cancelled) return CompanionTransfer(Long.MIN_VALUE, TransferRisk.MISSED, true)
         val ride = incoming?.takeIf { it.departure.key == companion.trackedKey } ?: return null
         val exit = ride.exitTargetStop() ?: return null
         val arrival = exit.estimatedArrival ?: exit.estimatedDeparture ?: return null
         if (now.epochSecond - ride.fetchedAt.epochSecond !in -30..180) return null
-        val boarding = outgoing?.takeIf { it.departure.lineId == next.lineId && it.departure.tripCode == next.tripCode }
-            ?.let { it.stops.getOrNull(it.boardingIndex) }
+        val boarding = nextRide.stops.getOrNull(nextRide.boardingIndex)
         val departure = boarding?.estimatedDeparture ?: return null
         if (boarding.cancelled) return CompanionTransfer(Long.MIN_VALUE, TransferRisk.MISSED, true)
-        if (now.epochSecond - outgoing.fetchedAt.epochSecond !in -30..180) return null
         val slack = departure.epochSecond - arrival.epochSecond - companion.transferWalkSeconds
         return CompanionTransfer(slack, when {
             slack < 0 -> TransferRisk.MISSED

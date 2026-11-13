@@ -44,6 +44,7 @@ class RideService : Service(), LocationListener {
     private var locationSubscribed = false
     private var foregroundType = 0
     private var lastAutoArrival: String? = null
+    private var locationProfile: LocationProfile? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) { readWifi() }
@@ -64,7 +65,10 @@ class RideService : Service(), LocationListener {
         if (intent?.action == BOARD || intent?.action == MARK_ARRIVAL) {
             val ride = store.state.value.ride
             if (ride != null && !ride.demo) {
-                if (intent.action == BOARD) store.setRide(ride.copy(boarded = true), preserveStatus = true)
+                if (intent.action == BOARD) {
+                    store.setRide(ride.board("manual", Instant.now()), preserveStatus = true)
+                    noteCorrection()
+                }
                 else if (!customization.current().bool("arrival_store", true)) {
                     store.update { it.copy(message = "Speichern eigener Ankünfte ist ausgeschaltet.") }
                 } else {
@@ -80,7 +84,15 @@ class RideService : Service(), LocationListener {
             if (store.state.value.running && store.state.value.ride != null) liveWake.trySend(Unit)
             return START_NOT_STICKY
         }
-        if (intent?.action == STOP) { store.clear(); stopSelf(); return START_NOT_STICKY }
+        if (intent?.action == UNBOARD || intent?.action == STILL_ON_BOARD) {
+            val ride = store.state.value.ride
+            if (ride != null && !ride.demo) {
+                if (intent.action == UNBOARD) store.setRide(ride.unboard(), preserveStatus = true)
+                noteCorrection()
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action == STOP) { app.journeyReports.noteEnd(de.luca.mitfahrt.reports.RideEnd.MANUAL); store.clear(); stopSelf(); return START_NOT_STICKY }
         var explicitlyStarted: Ride? = null
         if (intent?.action == START_RIDE) {
             val ride = runCatching { RideCodec.decode(intent.getStringExtra("ride") ?: "") }.getOrNull()
@@ -148,8 +160,10 @@ class RideService : Service(), LocationListener {
                         val refreshed = store.state.value
                         if (refreshed.ride?.departure?.key == ride.departure.key &&
                             RideRefreshPolicy.canFinish(refreshed, lastCompletionCheck, Instant.now())) {
+                            app.journeyReports.noteEnd(de.luca.mitfahrt.reports.RideEnd.SCHEDULE)
                             store.clear(); stopSelf(); break
                         }
+                        if (evaluateBoarding()) { stopSelf(); break }
                     } else if (store.state.value.monitoring && store.state.value.wifi in setOf(WifiSignal.CONNECTED, WifiSignal.NEARBY)) {
                         findCandidates()
                     }
@@ -341,7 +355,8 @@ class RideService : Service(), LocationListener {
             val current = store.state.value.ride
             if (current?.departure?.key == ride.departure.key) {
                 val merged = updated.copy(gpsPassedIndex = maxOf(ride.gpsPassedIndex, current.gpsPassedIndex),
-                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt).remapExitTargetFrom(current)
+                    boarded = current.boarded, trackingStartedAt = current.trackingStartedAt,
+                    boardedAt = current.boardedAt, boardedBy = current.boardedBy).remapExitTargetFrom(current)
                 store.setRide(merged)
                 if (monitor == null && RideRefreshPolicy.usesMonitorBaseline(merged)) {
                     store.update { it.copy(lastRefreshFailed = true,
@@ -411,6 +426,13 @@ class RideService : Service(), LocationListener {
             if (store.state.value.location != null) store.update { it.copy(location = null, locationAt = null) }
             return
         }
+        val profile = LocationProfile.of(store.state.value.ride, store.state.value.boarding?.phase, Instant.now())
+        if (locationSubscribed && profile != locationProfile) {
+            // Tighter or looser measuring for the new situation; the foreground type stays.
+            runCatching { locations.removeUpdates(this) }
+            locationSubscribed = false
+        }
+        locationProfile = profile
         if (!locationSubscribed) {
             // A session started with location disabled uses the data-sync type. Upgrade
             // its foreground declaration before requesting GPS after an in-app change.
@@ -428,10 +450,49 @@ class RideService : Service(), LocationListener {
             locationSubscribed = true
             listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
                 runCatching {
-                    if (locations.isProviderEnabled(provider)) locations.requestLocationUpdates(provider, 5_000, 12f, this)
+                    if (locations.isProviderEnabled(provider)) locations.requestLocationUpdates(provider, profile.intervalMillis, profile.minDistance, this)
                 }
             }
         }
+    }
+
+    private fun noteCorrection() {
+        val ride = store.state.value.ride ?: return
+        val now = Instant.now()
+        store.update { state -> if (state.ride?.departure?.key != ride.departure.key) state
+            else state.copy(boarding = BoardingDetector.corrected(state.boarding ?: BoardingDetector.initial(ride, now), ride, now)) }
+    }
+
+    /**
+     * Runs the boarding/exit state machine on the positions held in memory. Returns true when
+     * tracking ended because an exit at the chosen stop was confirmed.
+     */
+    private fun evaluateBoarding(): Boolean {
+        val state = store.state.value
+        val ride = state.ride ?: return false
+        val settings = customization.current()
+        if (ride.demo || !settings.bool("boarding_auto", true) || !hasLocation()) return false
+        val now = Instant.now()
+        val live = state.liveBus
+        // Only a vehicle that is assigned to this ride counts; a bus nearby does not.
+        val vehicle = live.vehicle?.takeIf { live.journeyKey == ride.departure.key && it.isFresh(now) &&
+            (live.confirmed || live.selectedVehicleId == it.id || live.auto.holdsVehicle) }
+        val reference = RouteReference.of(ride, state.routeShape?.takeIf { it.journeyKey == ride.departure.key })
+        val next = BoardingDetector.step(state.boarding, BoardingInput(ride, reference,
+            phoneTrack.recent(now, BoardingDetector.WINDOW_SECONDS), vehicle, state.wifi, now))
+        if (next == state.boarding) return false
+        store.update { current -> if (current.ride?.departure?.key == ride.departure.key) current.copy(boarding = next) else current }
+        if (next.phase == BoardingPhase.ON_BOARD && !ride.boarded) {
+            store.setRide(ride.board("auto", now), preserveStatus = true)
+            store.update { it.copy(message = "Einstieg erkannt. Falls das nicht stimmt, tippe auf „Doch nicht im Bus“.") }
+            liveWake.trySend(Unit)
+        }
+        if (next.phase == BoardingPhase.ENDED && state.boarding?.phase != BoardingPhase.ENDED && next.exitAtTarget && ride.boarded) {
+            app.journeyReports.noteEnd(de.luca.mitfahrt.reports.RideEnd.GPS_EXIT)
+            store.clear()
+            return true
+        }
+        return false
     }
 
     @SuppressLint("MissingPermission")
@@ -538,6 +599,8 @@ class RideService : Service(), LocationListener {
         const val REFRESH_LIVE = "de.luca.mitfahrt.REFRESH_LIVE"
         const val BOARD = "de.luca.mitfahrt.BOARD"
         const val MARK_ARRIVAL = "de.luca.mitfahrt.MARK_ARRIVAL"
+        const val UNBOARD = "de.luca.mitfahrt.UNBOARD"
+        const val STILL_ON_BOARD = "de.luca.mitfahrt.STILL_ON_BOARD"
         fun refreshLive(context: Context) {
             val state = (context.applicationContext as MitfahrtApplication).store.state.value
             if (state.running && state.ride != null) context.startService(Intent(context, RideService::class.java).setAction(REFRESH_LIVE))
@@ -548,7 +611,11 @@ class RideService : Service(), LocationListener {
                 ride?.let { putExtra("ride", RideCodec.encode(it)) }
             })
         }
+        fun correct(context: Context, action: String) {
+            context.startService(Intent(context, RideService::class.java).setAction(action))
+        }
         fun stop(context: Context) {
+            (context.applicationContext as MitfahrtApplication).journeyReports.noteEnd(de.luca.mitfahrt.reports.RideEnd.MANUAL)
             (context.applicationContext as MitfahrtApplication).store.clear()
             context.stopService(Intent(context, RideService::class.java))
         }

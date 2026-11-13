@@ -89,7 +89,7 @@ fun SchoolCalendarScreen(
                 val status = SchoolCalendar.status(today, settings)
                 Text("Heute", style = MaterialTheme.typography.titleMedium)
                 Text(status.text())
-                OutlinedButton(onClick = { pickDate { checked = it } }, modifier = Modifier.heightIn(min = 48.dp)) {
+                OutlinedButton(shape = ControlShape, onClick = { pickDate { checked = it } }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("Datum prüfen")
                 }
                 checked?.let { date ->
@@ -124,7 +124,7 @@ fun SchoolCalendarScreen(
                 settings.freeDays.entries.filter { !it.key.isBefore(today) }.sortedBy { it.key }.forEach { (date, label) ->
                     DayRow(SchoolCalendar.dateLabel(date), label.ifBlank { null }) { onRemoveFreeDay(date) }
                 }
-                OutlinedButton(onClick = { pickDate { addingFree = it } }, modifier = Modifier.heightIn(min = 48.dp)) {
+                OutlinedButton(shape = ControlShape, onClick = { pickDate { addingFree = it } }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("Freien Tag hinzufügen")
                 }
             }
@@ -136,7 +136,7 @@ fun SchoolCalendarScreen(
                 settings.schoolDays.filter { !it.isBefore(today) }.sorted().forEach { date ->
                     DayRow(SchoolCalendar.dateLabel(date), null) { onRemoveSchoolDay(date) }
                 }
-                OutlinedButton(onClick = { pickDate { actionFailed = !onMarkSchoolDay(it) } }, modifier = Modifier.heightIn(min = 48.dp)) {
+                OutlinedButton(shape = ControlShape, onClick = { pickDate { actionFailed = !onMarkSchoolDay(it) } }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("Schultag markieren")
                 }
                 if (actionFailed) Text("Der Schultag konnte nicht gespeichert werden.", color = MaterialTheme.colorScheme.error)

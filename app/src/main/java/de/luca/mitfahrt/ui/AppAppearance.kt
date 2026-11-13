@@ -17,6 +17,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Shape
 import de.luca.mitfahrt.data.AppSettings
 import androidx.core.view.WindowCompat
@@ -71,7 +78,27 @@ internal fun MitfahrtTheme(content: @Composable () -> Unit) {
         MaterialTheme(colorScheme = base.copy(primary = palette.accent, onPrimary = if (dark) palette.background else Color.White,
             background = palette.background, onBackground = palette.text, surface = palette.surface, onSurface = palette.text,
             surfaceVariant = if (cardBorder != null) palette.outline.copy(alpha = .10f) else palette.surface,
-            onSurfaceVariant = palette.muted, outline = palette.outline, secondary = palette.accent), content = content)
+            onSurfaceVariant = palette.muted, outline = palette.outline, secondary = palette.accent)) {
+            // Text outside a Surface (lists on the page background) must not fall back to black.
+            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides palette.text, content = content)
+        }
+    }
+}
+
+/**
+ * Line number as on the bus display: the one place the NEW colour is used as a filled sign.
+ * Corners are tighter than buttons (12) and containers (20) so it reads as a sign, not a control.
+ */
+@Composable
+internal fun LineSign(line: String, onBrand: Boolean = false, large: Boolean = false, cancelled: Boolean = false) {
+    val background = if (cancelled) Color.Transparent else if (onBrand) Color.White else Lime
+    val content = if (cancelled) Amber else if (onBrand) Color(0xFF870040) else MaterialTheme.colorScheme.onPrimary
+    Box(Modifier.clip(RoundedCornerShape(6.dp)).background(background)
+        .then(if (cancelled) Modifier.border(1.dp, Amber, RoundedCornerShape(6.dp)) else Modifier)
+        .widthIn(min = if (large) 52.dp else 40.dp).padding(horizontal = if (large) 10.dp else 8.dp, vertical = if (large) 7.dp else 4.dp),
+        contentAlignment = Alignment.Center) {
+        Text(line, color = content, fontSize = if (large) 18.sp else 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+            textDecoration = if (cancelled) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
     }
 }
 
@@ -80,9 +107,9 @@ fun AppearanceCard() {
     val context = LocalContext.current
     val store = remember(context) { AppSettingsStore(context) }
     val settings by store.state.collectAsStateWithLifecycle()
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+    Card(Modifier.fillMaxWidth(), shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Darstellung", style = MaterialTheme.typography.titleLarge)
+            Text("Darstellung", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("system" to "System", "light" to "Hell", "dark" to "Dunkel").forEach { (key, label) ->
                     FilterChip(selected = settings.string("theme", "system") == key, onClick = { store.set("theme", key) }, label = { Text(label) })

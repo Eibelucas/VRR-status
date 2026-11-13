@@ -105,7 +105,7 @@ fun RoutePlansScreen(
                     Icon(Icons.Outlined.Route, null, tint = Lime, modifier = Modifier.size(32.dp))
                     Text("Noch keine Strecken", style = MaterialTheme.typography.titleLarge)
                     Text("Start, Ziel und Zeiten festlegen – auch vor deiner ersten Fahrt.", color = Soft)
-                    Button(onClick = { draftJson = newDraft().encode() }, modifier = Modifier.fillMaxWidth()) {
+                    Button(shape = ControlShape, onClick = { draftJson = newDraft().encode() }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text("Strecke anlegen")
                     }
                 }
@@ -127,7 +127,7 @@ fun RoutePlansScreen(
                     })
             }
             if (state.routes.isNotEmpty() && state.routes.size < RoutePlans.MAX_ROUTES) item {
-                OutlinedButton(onClick = { draftJson = newDraft().encode() }, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
+                OutlinedButton(shape = ControlShape, onClick = { draftJson = newDraft().encode() }, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
                     Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text("Weitere Strecke")
                 }
             }
@@ -325,7 +325,7 @@ private fun RoutePlanEditor(draft: RouteDraft, editing: Boolean, savedStops: Sav
                     }
                 }
                 if (draft.additionalWindows.size < RoutePlans.MAX_WINDOWS - 1) item {
-                    OutlinedButton(onClick = { change(draft.copy(additionalWindows = draft.additionalWindows + RouteWindow((1..5).toSet(), 12 * 60, 15 * 60))) },
+                    OutlinedButton(shape = ControlShape, onClick = { change(draft.copy(additionalWindows = draft.additionalWindows + RouteWindow((1..5).toSet(), 12 * 60, 15 * 60))) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text("Zeitfenster hinzufügen")
                     }

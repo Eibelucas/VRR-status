@@ -131,4 +131,10 @@ class JourneyCompanionTest {
         assertEquals("DBNW", train.operator)
         assertTrue(all.containsAll(newOnly))
     }
+    @Test fun `cancellation of a different or stale connection cannot enter the report`() {
+        val tracked = JourneyCompanions.tracking(JourneyCompanions.start(journey, T0)!!, bus.asDeparture(T0)!!.key)
+        assertNull(JourneyCompanions.transfer(tracked, null, rideOf(bus, cancelled = true), T0))
+        assertNull(JourneyCompanions.transfer(tracked, null, rideOf(train, cancelled = true), T0.plusSeconds(181)))
+    }
+
 }

@@ -137,7 +137,7 @@ fun BusMapOverview(onBack: () -> Unit) {
 
 @Composable
 fun BusMapShortcut(onOpen: () -> Unit) {
-    OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+    OutlinedButton(shape = ControlShape, onClick = onOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
         Icon(Icons.Outlined.Map, null)
         Spacer(Modifier.width(12.dp))
         Text("Busse auf der Karte")

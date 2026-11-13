@@ -127,7 +127,7 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
                         }
                         if (settings.manualProfileId == "auto") Text("Gerade aktiv: ${settings.activeProfileName}", style = MaterialTheme.typography.bodySmall, color = Soft)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { addingProfile = true }, enabled = settings.profiles.size < AppSettingsCodec.MAX_PROFILES) {
+                            OutlinedButton(shape = ControlShape, onClick = { addingProfile = true }, enabled = settings.profiles.size < AppSettingsCodec.MAX_PROFILES) {
                                 Icon(Icons.Outlined.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Profil")
                             }
                             settings.profiles.firstOrNull { it.id == settings.activeProfileId }?.let { profile ->
@@ -199,8 +199,8 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
                             color = Soft, style = MaterialTheme.typography.bodySmall)
                         if (settings.bool("export_personal")) Text("Name, Klasse und Zusatznotiz sind in der Sicherung enthalten.", color = Amber, style = MaterialTheme.typography.bodySmall)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { exportLauncher.launch("Mitfahrt-Einstellungen.json") }, enabled = !busy) { Text("Sichern / Teilen") }
-                            OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !busy) { Text("Importieren") }
+                            OutlinedButton(shape = ControlShape, onClick = { exportLauncher.launch("Mitfahrt-Einstellungen.json") }, enabled = !busy) { Text("Sichern / Teilen") }
+                            OutlinedButton(shape = ControlShape, onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !busy) { Text("Importieren") }
                         }
                         if (busy) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                     }
@@ -376,7 +376,7 @@ private fun SettingEditor(definition: SettingDefinition, settings: AppSettings, 
                 }
             } else if (definition.key == "routes_free_dates") {
                 val dates = text.split(',').filter(String::isNotBlank).sorted()
-                OutlinedButton(onClick = {
+                OutlinedButton(shape = ControlShape, onClick = {
                     val today = LocalDate.now()
                     DatePickerDialog(context, { _, year, month, day -> text = (dates + LocalDate.of(year, month + 1, day).toString()).distinct().sorted().joinToString(",") }, today.year, today.monthValue - 1, today.dayOfMonth).show()
                 }) { Text("Freien Tag hinzufügen") }
@@ -440,8 +440,8 @@ private fun ProfileDialog(profile: SettingsProfile, onDismiss: () -> Unit, onSav
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { TimePickerDialog(context, { _, hour, minute -> start = hour * 60 + minute }, start / 60, start % 60, true).show() }) { Text("Von ${time(start)}") }
-                    OutlinedButton(onClick = { TimePickerDialog(context, { _, hour, minute -> end = hour * 60 + minute }, end / 60, end % 60, true).show() }) { Text("Bis ${time(end)}") }
+                    OutlinedButton(shape = ControlShape, onClick = { TimePickerDialog(context, { _, hour, minute -> start = hour * 60 + minute }, start / 60, start % 60, true).show() }) { Text("Von ${time(start)}") }
+                    OutlinedButton(shape = ControlShape, onClick = { TimePickerDialog(context, { _, hour, minute -> end = hour * 60 + minute }, end / 60, end % 60, true).show() }) { Text("Bis ${time(end)}") }
                 }
                 Text("Bei gleicher Start- und Endzeit gilt das Profil ganztägig. Überlappen Zeitpläne, gilt das zuerst angelegte passende Profil.", color = Soft, style = MaterialTheme.typography.bodySmall)
             }

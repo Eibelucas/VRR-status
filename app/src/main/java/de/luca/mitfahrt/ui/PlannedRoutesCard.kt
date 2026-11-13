@@ -61,8 +61,7 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
     AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(routeIcon(plan.icon), null, tint = routeColor(plan.color),
-                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(routeColor(plan.color).copy(alpha = .12f)).padding(7.dp))
+                Icon(routeIcon(plan.icon), null, tint = Soft, modifier = Modifier.size(24.dp))
                 Column(Modifier.weight(1f)) {
                     Text(plan.name, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${shortName(plan.origin.name)} → ${shortName(plan.destination.name)}",
@@ -71,19 +70,22 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
             }
             if (next != null) {
                 val live = next.liveEstimate(now) != null
-                Text(if (live) "Abfahrt in ${countdownUntil(next.effective, now)}" else "Fahrplan ${clockTime(next.planned)}", color = Lime,
-                    fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 2.dp))
-                val forecast = when {
-                    next.estimated == null -> "Fahrplan"
-                    next.delayMinutes > 0 -> "live +${next.delayMinutes} Min"
-                    else -> "live pünktlich"
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 4.dp)) {
+                    LineSign(next.line)
+                    Text(if (live) "in ${countdownUntil(next.effective, now)}" else "um ${clockTime(next.planned)}",
+                        fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 }
-                Text(listOfNotNull("Linie ${next.line}", clockTime(next.effective), "VRR $forecast", next.platform.takeIf { it.isNotBlank() })
-                    .joinToString(" · "), color = if (next.delayMinutes > 0) Amber else Soft, fontSize = 12.sp)
+                val forecast = when {
+                    next.estimated == null -> "laut Fahrplan"
+                    next.delayMinutes > 0 -> "+${next.delayMinutes} Min"
+                    else -> "pünktlich"
+                }
+                Text(listOfNotNull("Abfahrt ${clockTime(next.effective)}", forecast, next.platform.takeIf { it.isNotBlank() })
+                    .joinToString(" · "), color = if (next.delayMinutes > 0) Amber else Soft, fontSize = 13.sp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onPreview(plan, next) }, enabled = busyKey == null,
-                        modifier = Modifier.weight(1f).heightIn(min = 50.dp)) { Text("Vorschau") }
-                    Button(onClick = { onStart(plan, next) }, enabled = busyKey == null, modifier = Modifier.weight(1f).heightIn(min = 50.dp)) {
+                        shape = ControlShape, modifier = Modifier.weight(1f).heightIn(min = 50.dp)) { Text("Vorschau") }
+                    Button(onClick = { onStart(plan, next) }, enabled = busyKey == null, shape = ControlShape, modifier = Modifier.weight(1.4f).heightIn(min = 50.dp)) {
                         if (busy) {
                             AppCircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = Lime)
                             Spacer(Modifier.width(8.dp))

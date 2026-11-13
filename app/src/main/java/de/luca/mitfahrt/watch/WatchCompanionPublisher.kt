@@ -56,7 +56,7 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
             when (command.action) {
                 "browse" -> browse(command.id)
                 "start" -> start(command)
-                "board" -> withRide(command) { ride -> app.store.setRide(ride.copy(boarded = true), preserveStatus = true); "Einstieg bestätigt" }
+                "board" -> withRide(command) { ride -> app.store.setRide(ride.board("manual", java.time.Instant.now()), preserveStatus = true); "Einstieg bestätigt" }
                 "arrival" -> withRide(command) { ride ->
                     require(settings.current().bool("arrival_store", true)) { "Speichern eigener Ankünfte ist ausgeschaltet" }
                     val stop = if (ride.boarded) ride.exitTargetStop()

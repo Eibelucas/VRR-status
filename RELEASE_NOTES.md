@@ -1,11 +1,13 @@
-## Mitfahrt 0.18.0
+## Mitfahrt 0.19.0
 
-- **Neue Startseite:** Große „Wohin?“-Suche mit Standort als Start, gespeicherten Zielen und passenden Routen darunter. Ohne passende Routen entfällt der ganze Abschnitt.
-- **In der Nähe:** Eigener Tab für Haltestellen und Abfahrten statt einer vollen Startseite.
-- **Verbindungssuche:** Bus und Bahn, Umstiege, Fußwege, Abfahrt oder Ankunft, Datum/Uhrzeit, Zwischenziel und Suchoptionen. Details zeigen Haltestellen, gemeldete Verspätungen, Ausfälle und Strecken.
-- **Fahrt begleiten:** Erst nach eigener Auswahl startet die Begleitung. Umstiege wechseln auf ausdrücklichen Wunsch zum nächsten Fahrzeug. Reines Nachschauen speichert keine Route.
-- **Aktuelle Daten:** Verbindungen lassen sich aktualisieren; alte Prognosen werden nicht als aktuelle Live-Zeiten oder Anschlusswarnungen angezeigt. Die öffentliche VRR-Schnittstelle wurde mit echten Orts-, Abfahrts- und Ankunftsantworten geprüft.
+- Neue, ruhigere Oberfläche in NEW-Farben, übersichtlichere Einstellungen und überarbeitete Watch-Anzeige.
+- Einstieg automatisch anhand mehrerer Messungen erkennen; „Bin im Bus“, „Doch nicht im Bus“ und „Noch im Bus“ bleiben als Korrekturen erreichbar. Langsames Fahren nahe dem Ziel beendet die Fahrt nicht automatisch.
+- Ein vollständiger Fahrtbericht pro begleiteter Verbindung, ohne Haltestellenauswahl und auch ohne Live-Prognose oder gemeldete Störung. Wartezeiten ohne erkannten Bus werden als eigene Aufzeichnung dokumentiert.
+- Anschlusswarnungen im Bericht und direkter Berichtsaufruf aus dem Fahrtenarchiv. Falsche Einstiegserkennung lässt sich auch im Bericht korrigieren.
+- Gelöschte laufende Berichte bleiben über Aktualisierungen und Neustarts hinweg gelöscht. Jeder PDF-Export behält seinen eigenen eingefrorenen Stand. Teilen erfolgt ausschließlich auf Wunsch.
+- Speicher- und Exportfehler werden angezeigt. Alte Einzelbelege bleiben lesbar.
+- Echte mehrseitige PDF-Erzeugung, Öffnen über FileProvider und Teilen-Dialog auf Android 10 automatisch geprüft.
 
-Bestehende NEW-Abfahrten, GPS-Zuordnung, Buskarte, Berichte und Watch-Übertragung bleiben angebunden. Die neue Suche ist kein vollständiger Ersatz aller VRR-App-Funktionen: kein Ticketkauf, keine eigene Fußweg-Navigation; die Uhr übernimmt weiterhin den jeweils begleiteten Fahrtabschnitt.
+Automatische Bus- und Einstiegserkennung ist abschaltbar. Die Schwellen sind mit synthetischen Szenarien geprüft; echte Mitfahrten und die Bedienung auf Galaxy/Watch bleiben zu prüfen. App-Erkennung und eigene Angaben sind keine offizielle Bestätigung des Verkehrsunternehmens.
 
-Bitte Handy und Watch auf 0.18.0 aktualisieren. Daten und Signaturschlüssel bleiben erhalten. Die Bedienung auf einem echten Galaxy und einer Watch muss weiterhin geprüft werden.
+Handy und Watch auf 0.19.0 aktualisieren; bisheriger Signaturschlüssel und gespeicherte Daten bleiben erhalten.

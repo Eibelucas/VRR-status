@@ -20,7 +20,9 @@ data class TrackingState(
     /** Verified real line geometry for the current journey, if any (public data, in memory). */
     val routeShape: RouteShape? = null,
     /** Locally measured progress; positions are never persisted or uploaded. */
-    val gpsProgress: GpsProgressState? = null
+    val gpsProgress: GpsProgressState? = null,
+    /** Local boarding and exit detection for the tracked ride. */
+    val boarding: BoardingState? = null
 )
 
 class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}) {
@@ -58,7 +60,8 @@ class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}
                 it.liveBus.copy(revision = it.liveBus.revision + if (it.ride?.boarded != ride?.boarded) 1 else 0)
                 else LiveBusState(journeyKey = ride?.departure?.key),
             routeShape = it.routeShape?.takeIf { shape -> shape.journeyKey == ride?.departure?.key },
-            gpsProgress = it.gpsProgress?.takeIf { progress -> progress.journeyKey == ride?.departure?.key }) }
+            gpsProgress = it.gpsProgress?.takeIf { progress -> progress.journeyKey == ride?.departure?.key },
+            boarding = it.boarding?.takeIf { boarding -> boarding.journeyKey == ride?.departure?.key }) }
         val savedRide = ride?.takeUnless { it.demo }
         val encoded = savedRide?.let(RideCodec::encode)
         val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys || !settings.current().bool("history_enabled", true) }
@@ -127,6 +130,7 @@ object RideCodec {
             put("demo", ride.demo); put("gpsPassedIndex", ride.gpsPassedIndex)
             put("boarded", ride.boarded); put("trackingStartedAt", ride.trackingStartedAt?.toString())
             put("targetStopId", ride.targetStopId); put("targetStopIndex", ride.targetStopIndex)
+            put("boardedAt", ride.boardedAt?.toString()); put("boardedBy", ride.boardedBy)
             put("stops", JSONArray(ride.stops.map { stop -> JSONObject().apply {
                 put("id", stop.id); put("name", stop.name)
                 put("lat", stop.point?.lat); put("lon", stop.point?.lon)
@@ -154,6 +158,7 @@ object RideCodec {
             obj.optBoolean("demo"), obj.optInt("gpsPassedIndex", -1),
             obj.optBoolean("boarded", true), obj.instant("trackingStartedAt"),
             obj.str("targetStopId").takeIf { it.isNotBlank() },
-            if (obj.has("targetStopIndex") && !obj.isNull("targetStopIndex")) obj.getInt("targetStopIndex") else null)
+            if (obj.has("targetStopIndex") && !obj.isNull("targetStopIndex")) obj.getInt("targetStopIndex") else null,
+            obj.instant("boardedAt"), obj.str("boardedBy").takeIf { it == "manual" || it == "auto" })
     }
 }

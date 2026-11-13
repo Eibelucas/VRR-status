@@ -34,10 +34,10 @@ class RideComplicationService : ComplicationDataSourceService() {
         val at = if (current?.boarded == true) current.terminalAt else current?.boardingAt
         val clock = at?.atZone(ZoneId.of("Europe/Berlin"))?.format(DateTimeFormatter.ofPattern("HH:mm"))
         val value = when {
-            current == null -> "—"
+            current == null -> "–"
             current.cancelled -> "Ausfall"
             !fresh -> "Alt"
-            clock == null -> "—"
+            clock == null -> "–"
             else -> clock
         }
         val title = current?.line?.take(7) ?: "Mitfahrt"

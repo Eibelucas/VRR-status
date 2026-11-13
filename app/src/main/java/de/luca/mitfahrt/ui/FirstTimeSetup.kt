@@ -61,7 +61,7 @@ fun FirstTimeSetup(locationAllowed: Boolean, notificationsAllowed: Boolean,
                     }
                     Spacer(Modifier.height(32.dp))
                 }
-                Button(onClick = {
+                Button(shape = ControlShape, onClick = {
                     when {
                         step == 0 -> step++
                         step == 1 && !locationAllowed -> onLocation()
