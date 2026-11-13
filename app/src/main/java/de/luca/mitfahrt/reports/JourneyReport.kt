@@ -17,7 +17,7 @@ enum class ReportSource(val label: String) {
 
 enum class ReportEventType {
     TRACKING_STARTED, ARRIVED_AT_STOP, VEHICLE_ASSIGNED, BOARDED, EXITED, WAIT_ENDED, RIDE_ENDED,
-    CANCELLED, NOTICE, TRANSFER_RISK, DATA_GAP, OBSERVATION
+    CANCELLED, NOTICE, TRANSFER_RISK, DATA_GAP, OBSERVATION, BOARDING_CORRECTED
 }
 
 enum class ReportState { RUNNING, FINISHED, ABORTED }
@@ -157,8 +157,20 @@ data class ReportSnapshot(
     val ride: Ride?, val companion: JourneyCompanion? = null,
     val refreshFailed: Boolean = false, val vehicleId: String? = null,
     val arrivals: List<ArrivalMark> = emptyList(),
-    val transfer: CompanionTransfer? = null
-)
+    val transfer: CompanionTransfer? = null,
+    val transferObservedAt: Instant? = null
+) {
+    companion object {
+        fun capture(state: TrackingState, journey: JourneyCompanion?, next: Ride?, arrivals: List<ArrivalMark>, now: Instant): ReportSnapshot {
+            val live = state.liveBus
+            val vehicle = live.vehicle?.takeIf { live.journeyKey == state.ride?.departure?.key && it.isFresh(now) &&
+                (live.confirmed || live.selectedVehicleId == it.id || live.auto.holdsVehicle) }
+            val transfer = journey?.let { JourneyCompanions.transfer(it, state.ride, next, now) }
+            return ReportSnapshot(state.ride, journey, state.lastRefreshFailed, vehicle?.id, arrivals, transfer,
+                if (transfer != null) listOfNotNull(state.ride?.fetchedAt, next?.fetchedAt).minOrNull() else null)
+        }
+    }
+}
 
 enum class RideEnd { MANUAL, SCHEDULE, GPS_EXIT, TIMEOUT, INTERRUPTED }
 
@@ -233,14 +245,21 @@ object JourneyReportRecorder {
         if (snapshot.refreshFailed) once(ReportEvent("gap/$key", ReportEventType.DATA_GAP, ReportSource.APP, now,
             "Keine neuen VRR-Daten abrufbar; der letzte Stand blieb stehen", key))
         snapshot.transfer?.takeIf { it.risk != TransferRisk.OK }?.let { transfer ->
-            once(ReportEvent("transfer/$key/${transfer.risk}", ReportEventType.TRANSFER_RISK, ReportSource.OPERATOR, now,
+            once(ReportEvent("transfer/$key/${transfer.risk}", ReportEventType.TRANSFER_RISK,
+                if (transfer.outgoingCancelled) ReportSource.OPERATOR else ReportSource.APP, snapshot.transferObservedAt ?: now,
                 if (transfer.outgoingCancelled) "Anschlussfahrt als ausgefallen gemeldet"
                 else if (transfer.risk == TransferRisk.MISSED) "Anschluss laut Prognosen nicht erreichbar"
-                else "Anschluss laut Prognosen knapp", key))
+                else "Anschluss laut Prognosen knapp", key, now))
         }
         if (snapshot.vehicleId != null) once(ReportEvent("vehicle/$key/${snapshot.vehicleId}", ReportEventType.VEHICLE_ASSIGNED,
             ReportSource.GPS, now, "Fahrzeug ${snapshot.vehicleId} der Linie ${ride.departure.line} zugeordnet (NEW-Livedaten)", key))
-        if (ride.boarded && previous?.let { report.events.none { e -> e.id == "boarded/$key" } } != false) {
+        val corrected = !ride.boarded && events.any { it.type == ReportEventType.BOARDED && it.legKey == key }
+        if (corrected) {
+            events = events.filterNot { it.type == ReportEventType.BOARDED && it.legKey == key }
+            once(ReportEvent("boarding-correction/$key/${now.toEpochMilli()}", ReportEventType.BOARDING_CORRECTED,
+                ReportSource.OWN, now, "Einstieg zurückgenommen: doch nicht im Bus", key))
+        }
+        if (ride.boarded && events.none { it.id == "boarded/$key" }) {
             val manual = ride.boardedBy != "auto"
             once(ReportEvent("boarded/$key", ReportEventType.BOARDED, if (manual) ReportSource.OWN else ReportSource.GPS,
                 ride.boardedAt ?: now, "Einstieg in Linie ${ride.departure.line} an ${shortName(ride.stops.getOrNull(ride.boardingIndex)?.name ?: ride.departure.stopName)}" +
@@ -251,7 +270,7 @@ object JourneyReportRecorder {
                 if (mark.method == "location") ReportSource.GPS else ReportSource.OWN, mark.at,
                 "An der Haltestelle ${shortName(mark.stopName)}", key, now))
         }
-        val waitUntil = if (ride.boarded && report.waitFrom != null && report.waitUntil == null) ride.boardedAt ?: now else report.waitUntil
+        val waitUntil = if (corrected) null else if (ride.boarded && report.waitFrom != null && report.waitUntil == null) ride.boardedAt ?: now else report.waitUntil
         return report.copy(legs = legs, events = events.takeLast(JourneyReport.MAX_EVENTS), updatedAt = now, waitUntil = waitUntil,
             destinationName = if (snapshot.companion == null) ride.displayTarget().name else report.destinationName)
     }

@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.time.Instant
 import java.util.UUID
+import org.json.JSONArray
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.nio.file.AtomicMoveNotSupportedException
 
 /**
  * Journey reports on the device. The JSON file is the living record; every export writes a new
@@ -24,6 +28,11 @@ class JourneyReportStore(private val directory: File, private val options: () ->
 
     private val mutable = MutableStateFlow(read())
     val state: StateFlow<List<JourneyReport>> = mutable.asStateFlow()
+    private val errorState = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = errorState.asStateFlow()
+    fun clearError() { errorState.value = null }
+    private val suppressedFile = File(directory, ".suppressed.json")
+    private var suppressed = readSuppressed()
     /** Last ride seen per report; needed to word the end of a ride. In memory only. */
     private var lastRide: Pair<String, Ride>? = null
     private var pendingEnd: RideEnd? = null
@@ -34,6 +43,30 @@ class JourneyReportStore(private val directory: File, private val options: () ->
 
     @Synchronized fun reload() { mutable.value = read() }
 
+    private fun readSuppressed(): Set<String> = if (!suppressedFile.exists()) emptySet() else runCatching {
+        val values = JSONArray(suppressedFile.readText())
+        (0 until values.length()).map { values.getString(it) }.toSet()
+    }.getOrElse { errorState.value = "Gelöschte Berichte konnten nicht gelesen werden. Automatische Berichte sind pausiert."; setOf("*") }
+
+    private fun replace(target: File, contents: String) {
+        check(directory.isDirectory || directory.mkdirs())
+        val temporary = File(target.parentFile, "${target.name}.tmp")
+        try {
+            temporary.outputStream().use { output -> output.write(contents.toByteArray(Charsets.UTF_8)); output.fd.sync() }
+            try {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally { temporary.delete() }
+    }
+
+    private fun suppress(key: String): Boolean = runCatching {
+        val next = (suppressed + key).toList().takeLast(256).toSet()
+        replace(suppressedFile, JSONArray(next.toList()).toString())
+        suppressed = next
+    }.onFailure { errorState.value = "Der Bericht konnte nicht gelöscht werden. Bitte erneut versuchen." }.isSuccess
+
     private fun file(id: String): File {
         require(id.matches(Regex("[0-9a-f-]{36}"))) { "Ungültiger Bericht." }
         return File(directory, "$id.json")
@@ -41,12 +74,9 @@ class JourneyReportStore(private val directory: File, private val options: () ->
     private fun exportFolder(id: String) = File(directory, id.also { file(it) })
 
     private fun save(report: JourneyReport): Boolean = runCatching {
-        check(directory.isDirectory || directory.mkdirs())
-        val temporary = File(directory, "${report.id}.tmp")
-        temporary.writeText(report.encode())
-        check(temporary.renameTo(file(report.id)) || run { file(report.id).delete(); temporary.renameTo(file(report.id)) })
+        replace(file(report.id), report.encode())
         mutable.value = (mutable.value.filterNot { it.id == report.id } + report).sortedByDescending { it.serviceDay }
-    }.isSuccess
+    }.onFailure { errorState.value = "Der Bericht konnte nicht gespeichert werden. Bitte erneut versuchen." }.isSuccess
 
     /** The service names the reason right before it clears the ride. */
     @Synchronized fun noteEnd(end: RideEnd) { pendingEnd = end }
@@ -61,15 +91,15 @@ class JourneyReportStore(private val directory: File, private val options: () ->
         val current = ride?.let { JourneyReportRecorder.sessionKey(it, snapshot.companion) }
             ?: snapshot.companion?.let(JourneyReportRecorder::journeyKey)
         mutable.value.filter { it.state == ReportState.RUNNING && it.sessionKey != current }.forEach { report ->
-            save(JourneyReportRecorder.finish(report, lastRide?.takeIf { it.first == report.id }?.second,
-                pendingEnd ?: RideEnd.INTERRUPTED, now, moreLegs = false))
+            if (!save(JourneyReportRecorder.finish(report, lastRide?.takeIf { it.first == report.id }?.second,
+                pendingEnd ?: RideEnd.INTERRUPTED, now, moreLegs = false))) return null
         }
         val existing = mutable.value.firstOrNull { it.sessionKey == current && it.state == ReportState.RUNNING }
         if (ride == null) {
             // Between two vehicles of one journey: note the end of the last ride, keep the report open.
             if (existing != null) lastRide?.takeIf { it.first == existing.id }?.let { (_, last) ->
                 val noted = JourneyReportRecorder.finish(existing, last, pendingEnd ?: RideEnd.INTERRUPTED, now, moreLegs = last.boarded && snapshot.companion?.nextIndex != null)
-                if (noted != existing) save(noted)
+                if (noted != existing && !save(noted)) return null
                 lastRide = null
             }
             pendingEnd = null
@@ -77,11 +107,11 @@ class JourneyReportStore(private val directory: File, private val options: () ->
         }
         pendingEnd = null
         // A finished report of the same accompaniment is never reopened or doubled.
-        if (existing == null && (!auto || mutable.value.any { it.sessionKey == current })) return null
+        if (existing == null && (!auto || current in suppressed || "*" in suppressed || mutable.value.any { it.sessionKey == current })) return null
         val base = existing ?: JourneyReportRecorder.start(UUID.randomUUID().toString(), ride, snapshot.companion, now)
         val updated = JourneyReportRecorder.update(base, snapshot, now)
         lastRide = updated.id to ride
-        if (existing == null || updated.copy(updatedAt = existing.updatedAt) != existing) save(updated)
+        if ((existing == null || updated.copy(updatedAt = existing.updatedAt) != existing) && !save(updated)) return null
         return updated
     }
 
@@ -89,7 +119,12 @@ class JourneyReportStore(private val directory: File, private val options: () ->
     @Synchronized fun ensure(snapshot: ReportSnapshot): JourneyReport? {
         val ride = snapshot.ride?.takeUnless { it.demo } ?: return null
         val key = JourneyReportRecorder.sessionKey(ride, snapshot.companion)
-        return mutable.value.firstOrNull { it.sessionKey == key } ?: sync(snapshot, auto = true)
+        mutable.value.firstOrNull { it.sessionKey == key && it.state != ReportState.RUNNING }?.let { return it }
+        if (key in suppressed || "*" in suppressed) {
+            errorState.value = "Dieser Bericht wurde gelöscht. Für eine neue Begleitung wird wieder ein Bericht vorbereitet."
+            return null
+        }
+        return sync(snapshot, auto = true)
     }
 
     /** One report per archived ride; opening it again returns the same one. */
@@ -107,9 +142,10 @@ class JourneyReportStore(private val directory: File, private val options: () ->
         return updated != report && save(updated)
     }
 
-    @Synchronized fun removeObservation(id: String, eventId: String) {
-        val report = mutable.value.firstOrNull { it.id == id } ?: return
-        JourneyReportRecorder.removeObservation(report, eventId, clock()).takeIf { it != report }?.let(::save)
+    @Synchronized fun removeObservation(id: String, eventId: String): Boolean {
+        val report = mutable.value.firstOrNull { it.id == id } ?: return false
+        val updated = JourneyReportRecorder.removeObservation(report, eventId, clock())
+        return updated == report || save(updated)
     }
 
     /**
@@ -125,12 +161,26 @@ class JourneyReportStore(private val directory: File, private val options: () ->
         val name = custom.exportName(report, number)
         val target = File(folder, name)
         val temporary = File(folder, "$name.tmp")
+        val snapshotFile = File(folder, "export-$number.json")
+        var targetCreated = false
+        var snapshotCreated = false
         try {
+            check(!target.exists() && !snapshotFile.exists()) { "Dieser PDF-Stand ist bereits vorhanden." }
             writer(JourneyReportText.build(report, custom, now), temporary)
             check(temporary.renameTo(target)) { "Bericht konnte nicht gespeichert werden." }
-            File(folder, "export-$number.json").writeText(report.encode())
-        } catch (e: Exception) { temporary.delete(); throw e }
-        save(report.copy(exports = report.exports + ReportExport(number, now, report.state == ReportState.RUNNING, name)))
+            targetCreated = true
+            snapshotCreated = true
+            snapshotFile.writeText(report.encode())
+            check(save(report.copy(exports = report.exports + ReportExport(number, now, report.state == ReportState.RUNNING, name)))) {
+                "Der PDF-Stand konnte nicht gespeichert werden."
+            }
+        } catch (e: Exception) {
+            temporary.delete()
+            if (targetCreated) target.delete()
+            if (snapshotCreated) snapshotFile.delete()
+            errorState.value = "Die PDF konnte nicht gespeichert werden. Bitte erneut versuchen."
+            throw e
+        }
         return target
     }
 
@@ -139,10 +189,17 @@ class JourneyReportStore(private val directory: File, private val options: () ->
     @Synchronized fun delete(id: String): Boolean {
         val json = file(id)
         val folder = exportFolder(id)
-        val done = (!json.exists() || json.delete()) && (!folder.exists() || folder.deleteRecursively())
+        val report = mutable.value.firstOrNull { it.id == id }
+        if (report?.state == ReportState.RUNNING && !suppress(report.sessionKey)) return false
+        val jsonDone = !json.exists() || json.delete()
+        val folderDone = !folder.exists() || folder.deleteRecursively()
+        val done = jsonDone && folderDone
         mutable.value = read()
+        if (!done) errorState.value = "Der Bericht konnte nicht vollständig gelöscht werden. Bitte erneut versuchen."
         return done
     }
+
+    @Synchronized fun clear(): Boolean = mutable.value.map { delete(it.id) }.all { it }
 
     /** Uses the existing report retention setting; a running report is never pruned. */
     @Synchronized fun prune() {

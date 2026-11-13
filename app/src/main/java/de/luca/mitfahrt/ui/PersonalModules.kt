@@ -40,7 +40,8 @@ internal fun PersonalModuleLinks(onOpen: (String) -> Unit, query: String = "") {
 }
 
 @Composable
-internal fun PersonalModuleScreen(module: String, vm: RideViewModel, today: LocalDate, onBack: () -> Unit) {
+internal fun PersonalModuleScreen(module: String, vm: RideViewModel, today: LocalDate,
+    onReport: (de.luca.mitfahrt.data.Ride) -> Unit, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val archived by vm.archive.collectAsState()
     val arrivals by vm.arrivals.collectAsState()
@@ -56,7 +57,7 @@ internal fun PersonalModuleScreen(module: String, vm: RideViewModel, today: Loca
             }
             when (module) {
                 "archive" -> JourneyArchiveScreen(archived, today, vm::removeArchived, vm::restoreArchived, vm::clearArchive,
-                    vm::setArchiveEnabled, vm::setArchiveRetention, modifier = Modifier.weight(1f))
+                    vm::setArchiveEnabled, vm::setArchiveRetention, modifier = Modifier.weight(1f), onReport = onReport)
                 "arrivals" -> ArrivalHistoryScreen(arrivals, today, vm::removeArrival, modifier = Modifier.weight(1f))
                 "calendar" -> SchoolCalendarScreen(calendar, today, vm::setCalendarEnabled, vm::addFreeDay,
                     vm::removeFreeDay, vm::markSchoolDay, vm::removeSchoolDay, modifier = Modifier.weight(1f))

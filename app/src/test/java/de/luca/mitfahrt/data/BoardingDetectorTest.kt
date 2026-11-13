@@ -171,6 +171,17 @@ class BoardingDetectorTest {
         assertEquals(BoardingPhase.WAITING, state!!.phase)
     }
 
+    @Test fun `replaying one location window cannot confirm boarding`() {
+        val fixes = (0..3).map { i -> PhoneFix(along(500.0 + i * 100), 10f, depart.plusSeconds(i * 10L)) }
+        val now = depart.plusSeconds(30)
+        val input = BoardingInput(waitingRide, reference, fixes, null, WifiSignal.NONE, now)
+        val first = BoardingDetector.step(null, input)
+        assertEquals(BoardingPhase.POSSIBLE_BOARDING, first.phase)
+        val repeated = BoardingDetector.step(first, input.copy(now = now.plusSeconds(10)))
+        assertEquals(BoardingPhase.POSSIBLE_BOARDING, repeated.phase)
+        assertEquals(1, repeated.support)
+    }
+
     // --- exit ---
 
     private val boardedRide = waitingRide.board("auto", depart)
@@ -194,6 +205,12 @@ class BoardingDetectorTest {
         assertTrue(result.last.exitAtTarget)
         // Several evaluations lie between the first sign and the end.
         assertTrue(result.states.count { it.phase == BoardingPhase.POSSIBLE_EXIT } >= 2)
+    }
+
+    @Test fun `crawling near the target without bus positions never confirms an exit`() {
+        val slow: (Instant) -> GeoPoint = { t -> along(2500.0 + 0.8 * (t.epochSecond - depart.epochSecond), 0.0) }
+        val result = run(depart, 240, ride = boardedRide, phone = slow)
+        assertEquals(listOf(BoardingPhase.ON_BOARD), result.phases)
     }
 
     @Test fun `getting off early is detected but not treated as the chosen exit`() {

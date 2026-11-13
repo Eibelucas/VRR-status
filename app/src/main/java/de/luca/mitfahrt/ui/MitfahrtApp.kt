@@ -271,7 +271,8 @@ fun MitfahrtApp(
         }
     }
     MitfahrtTheme {
-        if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate()) { personalModule = null }
+        if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
+            onReport = { openReportId = vm.archivedReportId(it) }) { personalModule = null }
         else if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false },
             onNotice = { message -> scope.launch { snackbar.showSnackbar(message) } }, onOpenModule = { personalModule = it })
         else if (showRoutePlans) RoutePlansScreen(routePlans, shownSavedStops, nearbyForPlans,

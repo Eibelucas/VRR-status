@@ -75,7 +75,8 @@ fun JourneyArchiveScreen(
     onClear: () -> Unit,
     onEnabled: (Boolean) -> Unit,
     onRetentionDays: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onReport: ((de.luca.mitfahrt.data.Ride) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -194,7 +195,7 @@ fun JourneyArchiveScreen(
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
 
-    detail?.let { entry -> ArchivedJourneyDialog(entry, today) { detail = null } }
+    detail?.let { entry -> ArchivedJourneyDialog(entry, today, onReport?.let { open -> { open(entry.ride) } }) { detail = null } }
 
     if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
@@ -239,7 +240,7 @@ private fun LineBadge(line: String) {
 
 /** Historic view: planned times of that day, no countdown and no start action. */
 @Composable
-private fun ArchivedJourneyDialog(entry: ArchivedJourney, today: LocalDate, onDismiss: () -> Unit) {
+private fun ArchivedJourneyDialog(entry: ArchivedJourney, today: LocalDate, onReport: (() -> Unit)?, onDismiss: () -> Unit) {
     val ride = entry.ride
     val last = ride.exitTargetIndex() ?: ride.stops.lastIndex
     val stops = ride.stops.subList(ride.boardingIndex.coerceIn(0, ride.stops.lastIndex), (last + 1).coerceAtMost(ride.stops.size))
@@ -259,7 +260,8 @@ private fun ArchivedJourneyDialog(entry: ArchivedJourney, today: LocalDate, onDi
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Schließen") } }
+        confirmButton = { TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Schließen") } },
+        dismissButton = { if (onReport != null) TextButton(onClick = onReport, modifier = Modifier.heightIn(min = 48.dp)) { Text("Bericht ansehen") } }
     )
 }
 

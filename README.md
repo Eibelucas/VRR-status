@@ -239,3 +239,9 @@ Passende gespeicherte Routen erscheinen darunter; ohne Treffer entfällt der Abs
 Nahe Haltestellen und NEW-Abfahrten stehen im eigenen Tab **In der Nähe**.
 Suche und Vorschau starten keine Begleitung und speichern keine Route automatisch.
 Details zu Datenquelle, Suchoptionen, Echtzeit und verbleibenden Lücken: [Verbindungssuche](docs/JOURNEY_PLANNER.md).
+
+### Automatik und Fahrtberichte ab 0.19
+
+Ein Bericht umfasst die ganze begleitete Verbindung, auch bei Umstiegen und fehlenden Betreiberprognosen. Er öffnet sich ohne Haltestellenauswahl und ist aus dem Fahrtenarchiv erreichbar. Einstiegskorrekturen werden im laufenden Bericht berücksichtigt; frühere PDFs bleiben unverändert. Automatische Berichtsvorbereitung und Erkennung sind abschaltbar. Details: [Automatik und Berichte](docs/AUTOMATIK_UND_BERICHTE.md).
+
+Der CI-Job `pdf-device-test` prüft den echten Android-PDF-Writer, das Öffnen und Rendern mehrseitiger Dateien über den FileProvider sowie den Teilen-Dialog. Veröffentlichungen benötigen sowohl die normalen Prüfungen als auch diesen Android-Test.

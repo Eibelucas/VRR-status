@@ -1,6 +1,6 @@
 # Busautomatik, Einstiegserkennung und Fahrtberichte
 
-Stand: 13.11.2026. Alle Szenarien in den Tests sind synthetisch. Eine Erkennungsquote wurde nicht gemessen.
+Stand von Claudes Erstimplementierung: 13.11.2026. Integrationsänderungen für 0.19 stehen unten. Alle Szenarien in den Tests sind synthetisch. Eine Erkennungsquote wurde nicht gemessen.
 
 ## 1. Neue Bedienung in Kürze
 - **Begleiten** wie bisher starten (Route, Verbindung oder Abfahrt). Suche und Vorschau starten weiterhin nichts.
@@ -120,3 +120,13 @@ Design Read: Nahverkehrs-App für Schüler und Pendler in Mönchengladbach, ruhi
 - R-20, R-30 PASS: Linienschild und Beere sind NEW-spezifisch. R-21 PASS: Umschalter vorhanden. R-29 PASS: Beere, Bernstein, Neutral. R-31 PASS: Gründe in `DESIGN.md`.
 
 Ergebnis: kein FAIL. R-32/R-39 und R-35 sind nur so weit bestätigt, wie es ohne Gerät möglich war.
+
+## Integration 0.19.0
+
+- Langsames Fahren am Ziel ohne Fahrzeugposition ist kein Ausstiegsnachweis. Erneutes Auswerten derselben Handyposition zählt nicht als neue Bestätigung.
+- „Doch nicht im Bus“ entfernt den zurückgenommenen Einstieg aus dem aktuellen Bericht und vermerkt die Korrektur; vorhandene Exporte bleiben unverändert.
+- Laufende gelöschte Berichte werden anhand eines gespeicherten Begleitungsschlüssels nicht erneut automatisch erzeugt. Neue Begleitungen bleiben möglich.
+- Anschlusswarnungen werden für die passende, frische Anschlussfahrt aufgenommen. Berechnete Risiken stammen aus der App, gemeldete Ausfälle vom Betreiber; Daten- und Erfassungszeit bleiben getrennt.
+- Das Fahrtenarchiv verlinkt den Bericht. Schreibfehler erscheinen in der Oberfläche; ein fehlgeschlagener Export gilt nicht als gespeichert. Alte PDF-Stände werden nicht überschrieben.
+- `ReportPdfInstrumentation` prüft den tatsächlichen PDF-Writer auf Android, mehrseitiges Öffnen und Rendern über FileProvider, unveränderte frühere Exporte und den Teilen-Dialog. Der erforderliche CI-Job heißt `pdf-device-test`; sein Ergebnis steht im jeweiligen GitHub-Actions-Lauf. Lokale Emulatorstarts scheiterten an der Speicherprüfung der Umgebung.
+- Echte Mitfahrten, TalkBack und physische Galaxy-/Watch-Bedienung sind weiterhin nicht geprüft.

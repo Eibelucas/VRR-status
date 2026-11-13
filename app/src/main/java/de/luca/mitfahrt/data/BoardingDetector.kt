@@ -18,6 +18,7 @@ data class BoardingState(
     val support: Int = 0,
     val supportSince: Instant? = null,
     val lastSupportAt: Instant? = null,
+    val lastSupportFixAt: Instant? = null,
     val lastEvaluatedAt: Instant? = null,
     /** After a manual correction the automatic change in that direction pauses until then. */
     val boardingHoldUntil: Instant? = null,
@@ -120,12 +121,14 @@ object BoardingDetector {
             return if (state.phase == pending && stale) state.copy(phase = rest, since = now, support = 0, supportSince = null) else state
         }
         // The same fix evaluated twice is one measurement.
-        val newMeasurement = lastFix != null && (state.lastSupportAt == null || lastFix.isAfter(state.lastSupportAt.minusSeconds(1)))
+        val newMeasurement = lastFix != null && (state.lastSupportFixAt == null || lastFix.isAfter(state.lastSupportFixAt))
         val count = if (newMeasurement) state.support + 1 else state.support
         val since = state.supportSince ?: now
         val confirmed = count >= confirmations && Duration.between(since, now).seconds >= minSeconds
         return state.copy(phase = if (confirmed) done else pending, support = if (confirmed) 0 else count,
-            supportSince = if (confirmed) null else since, lastSupportAt = now,
+            supportSince = if (confirmed) null else since,
+            lastSupportAt = if (newMeasurement) now else state.lastSupportAt,
+            lastSupportFixAt = if (newMeasurement) lastFix else state.lastSupportFixAt,
             since = if (confirmed || state.phase != pending) now else state.since)
     }
 
@@ -235,8 +238,8 @@ object BoardingDetector {
         val tolerance = reference.lateralTolerance(last.accuracy.toDouble()) + 40.0
         val off = recent.takeLast(3).all { fix -> reference.line.project(fix.point)?.let { it.distance > tolerance } != false }
         if (off && move.distance >= 30.0) return atTarget
-        // 3. On foot at the exit stop: real movement at walking pace, not a bus waiting at a light.
-        if (atTarget && move.distance >= 40.0 && move.seconds >= 45 && input.vehicle == null) return true
+        // Walking pace near the target also describes a bus crawling in traffic. Without
+        // separation from the vehicle or route, keep tracking and leave the manual exit available.
         return null
     }
 }

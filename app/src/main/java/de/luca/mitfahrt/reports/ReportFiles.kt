@@ -51,7 +51,7 @@ class ReportFiles(private val context: Context) {
         output.use { target -> source.inputStream().use { it.copyTo(target) } }
     }
 
-    fun clear(): Boolean = directory.listFiles().orEmpty().map { it.deleteRecursively() }.all { it }
+    fun clear(): Boolean = directory.listFiles().orEmpty().filterNot { it.name == "journeys" }.map { it.deleteRecursively() }.all { it }
 
     fun file(id: String): File {
         require(id.matches(Regex("[0-9a-f-]{36}"))) { "Ungültiger Bericht." }

@@ -215,6 +215,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     private var nearbyQueries = true
 
     init {
+        viewModelScope.launch { app.journeyReports.error.collect { error ->
+            if (error != null) reportState.value = reportState.value.copy(error = error)
+        } }
         viewModelScope.launch { app.archive.error.collect { message ->
             if (message != null) { actionState.value = message; app.archive.clearError() }
         } }
@@ -437,18 +440,18 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     // --- journey reports: one per accompanied connection, exported only on request ---
     val journeyReports = app.journeyReports.state
     private fun reportSnapshot(): de.luca.mitfahrt.reports.ReportSnapshot {
-        val state = tracking.value
-        val live = state.liveBus
-        return de.luca.mitfahrt.reports.ReportSnapshot(state.ride, companion.value, state.lastRefreshFailed,
-            live.vehicle?.id?.takeIf { live.journeyKey == state.ride?.departure?.key &&
-                (live.confirmed || live.selectedVehicleId != null || live.auto.holdsVehicle) }, arrivals.value)
+        return de.luca.mitfahrt.reports.ReportSnapshot.capture(tracking.value, companion.value,
+            app.companionNext.value, arrivals.value, Instant.now())
     }
     /** Report of the running accompaniment; created now if automatic preparation is off. */
     fun currentReportId(): String? = app.journeyReports.ensure(reportSnapshot())?.id
         ?: null.also { reportState.value = reportState.value.copy(error = "Für diese Fahrt kann kein Bericht angelegt werden.") }
     fun archivedReportId(ride: Ride): String? = app.journeyReports.forArchived(ride, arrivals.value)?.id
         ?: null.also { reportState.value = reportState.value.copy(error = "Der Bericht konnte nicht gespeichert werden.") }
-    fun addObservation(id: String, text: String) { app.journeyReports.observe(id, text) }
+    fun addObservation(id: String, text: String) {
+        if (text.isNotBlank() && !app.journeyReports.observe(id, text))
+            reportState.value = reportState.value.copy(error = "Die Angabe konnte nicht gespeichert werden.")
+    }
     fun removeObservation(id: String, eventId: String) { app.journeyReports.removeObservation(id, eventId) }
     fun deleteJourneyReport(id: String) {
         actionState.value = if (runCatching { app.journeyReports.delete(id) }.getOrDefault(false)) "Bericht gelöscht"
@@ -514,7 +517,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
             error = if (file == null) "Der Bericht ist nicht mehr vorhanden." else null)
     }
     fun consumeShare() { reportState.value = reportState.value.copy(share = null) }
-    fun clearReportError() { reportState.value = reportState.value.copy(error = null) }
+    fun clearReportError() { reportState.value = reportState.value.copy(error = null); app.journeyReports.clearError() }
     fun markArrival(stop: Stop) { if (settingsStore.current().bool("arrival_store", true)) app.arrivals.record(stop) else actionState.value = "Speichern eigener Ankünfte ist ausgeschaltet." }
     fun confirmDetectedArrival() {
         val state = tracking.value
@@ -531,7 +534,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                 "arrivals" -> app.arrivals.clear()
                 "trip_history" -> app.tripPlaces.clearRecent()
                 "trip_places" -> app.tripPlaces.clearAll()
-                "reports" -> check(app.reports.clear())
+                "reports" -> { check(app.journeyReports.clear()); check(app.reports.clear()) }
                 "map" -> { val path = File(app.cacheDir, "waiting-map"); check(!path.exists() || path.deleteRecursively()) }
             } }
             if (area == "reports") { reportState.value = ReportsState(); app.journeyReports.reload() }
@@ -693,7 +696,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     // --- accompaniment of a planned journey (several legs) ---
     val companion = app.companion.state
     val companionSeen = app.companion.seen
-    private val companionNextState = MutableStateFlow<Ride?>(null)
+    private val companionNextState = app.companionNext
     /** Live trip of the next leg, for the transfer; null when not loaded or not available. */
     val companionNext = companionNextState.asStateFlow()
     private var companionNextJob: Job? = null

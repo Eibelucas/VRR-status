@@ -301,4 +301,99 @@ class JourneyReportTest {
         val decoded = RideCodec.decode(legacy)
         assertTrue(decoded.boarded); assertNull(decoded.boardedAt); assertNull(decoded.boardedBy)
     }
+    @Test fun `taking boarding back corrects future reports and preserves the frozen export`() {
+        val reports = JourneyReportStore(File(temporary.root, "corrections"), { options }, { 0 }, { now }) { blocks, file ->
+            file.writeText(blocks.joinToString("\n")); 1
+        }
+        val waiting = ride()
+        val id = reports.sync(ReportSnapshot(waiting), true)!!.id
+        now = T0.plusSeconds(150)
+        reports.sync(ReportSnapshot(waiting.board("auto", now)), true)
+        val frozen = reports.export(id)
+        val bytes = frozen.readBytes()
+        now = now.plusSeconds(10)
+        val corrected = reports.sync(ReportSnapshot(waiting.unboard()), true)!!
+        assertTrue(corrected.events(ReportEventType.BOARDED).isEmpty())
+        assertEquals(ReportSource.OWN, corrected.event(ReportEventType.BOARDING_CORRECTED)!!.source)
+        assertNull(corrected.waitUntil)
+        assertArrayEquals(bytes, frozen.readBytes())
+        val correctedPdf = reports.export(id).readText()
+        assertTrue(correctedPdf.contains("Einstieg zurückgenommen"))
+        now = now.plusSeconds(60)
+        val boardedAgain = reports.sync(ReportSnapshot(waiting.board("manual", now)), true)!!
+        assertEquals(now, boardedAgain.event(ReportEventType.BOARDED)!!.at)
+        assertEquals(1, boardedAgain.events(ReportEventType.BOARDING_CORRECTED).size)
+        assertEquals(2, JourneyReport.decode(boardedAgain.encode()).exports.size)
+    }
+
+    @Test fun `deleted running reports stay deleted after updates and a process restart`() {
+        val dir = File(temporary.root, "deleted")
+        var reports = store(dir)
+        val waiting = ride()
+        val id = reports.sync(ReportSnapshot(waiting), true)!!.id
+        assertTrue(reports.delete(id))
+        assertNull(reports.sync(ReportSnapshot(waiting), true))
+        reports = store(dir)
+        assertNull(reports.sync(ReportSnapshot(waiting.board("manual", T0.plusSeconds(200))), true))
+        assertTrue(reports.state.value.isEmpty())
+        val newSession = waiting.copy(trackingStartedAt = T0.plusSeconds(600))
+        assertNotNull(reports.sync(ReportSnapshot(newSession), true))
+    }
+
+    @Test fun `clearing reports also suppresses the active session across restart`() {
+        val dir = File(temporary.root, "cleared")
+        val reports = store(dir)
+        reports.sync(ReportSnapshot(ride()), true)
+        assertTrue(reports.clear())
+        assertNull(store(dir).sync(ReportSnapshot(ride()), true))
+    }
+
+    @Test fun `failed report writes return no success and leave the previous record readable`() {
+        val dir = File(temporary.root, "blocked")
+        dir.writeText("not a directory")
+        val reports = store(dir)
+        assertNull(reports.sync(ReportSnapshot(ride()), true))
+        assertTrue(reports.state.value.isEmpty())
+        assertNotNull(reports.error.value)
+        reports.clearError()
+        assertNull(reports.error.value)
+    }
+
+    @Test fun `failed export bookkeeping rolls back the new files and reports an error`() {
+        val dir = File(temporary.root, "export-failure")
+        val reports = JourneyReportStore(dir, { options }, { 0 }, { now }) { _, file -> file.writeText("pdf"); 1 }
+        val report = reports.sync(ReportSnapshot(ride()), true)!!
+        val record = File(dir, "${report.id}.json")
+        record.delete()
+        record.mkdir()
+        File(record, "block").writeText("do not replace")
+        assertThrows(Exception::class.java) { reports.export(report.id) }
+        assertTrue(reports.state.value.single().exports.isEmpty())
+        assertNotNull(reports.error.value)
+        assertTrue(File(dir, report.id).listFiles().orEmpty().isEmpty())
+    }
+
+    @Test fun `an unindexed export is never overwritten or removed on retry`() {
+        val dir = File(temporary.root, "existing-export")
+        val reports = JourneyReportStore(dir, { options }, { 0 }, { now }) { _, file -> file.writeText("new"); 1 }
+        val report = reports.sync(ReportSnapshot(ride()), true)!!
+        val folder = File(dir, report.id).apply { mkdirs() }
+        val previous = File(folder, options.exportName(report, 1)).apply { writeText("original") }
+        assertThrows(Exception::class.java) { reports.export(report.id) }
+        assertEquals("original", previous.readText())
+    }
+
+    @Test fun `transfer warnings preserve data time and distinguish app assessment from cancellation`() {
+        val reports = store()
+        val snapshot = ReportSnapshot(ride(), transfer = CompanionTransfer(45, TransferRisk.TIGHT, false),
+            transferObservedAt = T0.minusSeconds(30))
+        val report = reports.sync(snapshot, true)!!
+        val event = report.event(ReportEventType.TRANSFER_RISK)!!
+        assertEquals(ReportSource.APP, event.source)
+        assertEquals(T0.minusSeconds(30), event.at)
+        assertEquals(now, event.recordedAt)
+        val cancelled = reports.sync(snapshot.copy(transfer = CompanionTransfer(-1, TransferRisk.MISSED, true)), true)!!
+        assertEquals(ReportSource.OPERATOR, cancelled.event(ReportEventType.TRANSFER_RISK)!!.source)
+    }
+
 }
