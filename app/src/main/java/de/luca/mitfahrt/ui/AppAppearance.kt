@@ -107,9 +107,9 @@ fun AppearanceCard() {
     val context = LocalContext.current
     val store = remember(context) { AppSettingsStore(context) }
     val settings by store.state.collectAsStateWithLifecycle()
-    Card(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+    Card(Modifier.fillMaxWidth(), shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Darstellung", style = MaterialTheme.typography.titleLarge)
+            Text("Darstellung", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("system" to "System", "light" to "Hell", "dark" to "Dunkel").forEach { (key, label) ->
                     FilterChip(selected = settings.string("theme", "system") == key, onClick = { store.set("theme", key) }, label = { Text(label) })

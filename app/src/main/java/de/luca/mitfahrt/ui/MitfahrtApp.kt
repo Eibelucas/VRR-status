@@ -58,6 +58,7 @@ import de.luca.mitfahrt.data.*
 import de.luca.mitfahrt.tracking.RideNotifications
 import de.luca.mitfahrt.tracking.NowBarSupport
 import de.luca.mitfahrt.reports.DelayEvidence
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import de.luca.mitfahrt.data.BoardingPhase
@@ -857,7 +858,7 @@ private fun LineBadge(line: String, dark: Boolean = false) {
 }
 
 @Composable
-private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: UpdateState,
+internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: UpdateState,
     onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit, hapticTest: de.luca.mitfahrt.alerts.HapticTestState, onHapticTest: () -> Unit,
     alertPreferences: AlertPreferences, onArrival: (Boolean) -> Unit, onExit: (Boolean) -> Unit, onLead: (Int) -> Unit,
     routePlans: RoutePlansState, onAutomaticLearning: (Boolean) -> Unit, onManageRoutes: () -> Unit,
@@ -874,71 +875,34 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     LaunchedEffect(Unit) {
         while (true) { nowBarStatus = NowBarSupport.status(context); delay(2000) }
     }
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    val quickStore = remember(context) { AppSettingsStore(context) }
+    val quick by quickStore.state.collectAsStateWithLifecycle()
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item { Header("Einstellungen", "", Icons.Outlined.Tune) }
-        item { Button(shape = ControlShape, onClick = onCustomize, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-            Icon(Icons.Outlined.Tune, null); Spacer(Modifier.width(10.dp)); Text("Alle Einstellungen & Profile")
-        } }
-        item { OutlinedButton(shape = ControlShape, onClick = onManageData, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Icon(Icons.Outlined.Storage, null); Spacer(Modifier.width(10.dp)); Text("Gespeicherte Daten verwalten")
-        } }
+        // Everyday switches first; everything rarer sits one level deeper as plain rows.
         item {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Deine Strecken", style = MaterialTheme.typography.titleLarge)
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text("Strecken automatisch merken", fontSize = 15.sp)
-                            Text(if (routePlans.automaticLearning) "Häufige Strecken zusätzlich vorschlagen" else "Nur selbst gewählte Routen",
-                                color = Soft, fontSize = 12.sp)
-                        }
-                        Switch(checked = routePlans.automaticLearning, onCheckedChange = onAutomaticLearning)
-                    }
-                    OutlinedButton(shape = ControlShape, onClick = onManageRoutes, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
-                        Text("Routen und Zeiten einrichten")
-                    }
-                }
+            SettingsGroup("Automatik") {
+                SettingsSwitch("Einstieg und Ausstieg erkennen", "Wechselt selbst von Warten zu Im Bus. Korrigieren geht immer.",
+                    quick.bool("boarding_auto", true)) { quickStore.set("boarding_auto", it.toString()) }
+                SettingsSwitch("Bus automatisch zuordnen", "Zeigt die passende Busposition, ohne dass du wählen musst.",
+                    quick.bool("vehicle_auto", true)) { quickStore.set("vehicle_auto", it.toString()) }
+                SettingsSwitch("Fahrtbericht vorbereiten", "Zu jeder begleiteten Verbindung. Geteilt wird nur auf deinen Wunsch.",
+                    quick.bool("report_auto", true)) { quickStore.set("report_auto", it.toString()) }
             }
         }
-        item { PersonalModuleLinks(onOpenModule) }
-        item { AppearanceCard() }
+        item {
+            SettingsGroup("Routen") {
+                SettingsLink("Routen und Zeiten", "Namen, Richtung, Wochentage und Zeitfenster", onManageRoutes)
+                SettingsSwitch("Häufige Strecken vorschlagen", null, routePlans.automaticLearning, onAutomaticLearning)
+            }
+        }
         item { AlertPreferencesCard(alertPreferences, onArrival, onExit, onLead) }
-        item { TextButton(onClick = onIntro) { Icon(Icons.Outlined.HelpOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Einführung ansehen") } }
+        item { AppearanceCard() }
         item {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("App-Updates", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-                    Text("Installiert: ${BuildConfig.VERSION_NAME}", color = Soft, fontSize = 13.sp)
-                    Text(when (updates.phase) {
-                        UpdatePhase.IDLE -> "Updates über GitHub"
-                        UpdatePhase.CHECKING -> "Suche nach Updates …"
-                        UpdatePhase.CURRENT -> "Du bist auf dem neuesten Stand."
-                        UpdatePhase.EMPTY -> "Noch keine Update-Version veröffentlicht."
-                        UpdatePhase.AVAILABLE -> "Version ${updates.info?.versionName} ist verfügbar."
-                        UpdatePhase.DOWNLOADING -> "Wird heruntergeladen · ${(updates.progress * 100).toInt()} %"
-                        UpdatePhase.READY -> "Version ${updates.info?.versionName} ist bereit."
-                        UpdatePhase.ERROR -> updates.message ?: "Das Update konnte nicht geladen werden."
-                    }, color = if (updates.phase == UpdatePhase.ERROR) Amber else Paper, fontSize = 14.sp, lineHeight = 20.sp)
-                    updates.changes?.let { Text(it, fontSize = 13.sp, color = Soft, maxLines = 12, overflow = TextOverflow.Ellipsis) }
-                    if (updates.phase == UpdatePhase.DOWNLOADING) AppLinearProgressIndicator(progress = { updates.progress }, modifier = Modifier.fillMaxWidth())
-                    when (updates.phase) {
-                        UpdatePhase.CHECKING -> AppCircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                        UpdatePhase.DOWNLOADING -> Unit
-                        UpdatePhase.AVAILABLE -> Button(shape = ControlShape, onClick = onDownloadUpdate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Herunterladen") }
-                        UpdatePhase.READY -> Button(shape = ControlShape, onClick = { updates.file?.let(onInstallUpdate) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Installieren") }
-                        else -> OutlinedButton(shape = ControlShape, onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Nach Updates suchen") }
-                    }
-                    if (updates.phase == UpdatePhase.ERROR && updates.info != null)
-                        TextButton(onClick = onDownloadUpdate) { Text("Download erneut versuchen") }
-                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateInfo.REPOSITORY))) }) { Text("Projekt auf GitHub") }
-                }
-            }
-        }
-        item {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Icon(Icons.Outlined.Lock, null, tint = Lime)
-                    Text("Auf dem Sperrbildschirm", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+            SettingsGroup("Mehr") {
+                SettingsLink("Alle Einstellungen und Profile", "Karte, Hinweise, Berichte, Datenschutz", onCustomize)
+                SettingsLink("Gespeicherte Daten", "Ansehen, sichern und löschen", onManageData)
+                SettingsExpander("Sperrbildschirm und Now Bar") {
                     Text(if (Build.VERSION.SDK_INT >= 36) "Bus auswählen, Live-Benachrichtigungen erlauben und die App verlassen. Die Now Bar prüfst du anschließend auf dem Sperrbildschirm."
                     else "Deine Fahrt erscheint als laufende Benachrichtigung. Für die Now Bar ist eine unterstützte Samsung-Version mit Android 16 nötig.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
                     Text(nowBarStatus, color = Paper, fontSize = 13.sp, lineHeight = 20.sp)
@@ -968,31 +932,8 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
                     }
                     OutlinedButton(shape = ControlShape, onClick = { RideNotifications.openSettings(context) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Benachrichtigungen öffnen") }
                 }
-            }
-        }
-        item {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Outlined.Wifi, null, tint = Lime)
-                    Text("Buserkennung", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-                    Text("NEW-Hotspot und dein Standort helfen beim Finden. Deine Linie bestätigst du selbst.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
-                    Text("Die Erkennung läuft nur, wenn du sie startest. Android kann WLAN-Scans im Hintergrund einschränken.", color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
-                    TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }) { Text("Berechtigungen öffnen") }
-                }
-            }
-        }
-        item {
-            TextButton(onClick = onDemo) {
-                Icon(Icons.Outlined.PlayCircleOutline, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp)); Text("Demofahrt ansehen")
-            }
-        }
-        item {
-            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Outlined.Watch, null, tint = Lime)
-                    Text("Auf deiner Uhr", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-                    Text("Linie, nächster Halt und Restzeit auf Wear OS. Die Fahrt wählst du hier am Handy.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
+                SettingsExpander("Uhr") {
+                    Text("Linie, nächster Halt und Restzeit auf Wear OS. Die Fahrt wählst du am Handy.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
                     TextButton(onClick = {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${UpdateInfo.REPOSITORY}/blob/main/WATCH.md")))
                     }) { Text("Watch-App & Installation") }
@@ -1003,19 +944,46 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
                     hapticTest.message?.let { Text(it, color = Soft, fontSize = 13.sp) }
                     Text("Nicht stören und Vibrationsstärke gelten auf beiden Geräten.", color = Soft, fontSize = 12.sp)
                 }
-            }
-        }
-        item {
-            OutlinedButton(shape = ControlShape, onClick = {
+                SettingsExpander("Bus per WLAN finden") {
+                    Text("Der NEW-Hotspot und dein Standort schlagen Fahrten vor. Welche es ist, bestätigst du selbst. Die Suche läuft nur, wenn du sie startest.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
+                    TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }) { Text("Berechtigungen öffnen") }
+                }
+                SettingsExpander("Update · Version ${BuildConfig.VERSION_NAME}", open = updates.phase in setOf(UpdatePhase.AVAILABLE, UpdatePhase.READY, UpdatePhase.DOWNLOADING, UpdatePhase.ERROR)) {
+                    Text("Installiert: ${BuildConfig.VERSION_NAME}", color = Soft, fontSize = 13.sp)
+                    Text(when (updates.phase) {
+                        UpdatePhase.IDLE -> "Updates über GitHub"
+                        UpdatePhase.CHECKING -> "Suche nach Updates …"
+                        UpdatePhase.CURRENT -> "Du bist auf dem neuesten Stand."
+                        UpdatePhase.EMPTY -> "Noch keine Update-Version veröffentlicht."
+                        UpdatePhase.AVAILABLE -> "Version ${updates.info?.versionName} ist verfügbar."
+                        UpdatePhase.DOWNLOADING -> "Wird heruntergeladen · ${(updates.progress * 100).toInt()} %"
+                        UpdatePhase.READY -> "Version ${updates.info?.versionName} ist bereit."
+                        UpdatePhase.ERROR -> updates.message ?: "Das Update konnte nicht geladen werden."
+                    }, color = if (updates.phase == UpdatePhase.ERROR) Amber else Paper, fontSize = 14.sp, lineHeight = 20.sp)
+                    updates.changes?.let { Text(it, fontSize = 13.sp, color = Soft, maxLines = 12, overflow = TextOverflow.Ellipsis) }
+                    if (updates.phase == UpdatePhase.DOWNLOADING) AppLinearProgressIndicator(progress = { updates.progress }, modifier = Modifier.fillMaxWidth())
+                    when (updates.phase) {
+                        UpdatePhase.CHECKING -> AppCircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        UpdatePhase.DOWNLOADING -> Unit
+                        UpdatePhase.AVAILABLE -> Button(shape = ControlShape, onClick = onDownloadUpdate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Herunterladen") }
+                        UpdatePhase.READY -> Button(shape = ControlShape, onClick = { updates.file?.let(onInstallUpdate) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Installieren") }
+                        else -> OutlinedButton(shape = ControlShape, onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Nach Updates suchen") }
+                    }
+                    if (updates.phase == UpdatePhase.ERROR && updates.info != null)
+                        TextButton(onClick = onDownloadUpdate) { Text("Download erneut versuchen") }
+                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateInfo.REPOSITORY))) }) { Text("Projekt auf GitHub") }
+                }
+                SettingsLink("Einführung ansehen", null, onIntro)
+                SettingsLink("Demofahrt ansehen", "Beispieldaten, ohne echte Fahrt", onDemo)
+                SettingsLink("App teilen", null) {
                 context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, "Mitfahrt · Busstatus für Mönchengladbach\n${UpdateInfo.REPOSITORY}/releases/latest")
                 }, "App teilen"))
-            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                Icon(Icons.Outlined.Share, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp)); Text("App teilen")
+                }
             }
         }
+        item { PersonalModuleLinks(onOpenModule) }
         item {
             Text("Daten vom VRR. Standort wird für Haltestellenabfragen und – nur wenn du „Mein Standort“ wählst – für die Verbindungssuche an den VRR übermittelt, aber nicht gespeichert. Kein Konto, keine Werbung, keine Analyse-Tracker.",
                 color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
@@ -1027,8 +995,55 @@ private fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Update
     }
 }
 
+/** A titled run of rows on the page background: no card, a hairline between rows. */
 @Composable
-private fun ReportsPage(state: ReportsState, journeys: List<de.luca.mitfahrt.reports.JourneyReport>, lastRide: Ride?, modifier: Modifier,
+private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp).semantics { heading() })
+        content()
+    }
+}
+
+@Composable
+private fun SettingsSwitch(title: String, hint: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+        .toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, fontSize = 16.sp)
+            if (hint != null) Text(hint, color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
+        }
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+@Composable
+private fun SettingsLink(title: String, hint: String?, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, fontSize = 16.sp)
+            if (hint != null) Text(hint, color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
+        }
+        Icon(Icons.Outlined.ChevronRight, null, tint = Soft)
+    }
+}
+
+/** Rare, longer content stays folded until it is needed. */
+@Composable
+private fun SettingsExpander(title: String, open: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by rememberSaveable(title) { mutableStateOf(open) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (expanded) "Einklappen" else "Ausklappen") { expanded = !expanded }
+        .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(end = 12.dp))
+        Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = Soft)
+    }
+    if (expanded) Column(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+}
+
+@Composable
+internal fun ReportsPage(state: ReportsState, journeys: List<de.luca.mitfahrt.reports.JourneyReport>, lastRide: Ride?, modifier: Modifier,
     onOpen: (String) -> Unit, onCreate: (Ride) -> Unit, onShare: (String) -> Unit, onDeleteReport: (String) -> Unit,
     onDeleteRide: (Ride) -> Unit, onSave: (String) -> Unit, onOpenModule: (String) -> Unit) {
     var confirmDeleteId by rememberSaveable { mutableStateOf<String?>(null) }

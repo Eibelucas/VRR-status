@@ -220,4 +220,30 @@ class PlannerScreenshotTest {
         ridePage(RouteFixtures.ride(delaySeconds = 120L).board("auto", RouteFixtures.T0.plusSeconds(20)), BoardingState(phase = BoardingPhase.ENDED))
         capture("9-fahrt-ausgestiegen")
     }
+
+    private fun settingsPage() {
+        compose.setContent { MitfahrtTheme {
+            Box(Modifier.fillMaxSize().background(Ink)) {
+                SettingsPage(Modifier, {}, de.luca.mitfahrt.updates.UpdateState(), {}, {}, {}, {}, de.luca.mitfahrt.alerts.HapticTestState(), {},
+                    AlertPreferences(), {}, {}, {}, RoutePlansState(), {}, {}, {}, {}, {})
+            }
+        } }
+    }
+
+    @Test fun `settings page`() { settingsPage(); capture("10-einstellungen") }
+
+    @Config(qualifiers = "+night")
+    @Test fun `settings page dark`() { settingsPage(); capture("10-einstellungen-dunkel") }
+
+    @Test fun `reports list with a running and a finished report and an old single stop report`() {
+        val old = de.luca.mitfahrt.reports.DelayEvidence.fromRide(RouteFixtures.ride(boarded = true, delaySeconds = 300L), 1, t0)
+        val running = reportSample.copy(id = "55555555-5555-4555-8555-555555555555", state = de.luca.mitfahrt.reports.ReportState.RUNNING,
+            originName = "Mönchengladbach Hehn Kirche", destinationName = "Mönchengladbach Rheydt Hbf, Busbahnhof Steig 4")
+        compose.setContent { MitfahrtTheme {
+            Box(Modifier.fillMaxSize().background(Ink)) {
+                ReportsPage(de.luca.mitfahrt.ReportsState(entries = listOf(old)), listOf(running, reportSample), null, Modifier, {}, {}, {}, {}, {}, {}, {})
+            }
+        } }
+        capture("11-berichte")
+    }
 }

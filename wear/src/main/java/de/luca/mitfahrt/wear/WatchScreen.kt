@@ -67,21 +67,16 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
             ScreenScaffold(scrollState = state) { padding ->
                 TransformingLazyColumn(state = state, modifier = Modifier.fillMaxSize(), contentPadding = padding,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
-                        Text("MITFAHRT", color = Soft, fontSize = 10.sp, letterSpacing = 1.4.sp,
-                            modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-                    }
-                    item {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            FilledTonalButton(onClick = { view = "active" }, modifier = Modifier.weight(1f)) { Text("Fahrt", fontSize = 10.sp) }
-                            FilledTonalButton(onClick = { view = "routes" }, modifier = Modifier.weight(1f)) { Text("Routen", fontSize = 10.sp) }
-                        }
-                    }
-                    item { FilledTonalButton(onClick = { view = if (view == "favorites") "active" else "favorites" }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (view == "favorites") "Zur Fahrt" else "Haltestellen")
-                    } }
                     // The optional library snapshot and its command key arrive atomically.
                     val current = if (library.sentAt != Instant.EPOCH) library.ride else ride
+                    // With a running ride the glance starts with the ride itself; switching views comes after it.
+                    val rideFirst = view == "active" && current?.active == true
+                    val navigation: androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope.() -> Unit = {
+                        if (view != "active") item { FilledTonalButton(onClick = { view = "active" }, modifier = Modifier.fillMaxWidth()) { Text("Zur Fahrt") } }
+                        if (view != "routes") item { FilledTonalButton(onClick = { view = "routes" }, modifier = Modifier.fillMaxWidth()) { Text("Routen") } }
+                        if (view != "favorites") item { FilledTonalButton(onClick = { view = "favorites" }, modifier = Modifier.fillMaxWidth()) { Text("Haltestellen") } }
+                    }
+                    if (!rideFirst) navigation()
                     if (view == "targets") {
                         item { StatusText("Ausstiegsziel", Lime) }
                         library.targets.forEach { target -> item {
@@ -98,7 +93,7 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                                 enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) {
                                 Column {
                                     Text(entry.title, maxLines = 2)
-                                    Text(entry.detail, fontSize = 10.sp, color = Soft, maxLines = 2)
+                                    Text(entry.detail, fontSize = 12.sp, color = Soft, maxLines = 2)
                                 }
                             }
                         } }
@@ -112,7 +107,7 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                                     Column {
                                         Text("${departure.line} → ${departure.destination}", maxLines = 2)
                                         Text(listOfNotNull(departure.at?.atZone(ZoneId.of("Europe/Berlin"))?.format(DateTimeFormatter.ofPattern("HH:mm")),
-                                            if (departure.live && !old) "Live" else "Fahrplan").joinToString(" · "), fontSize = 11.sp, color = Soft)
+                                            if (departure.live && !old) "Live" else "Fahrplan").joinToString(" · "), fontSize = 12.sp, color = Soft)
                                     }
                                 }
                             } }
@@ -130,6 +125,13 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                         if (current.demo) item { StatusText("Demofahrt", Lime) }
                         if (current.stale(now)) item { StatusText(if (!current.running) "Fahrt pausiert" else "Daten veraltet", Amber) }
                         item { RideHero(current, now, library.settings["watch_detail"] != "detail") }
+                        if (current.boarded) item {
+                            WatchPanel {
+                                Text("Nächster Halt", color = Soft, fontSize = 12.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text(current.nextStop, style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
                         if (!current.boarded && "board" in allowedActions) item {
                             FilledTonalButton(onClick = { onCommand(WatchCommand("board", journey = journey)) }, enabled = !commandBusy,
                                 modifier = Modifier.fillMaxWidth()) { Text("Bin im Bus") }
@@ -146,13 +148,6 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                             FilledTonalButton(onClick = { onCommand(WatchCommand("stop", journey = journey)); confirmStop = false },
                                 enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) { Text("Beenden bestätigen") }
                         }
-                        if (current.boarded) item {
-                            WatchPanel {
-                                Text("NÄCHSTER HALT", color = Soft, fontSize = 10.sp)
-                                Spacer(Modifier.height(5.dp))
-                                Text(current.nextStop, style = MaterialTheme.typography.titleSmall)
-                            }
-                        }
                         item {
                             val fetched = current.fetchedAt?.atZone(ZoneId.of("Europe/Berlin"))?.format(DateTimeFormatter.ofPattern("HH:mm"))
                             StatusText(listOfNotNull(current.source.takeIf { it.isNotBlank() }, fetched?.let { "Stand $it" },
@@ -168,6 +163,7 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                     if (commandBusy) item { StatusText("Wird am Handy ausgeführt …", Soft) }
                     commandFeedback?.let { message -> item { StatusText(message, Amber) } }
                     if (library.settings["watch_show_connection"] != "false") syncMessage?.let { message -> item { StatusText(message, Amber) } }
+                    if (rideFirst) navigation()
                     item {
                         FilledTonalButton(onClick = onRefresh, enabled = !refreshing, modifier = Modifier.fillMaxWidth()) {
                             Text(if (refreshing) "Verbinden …" else "Aktualisieren")
@@ -181,7 +177,7 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
 
 @Composable
 private fun RideHero(ride: WatchRide, now: Instant, large: Boolean = true) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xFFB40055)).padding(horizontal = 14.dp, vertical = 16.dp),
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFFB40055)).padding(horizontal = 14.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text("${ride.line} → ${ride.destination}", color = Color.White, style = MaterialTheme.typography.labelMedium,
             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -190,7 +186,7 @@ private fun RideHero(ride: WatchRide, now: Instant, large: Boolean = true) {
         Text(display.value, color = Color.White, fontSize = if (!large || display.value.length > 7) 26.sp else 36.sp, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, maxLines = 1)
         Spacer(Modifier.height(4.dp))
-        Text(display.detail, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center)
+        Text(display.detail, color = Color.White, fontSize = 13.sp, textAlign = TextAlign.Center)
     }
 }
 
