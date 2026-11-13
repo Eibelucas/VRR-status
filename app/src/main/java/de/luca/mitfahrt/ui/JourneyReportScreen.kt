@@ -54,7 +54,7 @@ internal fun JourneyReportScreen(
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
                 Text("Fahrtbericht", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).semantics { heading() })
-                if (!running) IconButton(onClick = { confirmDelete = true }, modifier = Modifier.size(48.dp)) {
+                IconButton(onClick = { confirmDelete = true }, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.Outlined.DeleteOutline, "Bericht löschen", tint = Soft)
                 }
             }

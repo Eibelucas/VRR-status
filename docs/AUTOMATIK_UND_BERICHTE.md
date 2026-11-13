@@ -130,3 +130,7 @@ Ergebnis: kein FAIL. R-32/R-39 und R-35 sind nur so weit bestätigt, wie es ohne
 - Das Fahrtenarchiv verlinkt den Bericht. Schreibfehler erscheinen in der Oberfläche; ein fehlgeschlagener Export gilt nicht als gespeichert. Alte PDF-Stände werden nicht überschrieben.
 - `ReportPdfInstrumentation` prüft den tatsächlichen PDF-Writer auf Android, mehrseitiges Öffnen und Rendern über FileProvider, unveränderte frühere Exporte und den Teilen-Dialog. Der erforderliche CI-Job heißt `pdf-device-test`; sein Ergebnis steht im jeweiligen GitHub-Actions-Lauf. Lokale Emulatorstarts scheiterten an der Speicherprüfung der Umgebung.
 - Echte Mitfahrten, TalkBack und physische Galaxy-/Watch-Bedienung sind weiterhin nicht geprüft.
+
+### Nachweis Android-PDF-Test
+
+GitHub Actions [43381319255](https://github.com/Eibelucas/VRR-status/actions/runs/43381319255), Job `pdf-device-test`, Android 10/API 29: erfolgreich. Eine echte PDF mit drei Seiten wurde geschrieben und über FileProvider mit `PdfRenderer` geöffnet und gerendert; der alte Export blieb unverändert, der Teilen-Dialog wurde geöffnet. PDF-Dateien, Testprotokoll und Bildschirmfoto liegen im Artefakt `android-pdf-device-test`. Die Testdaten sind synthetisch.

@@ -6,6 +6,7 @@
 - Anschlusswarnungen im Bericht und direkter Berichtsaufruf aus dem Fahrtenarchiv. Falsche Einstiegserkennung lässt sich auch im Bericht korrigieren.
 - Gelöschte laufende Berichte bleiben über Aktualisierungen und Neustarts hinweg gelöscht. Jeder PDF-Export behält seinen eigenen eingefrorenen Stand. Teilen erfolgt ausschließlich auf Wunsch.
 - Speicher- und Exportfehler werden angezeigt. Alte Einzelbelege bleiben lesbar.
+- Echte mehrseitige PDF-Erzeugung, Öffnen über FileProvider und Teilen-Dialog auf Android 10 automatisch geprüft.
 
 Automatische Bus- und Einstiegserkennung ist abschaltbar. Die Schwellen sind mit synthetischen Szenarien geprüft; echte Mitfahrten und die Bedienung auf Galaxy/Watch bleiben zu prüfen. App-Erkennung und eigene Angaben sind keine offizielle Bestätigung des Verkehrsunternehmens.
 
