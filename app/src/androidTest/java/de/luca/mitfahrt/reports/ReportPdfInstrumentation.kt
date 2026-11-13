@@ -64,13 +64,17 @@ class ReportPdfInstrumentation : Instrumentation() {
             var visible = false
             while (android.os.SystemClock.elapsedRealtime() < deadline) {
                 val activities = activityDump()
-                if (activities.lineSequence().any { it.contains("mResumedActivity") && it.contains("ChooserActivity") }) {
+                val window = uiAutomation.rootInActiveWindow
+                if (activities.lineSequence().any { it.contains("mResumedActivity") && it.contains("ChooserActivity") } &&
+                    window?.packageName?.toString() == "android" && window.isVisibleToUser) {
                     visible = true
                     break
                 }
                 android.os.SystemClock.sleep(100)
             }
             check(visible) { "Share sheet was not visible" }
+            uiAutomation.waitForIdle(500, 5_000)
+            android.os.SystemClock.sleep(500)
             saveScreenshot(directory)
             result.putString("result", "PASS: PDF written, $pageCount pages opened and rendered through FileProvider, frozen export preserved, share sheet visibly verified")
             finish(Activity.RESULT_OK, result)
