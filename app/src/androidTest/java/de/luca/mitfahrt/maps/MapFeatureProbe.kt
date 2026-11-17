@@ -50,8 +50,25 @@ object MapFeatureProbe {
                 MitfahrtTheme { Surface { Column { LiveBusCard(ride, live, now, {}, {}, {}, shape = shape) } } }
             }
         }
-        fun node(label: String): AccessibilityNodeInfo? = test.uiAutomation.rootInActiveWindow
-            ?.findAccessibilityNodeInfosByText(label)?.firstOrNull { it.isVisibleToUser && it.isClickable }
+        // Compose exposes icon descriptions on virtual children; the click action can belong
+        // to their parent. Android's find-by-text does not consistently search descriptions.
+        fun node(label: String): AccessibilityNodeInfo? {
+            fun visit(current: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+                if (current.isVisibleToUser && (current.text?.toString() == label ||
+                        current.contentDescription?.toString() == label)) {
+                    var action: AccessibilityNodeInfo? = current
+                    while (action != null) {
+                        if (action.isVisibleToUser && action.isClickable) return action
+                        action = action.parent
+                    }
+                }
+                for (index in 0 until current.childCount) {
+                    current.getChild(index)?.let { visit(it)?.let { found -> return found } }
+                }
+                return null
+            }
+            return test.uiAutomation.rootInActiveWindow?.let(::visit)
+        }
         fun waitNode(label: String): AccessibilityNodeInfo {
             val deadline = SystemClock.elapsedRealtime() + 15_000
             while (SystemClock.elapsedRealtime() < deadline) {
