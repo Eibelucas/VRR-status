@@ -51,7 +51,7 @@ data class SettingDefinition(
                     .distinct().joinToString(",")
                 "report_fields" -> (text.split(',').map(String::trim).filter { it in listOf("line", "route", "date", "operator_times", "own_arrival", "sources") } + "sources")
                     .distinct().joinToString(",")
-                else -> text
+                else -> if (key.startsWith("tpl_")) TextTemplates.clean(text, TextTemplates.slots.firstOrNull { it.key == key }?.maxLength ?: 120) else text
             }
         }
     }
@@ -166,6 +166,15 @@ object SettingsCatalog {
         c("nowbar_content", "Now-Bar-Anzeige", "nowbar", "full", "full" to "Alle Fahrtdetails", "line" to "Linie & Ziel", "time" to "Zeit", "next" to "Nächster Halt"),
         t("notification_actions", "Aktionen in der Benachrichtigung", "nowbar", "board,arrival,stop", hint = "board, arrival, map, stop; maximal drei Aktionen."),
         b("lockscreen_details", "Fahrtdetails auf dem Sperrbildschirm", "nowbar", true),
+        b("templates_enabled", "Eigene Texte verwenden", "nowbar", false,
+            hint = "Texte für Now Bar, Benachrichtigung und Buskarten-Widget aus Platzhaltern wie {linie}. Bearbeiten unter Einstellungen, Eigene Texte."),
+        t("tpl_nowbar_title_wait", "Eigener Text: Titel beim Warten", "nowbar"),
+        t("tpl_nowbar_text_wait", "Eigener Text: Text beim Warten", "nowbar"),
+        t("tpl_nowbar_title_ride", "Eigener Text: Titel im Bus", "nowbar"),
+        t("tpl_nowbar_text_ride", "Eigener Text: Text im Bus", "nowbar"),
+        t("tpl_nowbar_chip", "Eigener Text: Kurztext Now Bar", "nowbar"),
+        t("tpl_mapwidget_title", "Eigener Text: Buskarten-Widget Titel", "nowbar"),
+        t("tpl_mapwidget_status", "Eigener Text: Buskarten-Widget Zeile", "nowbar"),
         c("widget_kind", "Widget-Inhalt", "nowbar", "active", "stop" to "Haltestelle", "route" to "Eigene Route", "active" to "Aktive Fahrt"),
         t("widget_stop_id", "Widget-Haltestelle", "nowbar", hint = "Kennung einer gespeicherten Haltestelle."),
         t("widget_route_id", "Widget-Route", "nowbar", hint = "Kennung einer eigenen Route."),

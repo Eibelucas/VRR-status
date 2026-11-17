@@ -179,7 +179,15 @@ object BusMapWidget {
             else -> app.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         }
         val model = RouteSketch.model(state, now, gps)
-        val (title, status) = RouteSketch.texts(state, model, now, settings.bool("gps_travel_time", true), gps)
+        var (title, status) = RouteSketch.texts(state, model, now, settings.bool("gps_travel_time", true), gps)
+        if (state.ride?.demo == false) {
+            val values = TextTemplates.values(state, (app.applicationContext as? MitfahrtApplication)?.companion?.state?.value,
+                now, gps, settings.bool("gps_travel_time", true)) + mapOf("quelle" to when {
+                    model?.position == null -> "Keine Position"; model.positionIsGps -> "GPS"; else -> "NEW"
+                }, "status" to status)
+            TextTemplates.custom(settings, "tpl_mapwidget_title", values)?.let { title = it }
+            TextTemplates.custom(settings, "tpl_mapwidget_status", values)?.let { status = it }
+        }
         val density = app.resources.displayMetrics.density
         val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250).coerceIn(110, 600)
         val heightDp = (options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180) - 76).coerceIn(60, 500)

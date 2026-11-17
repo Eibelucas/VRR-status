@@ -118,7 +118,7 @@ class RideNotifications(private val context: Context) {
         }
         val fullTitle = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.displayTarget().name)}"
         val mode = settings.string("nowbar_content", "full")
-        val title = when (mode) {
+        val builtInTitle = when (mode) {
             "time" -> remaining?.let { "$it Min · Linie ${ride.departure.line}" } ?: "Linie ${ride.departure.line} · Keine Live-Zeit"
             "next" -> if (waiting) fullTitle else "${ride.departure.line} · ${shortName(next?.name.orEmpty())}"
             else -> fullTitle
@@ -128,15 +128,29 @@ class RideNotifications(private val context: Context) {
             ?.takeIf { it.trackedKey == ride.departure.key }?.let(JourneyCompanions::transferHint)?.let { "$it (Plan)" }
         val fullText = listOfNotNull(headline,
             delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }, transfer).joinToString(" · ")
-        val text = when (mode) {
+        val builtInText = when (mode) {
             "line" -> if (ride.departure.cancelled) "Bus fällt aus" else timeSource
             "time" -> if (waiting) headline else remaining?.let { "$it Min bis Ziel" } ?: "Keine Live-Zeit"
             "next" -> headline
             else -> fullText
         }
+        // Own texts from placeholders replace the built-in wording where the user wrote one.
+        // The wording already worked out above stays the source for these four, so own texts match the built-in ones.
+        val values = TextTemplates.values(state, (context.applicationContext as? de.luca.mitfahrt.MitfahrtApplication)?.companion?.state?.value,
+            now, settings.bool("gps_next_stop", true) && settings.string("location_mode") != "off", settings.bool("gps_travel_time", true)) + mapOf("status" to headline, "quelle" to timeSource,
+            "minuten" to remaining?.toString().orEmpty(), "umstieg" to transfer.orEmpty())
+        val customTitle = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_title_wait" else "tpl_nowbar_title_ride", values)
+        val customText = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_text_wait" else "tpl_nowbar_text_ride", values)
+        val customChip = TextTemplates.custom(settings, "tpl_nowbar_chip", values)
+        val usesCalculation = TextTemplates.hasCalculation(settings,
+            listOf(if (waiting) "tpl_nowbar_title_wait" else "tpl_nowbar_title_ride",
+                if (waiting) "tpl_nowbar_text_wait" else "tpl_nowbar_text_ride", "tpl_nowbar_chip"), values)
+        val displaySource = if (usesCalculation) "$timeSource · berechnet" else timeSource
+        val title = customTitle ?: builtInTitle
+        val text = customText ?: builtInText
         builder.setContentTitle(title)
             .setContentText(text)
-            .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
+            .setSubText(if (waiting) "$displaySource · ${shortName(ride.departure.stopName)}" else "$displaySource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
         if (waiting && mode in setOf("full", "time") && !ride.departure.cancelled && waitingTime?.at?.isAfter(now) == true) {
             builder.setWhen(waitingTime.at.toEpochMilli()).setShowWhen(true)
                 .setUsesChronometer(true).setChronometerCountDown(true)
@@ -146,8 +160,8 @@ class RideNotifications(private val context: Context) {
                 .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(180, 0, 85))))
                 .setProgress(if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
-            builder.addExtras(NowBarSupport.extras(context, title, if (mode == "line") "Mitfahrt · $timeSource" else "$text · $timeSource",
-                if (mode == "line") ride.departure.line else "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
+            builder.addExtras(NowBarSupport.extras(context, title, if (mode == "line") "Mitfahrt · $displaySource" else "$text · $displaySource",
+                customChip ?: if (mode == "line") ride.departure.line else "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
                 if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt()))
             builder.setShortCriticalText(if (mode == "line") ride.departure.line else remaining?.let { "$it Min" } ?: ride.departure.line)
         } else {
