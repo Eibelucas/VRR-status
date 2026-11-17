@@ -71,8 +71,18 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
   Beide Widgets sind zusätzlich für den Sperrbildschirm angemeldet (`keyguard`). Ob ein Gerät dort fremde Widgets zulässt,
   entscheidet das System; auf dem Galaxy wurde das nicht geprüft.
 
+## 5b. Eigene Texte aus Platzhaltern (17.11.2026)
+Unter Einstellungen, „Eigene Texte“ lassen sich Titel und Text von Now Bar und Benachrichtigung (getrennt für Warten und
+Im Bus), der Kurztext der Now Bar sowie Titel und Zeile des Buskarten-Widgets selbst formulieren (`TextTemplates`).
+- Platzhalter: `{linie}`, `{ziel}`, `{richtung}`, `{einstieg}`, `{halt}`, `{minuten}`, `{berechnet}`, `{abfahrt}`, `{ankunft}`,
+  `{verspaetung}`, `{quelle}`, `{status}`, `{umstieg}`. Im Editor als Schaltflächen am gerade bearbeiteten Feld.
+- Teile werden mit „·“ getrennt. Ist ein Wert gerade leer (z. B. keine Live-Minuten), entfällt sein Teil; es wird nichts ersetzt oder erfunden.
+- Unbekannte Platzhalter werden rot gemeldet. Ein leeres Feld oder ein ausgeschalteter Schalter behält den eingebauten Text.
+- Jedes Feld zeigt eine Vorschau mit Beispielwerten und hat eine Längengrenze (Kurztext 24 Zeichen).
+- Uhr, Fahrtseite und die übrigen Widgets sind nicht anpassbar. Wie die Now Bar lange Texte kürzt, wurde nicht am Gerät gesehen.
+
 ## 6. Durchgeführte Prüfungen (lokal, 13.11.2026)
-- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 692 Tests, 0 Fehler (Stand 17.11.2026, auf 0.19).
+- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 699 Tests, 0 Fehler (Stand 17.11.2026, auf 0.19).
 - `:app:lintDebug :wear:lintDebug`: 0 Fehler (84 bzw. 14 Warnungen, überwiegend Versionshinweise, keine aus neuen Dateien geprüft auffällig).
 - `:app:assembleDebug :wear:assembleDebug`: erfolgreich.
 - `BoardingDetectorTest` (synthetisch): richtiger Einstieg, stehen bleiben, Vorbeifahrt, Gegenrichtung, falscher Bus,

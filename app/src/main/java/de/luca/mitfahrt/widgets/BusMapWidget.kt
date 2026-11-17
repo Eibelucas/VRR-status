@@ -151,7 +151,22 @@ object BusMapWidget {
         }
         val dark = app.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val model = RouteSketch.model(state, now)
-        val (title, status) = RouteSketch.texts(state, model, now)
+        var (title, status) = RouteSketch.texts(state, model, now)
+        state.ride?.takeUnless { it.demo }?.let { ride ->
+            val settings = AppSettingsStore(app).let { store -> store.current().also { store.close() } }
+            val estimate = TravelEstimator.estimate(state, now)
+            val values = mapOf("linie" to ride.departure.line, "ziel" to shortName(ride.displayTarget().name),
+                "richtung" to shortName(ride.departure.destination), "einstieg" to shortName(ride.departure.stopName),
+                "halt" to NextStopResolver.resolve(state, now)?.stop?.name?.let(::shortName).orEmpty(),
+                "minuten" to ride.displayTarget().estimated?.takeIf { !ride.isStale(now) }?.let { minutesUntil(it, now).toString() }.orEmpty(),
+                "berechnet" to estimate?.minutes?.toString().orEmpty(), "abfahrt" to clockTime(ride.boardingTime().at),
+                "ankunft" to ride.displayTarget().effective(ride.offsetSeconds)?.let(::clockTime).orEmpty(),
+                "verspaetung" to ride.departure.delayMinutes.takeIf { it > 0 && ride.departure.estimated != null }?.let { "+$it Min" }.orEmpty(),
+                "quelle" to when { model?.position == null -> "Keine Position"; model.positionIsGps -> "GPS"; else -> "NEW" },
+                "status" to status, "umstieg" to "")
+            TextTemplates.custom(settings, "tpl_mapwidget_title", values)?.let { title = it }
+            TextTemplates.custom(settings, "tpl_mapwidget_status", values)?.let { status = it }
+        }
         val density = app.resources.displayMetrics.density
         val open = app.packageManager.getLaunchIntentForPackage(app.packageName)?.let {
             PendingIntent.getActivity(app, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

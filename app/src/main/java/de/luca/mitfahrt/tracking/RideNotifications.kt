@@ -118,7 +118,7 @@ class RideNotifications(private val context: Context) {
         }
         val fullTitle = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.displayTarget().name)}"
         val mode = settings.string("nowbar_content", "full")
-        val title = when (mode) {
+        val builtInTitle = when (mode) {
             "time" -> remaining?.let { "$it Min · Linie ${ride.departure.line}" } ?: "Linie ${ride.departure.line} · Keine Live-Zeit"
             "next" -> if (waiting) fullTitle else "${ride.departure.line} · ${shortName(next?.name.orEmpty())}"
             else -> fullTitle
@@ -128,12 +128,27 @@ class RideNotifications(private val context: Context) {
             ?.takeIf { it.trackedKey == ride.departure.key }?.let(JourneyCompanions::transferHint)?.let { "$it (Plan)" }
         val fullText = listOfNotNull(headline,
             delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }, transfer).joinToString(" · ")
-        val text = when (mode) {
+        val builtInText = when (mode) {
             "line" -> if (ride.departure.cancelled) "Bus fällt aus" else timeSource
             "time" -> if (waiting) headline else remaining?.let { "$it Min bis Ziel" } ?: "Keine Live-Zeit"
             "next" -> headline
             else -> fullText
         }
+        // Own texts from placeholders replace the built-in wording where the user wrote one.
+        val estimate = TravelEstimator.estimate(state, now, settings.bool("gps_next_stop", true))
+        val values = mapOf("linie" to ride.departure.line, "ziel" to shortName(ride.displayTarget().name),
+            "richtung" to shortName(ride.departure.destination), "einstieg" to shortName(ride.departure.stopName),
+            "halt" to next?.name?.let(::shortName).orEmpty(), "minuten" to remaining?.toString().orEmpty(),
+            "berechnet" to estimate?.minutes?.toString().orEmpty(),
+            "abfahrt" to clockTime(waitingTime?.at ?: boardingTime.at),
+            "ankunft" to ride.displayTarget().effective(ride.offsetSeconds)?.let(::clockTime).orEmpty(),
+            "verspaetung" to delay?.takeIf { it.delaySeconds >= 60 }?.shortDelay.orEmpty(),
+            "quelle" to timeSource, "status" to headline, "umstieg" to transfer.orEmpty())
+        val customTitle = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_title_wait" else "tpl_nowbar_title_ride", values)
+        val customText = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_text_wait" else "tpl_nowbar_text_ride", values)
+        val customChip = TextTemplates.custom(settings, "tpl_nowbar_chip", values)
+        val title = customTitle ?: builtInTitle
+        val text = customText ?: builtInText
         builder.setContentTitle(title)
             .setContentText(text)
             .setSubText(if (waiting) "$timeSource · ${shortName(ride.departure.stopName)}" else "$timeSource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
@@ -147,7 +162,7 @@ class RideNotifications(private val context: Context) {
                 .setProgress(if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
             builder.addExtras(NowBarSupport.extras(context, title, if (mode == "line") "Mitfahrt · $timeSource" else "$text · $timeSource",
-                if (mode == "line") ride.departure.line else "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
+                customChip ?: if (mode == "line") ride.departure.line else "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
                 if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt()))
             builder.setShortCriticalText(if (mode == "line") ride.departure.line else remaining?.let { "$it Min" } ?: ride.departure.line)
         } else {

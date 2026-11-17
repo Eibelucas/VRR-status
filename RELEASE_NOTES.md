@@ -2,6 +2,7 @@
 
 - **Restzeit:** Aus der Position deines gewählten Busses, im Bus auch per GPS, berechnet Mitfahrt die verbleibende Fahrzeit und kennzeichnet sie als berechnet.
 - **Karte:** Vollbild-Ansicht der Buskarte und ein neues Widget „Mitfahrt Buskarte“ mit Streckenskizze.
+- **Eigene Texte:** Now Bar, Benachrichtigung und Buskarten-Widget mit Platzhaltern wie `{linie}` und `{minuten}` selbst formulieren, mit Vorschau.
 
 Nicht am Gerät geprüft. Einzelheiten: `docs/AUTOMATIK_UND_BERICHTE.md`, Abschnitt 5a.
 

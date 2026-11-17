@@ -271,7 +271,8 @@ fun MitfahrtApp(
         }
     }
     MitfahrtTheme {
-        if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
+        if (personalModule == "templates") TemplateEditorScreen(settings, { key, value -> vm.settingsStore.set(key, value) }) { personalModule = null }
+        else if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
             onReport = { openReportId = vm.archivedReportId(it) }) { personalModule = null }
         else if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false },
             onNotice = { message -> scope.launch { snackbar.showSnackbar(message) } }, onOpenModule = { personalModule = it })
@@ -916,6 +917,7 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
             SettingsGroup("Mehr") {
                 SettingsLink("Alle Einstellungen und Profile", "Karte, Hinweise, Berichte, Datenschutz", onCustomize)
                 SettingsLink("Gespeicherte Daten", "Ansehen, sichern und löschen", onManageData)
+                SettingsLink("Eigene Texte", "Now Bar, Benachrichtigung und Buskarten-Widget selbst formulieren") { onOpenModule("templates") }
                 SettingsExpander("Sperrbildschirm und Now Bar") {
                     Text(if (Build.VERSION.SDK_INT >= 36) "Bus auswählen, Live-Benachrichtigungen erlauben und die App verlassen. Die Now Bar prüfst du anschließend auf dem Sperrbildschirm."
                     else "Deine Fahrt erscheint als laufende Benachrichtigung. Für die Now Bar ist eine unterstützte Samsung-Version mit Android 16 nötig.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
