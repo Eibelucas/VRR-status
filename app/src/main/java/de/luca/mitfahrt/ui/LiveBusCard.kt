@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material.icons.outlined.Refresh
@@ -68,6 +69,7 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
         sectionFrom = routeShape?.offsetOf(ride.boardingIndex), sectionTo = routeShape?.offsetOf(targetIndex),
         passedTo = travelled, projected = state.routePoint, offRoute = state.offRoute, phone = phone)
 
+    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Busposition", fontWeight = FontWeight.SemiBold, fontSize = 21.sp, modifier = Modifier.weight(1f))
@@ -88,7 +90,13 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                 current.observedAt, now, route = mapRoute,
                 routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
                 otherVehicles = candidates, selectedVehicleId = current.id,
-                onSelectVehicle = onSelect)
+                onSelectVehicle = onSelect, onFullscreen = { fullscreen = true })
+            if (fullscreen) FullscreenMap("Linie ${ride.departure.line} · ${shortName(ride.departure.destination)}", { fullscreen = false }) { height ->
+                WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
+                    current.observedAt, now, route = mapRoute,
+                    routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
+                    otherVehicles = candidates, selectedVehicleId = current.id, onSelectVehicle = onSelect, mapHeight = height)
+            }
             if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
             // No usable bus position: show the phone's own measured progress on the real line, clearly named as GPS.
@@ -97,7 +105,11 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
             if (ownPoint != null && ownAt != null) {
                 Text("Keine Busposition von NEW. Die Karte zeigt deine eigene Position.", color = Soft, fontSize = 14.sp, lineHeight = 19.sp)
                 WaitingBusMap(ownPoint, boarding, "Per GPS erkannt", ownAt, now, route = mapRoute.copy(phone = null),
-                    routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true)
+                    routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true, onFullscreen = { fullscreen = true })
+                if (fullscreen) FullscreenMap("Linie ${ride.departure.line} · ${shortName(ride.departure.destination)}", { fullscreen = false }) { height ->
+                    WaitingBusMap(ownPoint, boarding, "Per GPS erkannt", ownAt, now, route = mapRoute.copy(phone = null),
+                        routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true, mapHeight = height)
+                }
             } else AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(when {
@@ -212,3 +224,26 @@ private fun vehicleAge(observedAt: Instant, now: Instant): String {
 
 private fun vehicleDistance(metres: Double): String = if (metres < 1000) "${metres.roundToInt()} m"
     else String.format(Locale.GERMANY, "%.1f km", metres / 1000)
+
+/** The map of the running ride on the whole screen; back or the arrow returns to the ride. */
+@Composable
+private fun FullscreenMap(title: String, onClose: () -> Unit, map: @Composable (androidx.compose.ui.unit.Dp) -> Unit) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Surface(Modifier.fillMaxSize(), color = Ink) {
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+                val available = maxHeight
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
+                            Icon(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.ArrowBack, "Vollbild schließen")
+                        }
+                        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    // Header, card padding, label rows and legend take about 200 dp; the map gets the rest.
+                    map((available - 200.dp).coerceAtLeast(240.dp))
+                }
+            }
+        }
+    }
+}

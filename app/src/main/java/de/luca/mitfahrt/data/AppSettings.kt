@@ -136,6 +136,8 @@ object SettingsCatalog {
         c("vehicle_auto_mode", "Erkanntes Fahrzeug", "map", "assign", "assign" to "Direkt anzeigen", "ask" to "Erst nachfragen", advanced = true),
         b("boarding_auto", "Einstieg und Ausstieg selbst erkennen", "automation", true,
             hint = "Wechselt bei einer begleiteten Fahrt von Warten zu Im Bus, wenn Handy und Bus sich mehrfach gemeinsam bewegen. Du kannst jederzeit korrigieren."),
+        b("gps_travel_time", "Restzeit aus Position berechnen", "map", true,
+            hint = "Nutzt den gewählten oder zugeordneten Bus, im Bus auch dein GPS, und die Fahrzeiten des Fahrplans. Als berechnet gekennzeichnet."),
         b("gps_next_stop", "Nächsten Halt auch per GPS erkennen", "map", true, true,
             "Erst wenn du im Bus bist. Ohne Live-Daten wird keine Restzeit berechnet."),
         c("map_theme", "Kartendarstellung", "map", "system", "system" to "Wie App", "light" to "Hell", "dark" to "Dunkel"),

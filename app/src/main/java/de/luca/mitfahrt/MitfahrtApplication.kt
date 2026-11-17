@@ -52,6 +52,7 @@ class MitfahrtApplication : Application() {
         runCatching { watch.start() }
         runCatching { de.luca.mitfahrt.updates.UpdateScheduler.schedule(this) }
         widgetScope.launch { store.state.collect { runCatching { MitfahrtWidgets.trackingChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { store.state.collect { runCatching { de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication) } } }
         // A leg counts as started only once its ride is really tracked, never by timetable time.
         widgetScope.launch { store.state.collect { state -> state.ride?.departure?.key?.let { runCatching { companion.markSeen(it) } } } }
         widgetScope.launch {

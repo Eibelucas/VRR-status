@@ -59,8 +59,20 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
 - Speicherung: `files/reports/journeys/`, gelöscht über „Berichte löschen“ und die Frist „Belege nach Tagen löschen“.
   Es werden Ereignisse gespeichert, keine GPS-Spur.
 
+## 5a. Restzeit aus der Position, Vollbild-Karte, Karten-Widget (17.11.2026)
+- **Restzeit** (`TravelEstimator`): Aus der Position des selbst gewählten oder zugeordneten Busses, im Bus ersatzweise aus dem
+  bestätigten Handy-GPS, wird die Fahrzeit des Fahrplans bis zum Einstieg (beim Warten) bzw. bis zum Ausstieg berechnet.
+  Die Fahrtkarte zeigt sie mit „Berechnet aus der Busposition/per GPS, keine VRR-Angabe“, der nächste Halt mit „ca. … Min, berechnet“.
+  Ohne frische Position (Bus ≤ 90 s, GPS ≤ 45 s) wird nichts berechnet. Abschaltbar: „Restzeit aus Position berechnen“.
+  Benachrichtigung, Now Bar, Uhr und die bisherigen Widgets zeigen weiter die bisherigen Zeiten.
+- **Vollbild-Karte**: Vollbild-Symbol an der Buskarte der Fahrt; gleiche Karte, gleiche Daten, „Bus folgen“ wie in der Karte.
+- **Widget „Mitfahrt Buskarte“**: Streckenskizze der begleiteten Fahrt aus der geprüften Liniengeometrie, mit Einstieg, Ausstieg
+  und Bus- oder GPS-Position, ohne Kartenkacheln (kein Netzabruf, keine Straßenkarte). Ohne Geometrie nur unverbundene Haltepunkte.
+  Beide Widgets sind zusätzlich für den Sperrbildschirm angemeldet (`keyguard`). Ob ein Gerät dort fremde Widgets zulässt,
+  entscheidet das System; auf dem Galaxy wurde das nicht geprüft.
+
 ## 6. Durchgeführte Prüfungen (lokal, 13.11.2026)
-- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 672 Tests, 0 Fehler.
+- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 682 Tests, 0 Fehler (Stand 17.11.2026).
 - `:app:lintDebug :wear:lintDebug`: 0 Fehler (84 bzw. 14 Warnungen, überwiegend Versionshinweise, keine aus neuen Dateien geprüft auffällig).
 - `:app:assembleDebug :wear:assembleDebug`: erfolgreich.
 - `BoardingDetectorTest` (synthetisch): richtiger Einstieg, stehen bleiben, Vorbeifahrt, Gegenrichtung, falscher Bus,
@@ -84,6 +96,7 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
 - Ersteinrichtung, Dialoge, Routen-Editor und Widgets haben nur die gemeinsamen Änderungen bekommen
   (Schaltflächenform, Farben, Kopfzeile), keine eigene Überarbeitung.
 - NEW-Daten wurden nur nachts abgerufen.
+- Vollbild-Karte und Karten-Widget wurden nicht auf einem Gerät gesehen; die Skizze ist als Bild geprüft, die Restzeit nur mit synthetischen Positionen.
 
 ## 8. Anti-Slop Delivery Gate (Modus „during“)
 Design Read: Nahverkehrs-App für Schüler und Pendler in Mönchengladbach, ruhig und beschildert. ENERGY 1 / RHYTHM 2 / MOTION 1.

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mitfahrt_map_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/mitfahrt_widget_bg"
+    android:orientation="vertical"
+    android:padding="12dp">
+    <TextView
+        android:id="@+id/mitfahrt_map_widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="@string/mitfahrt_map_widget_label"
+        android:textColor="@color/mitfahrt_widget_text"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+    <ImageView
+        android:id="@+id/mitfahrt_map_widget_image"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:contentDescription="@string/mitfahrt_map_widget_label"
+        android:scaleType="fitCenter" />
+    <TextView
+        android:id="@+id/mitfahrt_map_widget_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="@string/mitfahrt_map_widget_empty"
+        android:textColor="@color/mitfahrt_widget_muted"
+        android:textSize="12sp" />
+</LinearLayout>

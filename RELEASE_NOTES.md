@@ -1,3 +1,10 @@
+## In Arbeit nach 0.19.0 (noch nicht veröffentlicht)
+
+- **Restzeit:** Aus der Position deines gewählten Busses, im Bus auch per GPS, berechnet Mitfahrt die verbleibende Fahrzeit und kennzeichnet sie als berechnet.
+- **Karte:** Vollbild-Ansicht der Buskarte und ein neues Widget „Mitfahrt Buskarte“ mit Streckenskizze.
+
+Nicht am Gerät geprüft. Einzelheiten: `docs/AUTOMATIK_UND_BERICHTE.md`, Abschnitt 5a.
+
 ## Mitfahrt 0.19.0
 
 - Neue, ruhigere Oberfläche in NEW-Farben, übersichtlichere Einstellungen und überarbeitete Watch-Anzeige.
