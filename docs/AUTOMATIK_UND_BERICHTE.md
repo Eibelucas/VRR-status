@@ -72,7 +72,7 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
   entscheidet das System; auf dem Galaxy wurde das nicht geprüft.
 
 ## 6. Durchgeführte Prüfungen (lokal, 13.11.2026)
-- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 682 Tests, 0 Fehler (Stand 17.11.2026).
+- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 692 Tests, 0 Fehler (Stand 17.11.2026, auf 0.19).
 - `:app:lintDebug :wear:lintDebug`: 0 Fehler (84 bzw. 14 Warnungen, überwiegend Versionshinweise, keine aus neuen Dateien geprüft auffällig).
 - `:app:assembleDebug :wear:assembleDebug`: erfolgreich.
 - `BoardingDetectorTest` (synthetisch): richtiger Einstieg, stehen bleiben, Vorbeifahrt, Gegenrichtung, falscher Bus,
@@ -91,8 +91,6 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
   Überschriften-Semantik und zusammengefasste Zeilen im Code.
 - Keine echte Mitfahrt: Einstieg, Ausstieg und Buszuordnung sind nur synthetisch getestet.
 - Das Schreiben der echten PDF-Datei (`PdfDocument`) lief nicht; geprüft ist das Layout als Bild.
-- Anschlusswarnungen aus der Begleitung werden noch nicht in den Bericht übernommen (das Feld ist vorbereitet).
-- Im Fahrtenarchiv gibt es noch keinen eigenen „Bericht“-Knopf; die letzte Fahrt erreicht man unter „Berichte“.
 - Ersteinrichtung, Dialoge, Routen-Editor und Widgets haben nur die gemeinsamen Änderungen bekommen
   (Schaltflächenform, Farben, Kopfzeile), keine eigene Überarbeitung.
 - NEW-Daten wurden nur nachts abgerufen.
