@@ -246,4 +246,10 @@ class PlannerScreenshotTest {
         } }
         capture("11-berichte")
     }
+
+    @Test fun `template editor`() {
+        val settings = AppSettings(mapOf("templates_enabled" to "true", "tpl_nowbar_title_wait" to "{linie} nach {ziel}", "tpl_nowbar_chip" to "{linje} {minuten}"))
+        compose.setContent { MitfahrtTheme { TemplateEditorScreen(settings, { _, _ -> }, {}) } }
+        capture("13-eigene-texte")
+    }
 }

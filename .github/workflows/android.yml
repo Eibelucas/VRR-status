@@ -73,7 +73,7 @@ jobs:
           ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
-      - name: Real PDF export, rendering and sharing on Android
+      - name: Android PDF, fullscreen map and widget rendering
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29

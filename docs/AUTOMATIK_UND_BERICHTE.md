@@ -59,8 +59,35 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
 - Speicherung: `files/reports/journeys/`, gelöscht über „Berichte löschen“ und die Frist „Belege nach Tagen löschen“.
   Es werden Ereignisse gespeichert, keine GPS-Spur.
 
+## 5a. Restzeit aus der Position, Vollbild-Karte, Karten-Widget (17.11.2026)
+- **Restzeit** (`TravelEstimator`): Aus der Position des selbst gewählten oder zugeordneten Busses, im Bus ersatzweise aus dem
+  bestätigten Handy-GPS, wird die Fahrzeit des Fahrplans bis zum Einstieg (beim Warten) bzw. bis zum Ausstieg berechnet.
+  Die Fahrtkarte zeigt sie mit „Berechnet aus der Busposition/per GPS, keine VRR-Angabe“, der nächste Halt mit „ca. … Min, berechnet“.
+  Ohne frische Position (Bus ≤ 90 s, GPS ≤ 45 s) wird nichts berechnet. Abschaltbar: „Restzeit aus Position berechnen“.
+  Benachrichtigung, Now Bar, Uhr und die bisherigen Widgets zeigen weiter die bisherigen Zeiten.
+- **Vollbild-Karte**: Vollbild-Symbol an der Buskarte der Fahrt; gleiche Karte, gleiche Daten, „Bus folgen“ wie in der Karte.
+- **Widget „Mitfahrt Buskarte“**: Streckenskizze der begleiteten Fahrt aus der geprüften Liniengeometrie, mit Einstieg, Ausstieg
+  und Bus- oder GPS-Position, ohne Kartenkacheln (kein Netzabruf, keine Straßenkarte). Ohne Geometrie nur unverbundene Haltepunkte.
+  Beide Widgets sind zusätzlich für den Sperrbildschirm angemeldet (`keyguard`). Ob ein Gerät dort fremde Widgets zulässt,
+  entscheidet das System; auf dem Galaxy wurde das nicht geprüft.
+
+## 5b. Eigene Texte aus Platzhaltern (17.11.2026)
+Unter Einstellungen, „Eigene Texte“ lassen sich Titel und Text von Now Bar und Benachrichtigung (getrennt für Warten und
+Im Bus), der Kurztext der Now Bar sowie Titel und Zeile des Buskarten-Widgets selbst formulieren (`TextTemplates`).
+- 38 Platzhalter, im Editor als Schaltflächen am gerade bearbeiteten Feld:
+  - Fahrt: `{linie}`, `{ziel}`, `{richtung}`, `{einstieg}`, `{steig}`, `{phase}`, `{status}`, `{quelle}`, `{ausfall}`
+  - Zeiten: `{minuten}`, `{countdown}`, `{berechnet}`, `{abfahrt}`, `{abfahrt_plan}`, `{ankunft}`, `{ankunft_plan}`, `{ankunft_berechnet}`, `{verspaetung}`, `{verspaetung_minuten}`
+  - Halte: `{halt}`, `{halt_zeit}`, `{halt_minuten}`, `{halt_berechnet}`, `{halt_danach}`, `{halte}`, `{fortschritt}`, `{im_bus_seit}`
+  - Umstieg: `{umstieg}`, `{umstieg_linie}`, `{umstieg_zeit}`, `{umstieg_steig}`, `{umstieg_ziel}`
+  - Bus und Sonstiges: `{fahrzeug}`, `{bus_stand}`, `{bus_entfernung}`, `{uhrzeit}`, `{datum}`, `{datenstand}`
+  - „live“ heißt VRR-Prognose, „berechnet“ heißt aus Bus- oder GPS-Position errechnet; beides bleibt getrennt.
+- Teile werden mit „·“ getrennt. Ist ein Wert gerade leer (z. B. keine Live-Minuten), entfällt sein Teil; es wird nichts ersetzt oder erfunden.
+- Unbekannte Platzhalter werden rot gemeldet. Ein leeres Feld oder ein ausgeschalteter Schalter behält den eingebauten Text.
+- Jedes Feld zeigt eine Vorschau mit Beispielwerten und hat eine Längengrenze (Kurztext 24 Zeichen).
+- Uhr, Fahrtseite und die übrigen Widgets sind nicht anpassbar. Wie die Now Bar lange Texte kürzt, wurde nicht am Gerät gesehen.
+
 ## 6. Durchgeführte Prüfungen (lokal, 13.11.2026)
-- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 672 Tests, 0 Fehler.
+- `:shared:test :app:testDebugUnitTest :wear:testDebugUnitTest`: 700 Tests, 0 Fehler (Stand 17.11.2026, auf 0.19).
 - `:app:lintDebug :wear:lintDebug`: 0 Fehler (84 bzw. 14 Warnungen, überwiegend Versionshinweise, keine aus neuen Dateien geprüft auffällig).
 - `:app:assembleDebug :wear:assembleDebug`: erfolgreich.
 - `BoardingDetectorTest` (synthetisch): richtiger Einstieg, stehen bleiben, Vorbeifahrt, Gegenrichtung, falscher Bus,
@@ -79,11 +106,10 @@ Schwellen stammen aus typischen Werten (Haltabstand, Gehtempo) und sind nicht an
   Überschriften-Semantik und zusammengefasste Zeilen im Code.
 - Keine echte Mitfahrt: Einstieg, Ausstieg und Buszuordnung sind nur synthetisch getestet.
 - Das Schreiben der echten PDF-Datei (`PdfDocument`) lief nicht; geprüft ist das Layout als Bild.
-- Anschlusswarnungen aus der Begleitung werden noch nicht in den Bericht übernommen (das Feld ist vorbereitet).
-- Im Fahrtenarchiv gibt es noch keinen eigenen „Bericht“-Knopf; die letzte Fahrt erreicht man unter „Berichte“.
 - Ersteinrichtung, Dialoge, Routen-Editor und Widgets haben nur die gemeinsamen Änderungen bekommen
   (Schaltflächenform, Farben, Kopfzeile), keine eigene Überarbeitung.
 - NEW-Daten wurden nur nachts abgerufen.
+- Vollbild-Karte und Karten-Widget wurden nicht auf einem Gerät gesehen; die Skizze ist als Bild geprüft, die Restzeit nur mit synthetischen Positionen.
 
 ## 8. Anti-Slop Delivery Gate (Modus „during“)
 Design Read: Nahverkehrs-App für Schüler und Pendler in Mönchengladbach, ruhig und beschildert. ENERGY 1 / RHYTHM 2 / MOTION 1.
@@ -134,3 +160,9 @@ Ergebnis: kein FAIL. R-32/R-39 und R-35 sind nur so weit bestätigt, wie es ohne
 ### Nachweis Android-PDF-Test
 
 GitHub Actions [43381319255](https://github.com/Eibelucas/VRR-status/actions/runs/43381319255), Job `pdf-device-test`, Android 10/API 29: erfolgreich. Eine echte PDF mit drei Seiten wurde geschrieben und über FileProvider mit `PdfRenderer` geöffnet und gerendert; der alte Export blieb unverändert, der Teilen-Dialog wurde geöffnet. PDF-Dateien, Testprotokoll und Bildschirmfoto liegen im Artefakt `android-pdf-device-test`. Die Testdaten sind synthetisch.
+
+## Integration 0.20.0
+
+- Aktuelle VRR-Prognosen haben Vorrang vor aus Position und Fahrplan berechneten Restzeiten. Zeitablauf allein verschiebt die gemessene Position nicht. Berechnungen für den nächsten Halt sind an dessen Index gebunden.
+- Das Karten-Widget prüft Fahrtidentität, laufende Begleitung und GPS-Einstellungen. Die Streckenskizze nutzt die geordnete Geometrie einschließlich Schleifen; ein Inexact-Alarm aktualisiert die Darstellung beim Ablauf der Positionsgültigkeit. Der hostseitige Alterszähler zeigt das Datenalter auch bei verzögerten Updates.
+- Native Android-Prüfung: bestehender PDF-/Teilen-Test wird um das Rendern der echten Widget-RemoteViews sowie Öffnen und Schließen der Vollbildkarte erweitert. Die verwendeten Positionen sind synthetisch; keine Erkennungsquote oder reale Fahrzeitgenauigkeit wird behauptet.

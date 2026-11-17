@@ -7,4 +7,7 @@
     <string name="mitfahrt_widget_open_map">Live-Karte öffnen</string>
     <string name="mitfahrt_widget_preview_title">Hardterbroich Markt</string>
     <string name="mitfahrt_widget_preview_status">Stand 14:28</string>
+    <string name="mitfahrt_map_widget_label">Mitfahrt Buskarte</string>
+    <string name="mitfahrt_map_widget_description">Streckenskizze deiner begleiteten Fahrt mit Bus- oder GPS-Position</string>
+    <string name="mitfahrt_map_widget_empty">Keine aktive Fahrt. Starte eine Begleitung in Mitfahrt.</string>
 </resources>

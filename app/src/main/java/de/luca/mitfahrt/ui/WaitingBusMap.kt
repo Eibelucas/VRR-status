@@ -14,6 +14,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material.icons.outlined.OpenInNew
@@ -87,7 +88,11 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
     routeStops: List<Stop> = emptyList(), otherVehicles: List<NewVehicle> = emptyList(),
     selectedVehicleId: String? = null, overview: Boolean = false, onSelectVehicle: ((NewVehicle) -> Unit)? = null,
     /** Set when the marker is the phone's own measured position instead of a NEW vehicle. */
-    gpsSource: Boolean = false) {
+    gpsSource: Boolean = false,
+    /** Opens the same map on the whole screen; null inside the full-screen view itself. */
+    onFullscreen: (() -> Unit)? = null,
+    /** Fixed map height for the full-screen view; null keeps the card sizes. */
+    mapHeight: androidx.compose.ui.unit.Dp? = null) {
     if (!busPoint.mapValid() || now.epochSecond - positionAt.epochSecond !in -15..90) return
     val context = LocalContext.current
     val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
@@ -126,8 +131,11 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                     Text(if (gpsSource) positionLabel(positionAt, now).replace("NEW", "GPS deines Handys") else positionLabel(positionAt, now),
                         color = Soft, fontSize = 13.sp)
                 }
+                if (onFullscreen != null) IconButton(onClick = onFullscreen, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Outlined.Fullscreen, "Karte im Vollbild öffnen", tint = Paper)
+                }
             }
-            Box(Modifier.fillMaxWidth().height(if (overview || settings.string("map_size", "normal") == "large") 400.dp else 260.dp)
+            Box(Modifier.fillMaxWidth().height(mapHeight ?: if (overview || settings.string("map_size", "normal") == "large") 400.dp else 260.dp)
                 .clip(RoundedCornerShape(16.dp))) {
                 AndroidView(modifier = Modifier.fillMaxSize().onGloballyPositioned { coordinates ->
                     val bounds = coordinates.boundsInWindow()

@@ -271,7 +271,8 @@ fun MitfahrtApp(
         }
     }
     MitfahrtTheme {
-        if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
+        if (personalModule == "templates") TemplateEditorScreen(settings, { key, value -> vm.settingsStore.set(key, value) }) { personalModule = null }
+        else if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
             onReport = { openReportId = vm.archivedReportId(it) }) { personalModule = null }
         else if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false },
             onNotice = { message -> scope.launch { snackbar.showSnackbar(message) } }, onOpenModule = { personalModule = it })
@@ -334,7 +335,8 @@ fun MitfahrtApp(
                                 Text("Alternative: ${alternative.name}")
                             }
                         }
-                        item { RideHero(ride, now, tracking.running && !tracking.lastRefreshFailed) }
+                        item { RideHero(ride, now, tracking.running && !tracking.lastRefreshFailed,
+                            TravelEstimator.estimate(tracking, now, settings.bool("gps_next_stop", true)).takeIf { settings.bool("gps_travel_time", true) }) }
                         companion?.takeIf { companionPhase == CompanionPhase.TRACKING }?.let { current -> item {
                             CompanionCard(current, CompanionPhase.TRACKING, ride, companionNext, now, search.loading,
                                 onContinue = vm::continueJourney, onResume = vm::resumeJourney,
@@ -368,7 +370,7 @@ fun MitfahrtApp(
                                 phone = tracking.location?.takeIf { tracking.locationAt?.let { at -> now.epochSecond - at.epochSecond in -10..60 } == true },
                                 onReject = { vm.rejectLiveVehicle(ride.departure.key, it) })
                         }
-                        if (ride.boarded) item { NextStopCard(tracking, now, settings.bool("gps_next_stop", true)) }
+                        if (ride.boarded) item { NextStopCard(tracking, now, settings.bool("gps_next_stop", true), settings.bool("gps_travel_time", true)) }
                         if (!ride.demo && !ride.departure.cancelled) item { ExitTargetCard(ride, alertPreferences.exitEnabled, vm::setExitTarget, vm::saveSchoolTrip) }
                         if (!ride.demo) item {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -597,7 +599,10 @@ private fun DetectionCard(state: TrackingState, onMonitor: () -> Unit, onStop: (
 }
 
 @Composable
-internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean) {
+internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: TravelEstimate? = null) {
+    val positionEstimate = TravelEstimator.fallback(ride, now, liveAllowed, estimate)
+    val dataFresh = liveAllowed && now.epochSecond - ride.fetchedAt.epochSecond in -30..120
+    val remaining = if (dataFresh || ride.demo) ride.minutesToTarget(now) else ride.displayTarget().planned?.let { minutesUntil(it, now) }
     val waiting = !ride.boarded
     val boarding = ride.boardingTime()
     val liveBoarding = if (liveAllowed) ride.liveBoardingTime(now) else null
@@ -615,21 +620,25 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean) {
             }
             Spacer(Modifier.height(28.dp))
             if (waiting) {
-                Text(if (!countdownAvailable) "Dein Bus" else if (boarding.isArrival) "Dein Bus kommt in" else "Abfahrt in", fontSize = 15.sp)
+                // Without a live time, the chosen bus' position gives a calculated time to the stop.
+                val calculated = positionEstimate?.takeIf { !countdownAvailable && !ride.departure.cancelled }
+                Text(if (calculated != null) "Dein Bus kommt in etwa" else if (!countdownAvailable) "Dein Bus" else if (boarding.isArrival) "Dein Bus kommt in" else "Abfahrt in", fontSize = 15.sp)
                 Spacer(Modifier.height(8.dp))
-                Text(if (ride.departure.cancelled) "Fällt aus" else if (!countdownAvailable) "Keine Live-Zeit"
+                Text(if (ride.departure.cancelled) "Fällt aus" else if (calculated != null) "${calculated.minutes} Min" else if (!countdownAvailable) "Keine Live-Zeit"
                     else if (!boarding.at.isAfter(now)) "Wird erwartet" else countdownUntil(boarding.at, now),
-                    fontSize = if (countdownAvailable && boarding.at.isAfter(now) && !ride.departure.cancelled) 68.sp else 30.sp,
+                    fontSize = if (calculated != null || countdownAvailable && boarding.at.isAfter(now) && !ride.departure.cancelled) 68.sp else 30.sp,
                     fontWeight = FontWeight.Medium, letterSpacing = (-2).sp)
                 Spacer(Modifier.height(12.dp))
                 Text(shortName(ride.departure.stopName), fontSize = 19.sp, fontWeight = FontWeight.Medium)
+                if (calculated != null) Text(calculated.label.replaceFirstChar { it.uppercase() } + ", keine VRR-Angabe", fontSize = 13.sp)
             } else {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(ride.minutesToTarget(now)?.toString() ?: "–", fontSize = 88.sp,
+                    Text((positionEstimate?.minutes ?: remaining)?.toString() ?: "–", fontSize = 88.sp,
                         fontWeight = FontWeight.Medium, letterSpacing = (-6).sp, lineHeight = 88.sp)
                     Text(" Min", fontSize = 23.sp, modifier = Modifier.padding(bottom = 10.dp), fontWeight = FontWeight.Medium)
                 }
                 Text("bis ${shortName(ride.displayTarget().name)}", fontSize = 19.sp, fontWeight = FontWeight.Medium)
+                if (positionEstimate != null) Text(positionEstimate.label.replaceFirstChar { it.uppercase() } + ", keine VRR-Angabe", fontSize = 13.sp)
             }
             if (!ride.demo) {
                 val next = if (waiting) ride.boardingIndex else ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex)
@@ -645,13 +654,16 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean) {
                 color = Color.White, trackColor = Color.White.copy(alpha = 0.16f))
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(if (countdownAvailable) boarding.at else plannedBoarding)}"
-                    else "Ankunft ${clockTime(ride.displayTarget().effective(ride.offsetSeconds))}", fontSize = 13.sp)
+                Text(if (waiting && positionEstimate != null) "Ankunft etwa ${clockTime(now.plusSeconds(positionEstimate.seconds))}"
+                    else if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(if (countdownAvailable) boarding.at else plannedBoarding)}"
+                    else if (positionEstimate != null) "Ankunft etwa ${clockTime(now.plusSeconds(positionEstimate.seconds))}"
+                    else "Ankunft ${clockTime(if (dataFresh || ride.demo) ride.displayTarget().effective(ride.offsetSeconds) else ride.displayTarget().planned)}", fontSize = 13.sp)
                 Text(when {
                     ride.demo -> "Beispieldaten"
+                    positionEstimate != null && (!waiting || liveBoarding == null) -> "Berechnet"
                     waiting -> if (liveBoarding != null) "Live" else "Fahrplan"
-                    ride.displayTarget().estimated != null -> "Live"
-                    ride.departure.estimated != null -> "Geschätzt"
+                    dataFresh && ride.displayTarget().estimated != null -> "Live"
+                    dataFresh && ride.departure.estimated != null -> "Geschätzt"
                     else -> "Laut Fahrplan"
                 }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
@@ -660,8 +672,9 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean) {
 }
 
 @Composable
-private fun NextStopCard(tracking: TrackingState, now: Instant, gpsEnabled: Boolean) {
+private fun NextStopCard(tracking: TrackingState, now: Instant, gpsEnabled: Boolean, travelTime: Boolean = true) {
     val info = NextStopResolver.resolve(tracking, now, gpsEnabled)
+    val calculated = if (travelTime) TravelEstimator.estimate(tracking, now, gpsEnabled)?.takeIf { it.nextStopIndex == info?.index }?.nextStopMinutes else null
     val next = info?.stop
     val uncertain = info?.source == NextStopSource.UNCERTAIN
     Row(Modifier.fillMaxWidth().clip(Shape).background(Panel).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -683,11 +696,16 @@ private fun NextStopCard(tracking: TrackingState, now: Instant, gpsEnabled: Bool
             }
         }
         when {
-            // A remaining time only from a fresh live forecast; GPS detection never yields one.
+            // A live forecast comes first; otherwise the app's own calculation, named as such.
             info?.minutes != null -> Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
                 Text("${info.minutes}", fontWeight = FontWeight.SemiBold, color = Lime, fontSize = 26.sp)
                 Text("Min", fontSize = 12.sp, color = Soft)
             }
+            calculated != null && next != null && info?.source != NextStopSource.SCHEDULE ->
+                Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
+                    Text("ca. $calculated", fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
+                    Text("Min, berechnet", fontSize = 12.sp, color = Soft)
+                }
             info?.source == NextStopSource.SCHEDULE && next?.planned != null ->
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 8.dp)) {
                     Text(clockTime(next.planned), fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
@@ -903,6 +921,7 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
             SettingsGroup("Mehr") {
                 SettingsLink("Alle Einstellungen und Profile", "Karte, Hinweise, Berichte, Datenschutz", onCustomize)
                 SettingsLink("Gespeicherte Daten", "Ansehen, sichern und löschen", onManageData)
+                SettingsLink("Eigene Texte", "Now Bar, Benachrichtigung und Buskarten-Widget selbst formulieren") { onOpenModule("templates") }
                 SettingsExpander("Sperrbildschirm und Now Bar") {
                     Text(if (Build.VERSION.SDK_INT >= 36) "Bus auswählen, Live-Benachrichtigungen erlauben und die App verlassen. Die Now Bar prüfst du anschließend auf dem Sperrbildschirm."
                     else "Deine Fahrt erscheint als laufende Benachrichtigung. Für die Now Bar ist eine unterstützte Samsung-Version mit Android 16 nötig.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)

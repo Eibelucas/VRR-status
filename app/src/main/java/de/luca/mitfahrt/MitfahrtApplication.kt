@@ -52,6 +52,7 @@ class MitfahrtApplication : Application() {
         runCatching { watch.start() }
         runCatching { de.luca.mitfahrt.updates.UpdateScheduler.schedule(this) }
         widgetScope.launch { store.state.collect { runCatching { MitfahrtWidgets.trackingChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { store.state.collect { runCatching { de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication) } } }
         // A leg counts as started only once its ride is really tracked, never by timetable time.
         widgetScope.launch { store.state.collect { state -> state.ride?.departure?.key?.let { runCatching { companion.markSeen(it) } } } }
         widgetScope.launch {
@@ -60,9 +61,9 @@ class MitfahrtApplication : Application() {
             }.collect { snapshot -> runCatching { journeyReports.sync(snapshot, settings.current().bool("report_auto", true)) } }
         }
         widgetScope.launch { runCatching { journeyReports.prune() } }
-        widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
-        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
-        widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
+        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
+        widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
         widgetScope.launch { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } }
     }
 }
