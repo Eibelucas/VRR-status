@@ -44,4 +44,33 @@ class TextTemplatesTest {
             assertNotNull(slot.key, SettingsCatalog.definitions.firstOrNull { it.key == slot.key })
         }
     }
+
+    @Test fun `values of a synthetic ride cover every variable and stay empty where nothing is known`() {
+        val t0 = RouteFixtures.T0
+        val waiting = RouteFixtures.ride(boarded = false)
+        val now = t0.plusSeconds(30)
+        val plain = TextTemplates.values(TrackingState(ride = waiting, running = true), null, now)
+        assertEquals(TextTemplates.variables.map { it.name }.toSet(), plain.keys)
+        assertEquals("006", plain["linie"]); assertEquals("Halt 5", plain["ziel"]); assertEquals("Warten", plain["phase"])
+        assertEquals("no live forecast: no live minutes", "", plain["minuten"])
+        assertEquals("", plain["verspaetung"]); assertEquals("", plain["berechnet"]); assertEquals("", plain["umstieg_linie"]); assertEquals("", plain["fahrzeug"])
+        assertEquals("08:02", plain["abfahrt_plan"])
+
+        val live = RouteFixtures.ride(boarded = false, delaySeconds = 120L, fetchedAt = now)
+        val delayed = TextTemplates.values(TrackingState(ride = live, running = true), null, now)
+        assertEquals("+2 Min", delayed["verspaetung"]); assertEquals("2", delayed["verspaetung_minuten"])
+        assertEquals("08:04", delayed["abfahrt"]); assertEquals("4", delayed["minuten"]); assertEquals("Live", delayed["quelle"])
+
+        val riding = live.board("auto", t0.plusSeconds(240))
+        val bus = RouteFixtures.bus("7314", 1000.0, 0.0, now.minusSeconds(5))
+        val state = TrackingState(ride = riding, running = true, routeShape = RouteFixtures.shape(riding),
+            liveBus = LiveBusState(journeyKey = riding.departure.key, vehicle = bus, selectedVehicleId = "7314", routeOffset = 1000.0))
+        val onBoard = TextTemplates.values(state, null, now)
+        assertEquals("Im Bus", onBoard["phase"]); assertEquals("7314", onBoard["fahrzeug"]); assertEquals("08:04", onBoard["im_bus_seit"])
+        assertEquals("6", onBoard["berechnet"]); assertTrue(onBoard["ankunft_berechnet"]!!.isNotEmpty())
+        assertEquals("08:12", onBoard["ankunft"]); assertEquals("08:10", onBoard["ankunft_plan"])
+        assertTrue(onBoard["halt"]!!.startsWith("Halt")); assertTrue(onBoard["halte"]!!.toInt() >= 1)
+        assertEquals("", onBoard["bus_entfernung"])
+        assertTrue(TextTemplates.values(TrackingState(), null, now).isEmpty())
+    }
 }

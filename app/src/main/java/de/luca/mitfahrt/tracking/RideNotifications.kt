@@ -135,15 +135,10 @@ class RideNotifications(private val context: Context) {
             else -> fullText
         }
         // Own texts from placeholders replace the built-in wording where the user wrote one.
-        val estimate = TravelEstimator.estimate(state, now, settings.bool("gps_next_stop", true))
-        val values = mapOf("linie" to ride.departure.line, "ziel" to shortName(ride.displayTarget().name),
-            "richtung" to shortName(ride.departure.destination), "einstieg" to shortName(ride.departure.stopName),
-            "halt" to next?.name?.let(::shortName).orEmpty(), "minuten" to remaining?.toString().orEmpty(),
-            "berechnet" to estimate?.minutes?.toString().orEmpty(),
-            "abfahrt" to clockTime(waitingTime?.at ?: boardingTime.at),
-            "ankunft" to ride.displayTarget().effective(ride.offsetSeconds)?.let(::clockTime).orEmpty(),
-            "verspaetung" to delay?.takeIf { it.delaySeconds >= 60 }?.shortDelay.orEmpty(),
-            "quelle" to timeSource, "status" to headline, "umstieg" to transfer.orEmpty())
+        // The wording already worked out above stays the source for these four, so own texts match the built-in ones.
+        val values = TextTemplates.values(state, (context.applicationContext as? de.luca.mitfahrt.MitfahrtApplication)?.companion?.state?.value,
+            now, settings.bool("gps_next_stop", true)) + mapOf("status" to headline, "quelle" to timeSource,
+            "minuten" to remaining?.toString().orEmpty(), "umstieg" to transfer.orEmpty())
         val customTitle = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_title_wait" else "tpl_nowbar_title_ride", values)
         val customText = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_text_wait" else "tpl_nowbar_text_ride", values)
         val customChip = TextTemplates.custom(settings, "tpl_nowbar_chip", values)

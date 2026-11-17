@@ -154,16 +154,8 @@ object BusMapWidget {
         var (title, status) = RouteSketch.texts(state, model, now)
         state.ride?.takeUnless { it.demo }?.let { ride ->
             val settings = AppSettingsStore(app).let { store -> store.current().also { store.close() } }
-            val estimate = TravelEstimator.estimate(state, now)
-            val values = mapOf("linie" to ride.departure.line, "ziel" to shortName(ride.displayTarget().name),
-                "richtung" to shortName(ride.departure.destination), "einstieg" to shortName(ride.departure.stopName),
-                "halt" to NextStopResolver.resolve(state, now)?.stop?.name?.let(::shortName).orEmpty(),
-                "minuten" to ride.displayTarget().estimated?.takeIf { !ride.isStale(now) }?.let { minutesUntil(it, now).toString() }.orEmpty(),
-                "berechnet" to estimate?.minutes?.toString().orEmpty(), "abfahrt" to clockTime(ride.boardingTime().at),
-                "ankunft" to ride.displayTarget().effective(ride.offsetSeconds)?.let(::clockTime).orEmpty(),
-                "verspaetung" to ride.departure.delayMinutes.takeIf { it > 0 && ride.departure.estimated != null }?.let { "+$it Min" }.orEmpty(),
-                "quelle" to when { model?.position == null -> "Keine Position"; model.positionIsGps -> "GPS"; else -> "NEW" },
-                "status" to status, "umstieg" to "")
+            val values = TextTemplates.values(state, (app as? MitfahrtApplication)?.companion?.state?.value, now) +
+                mapOf("quelle" to when { model?.position == null -> "Keine Position"; model.positionIsGps -> "GPS"; else -> "NEW" }, "status" to status)
             TextTemplates.custom(settings, "tpl_mapwidget_title", values)?.let { title = it }
             TextTemplates.custom(settings, "tpl_mapwidget_status", values)?.let { status = it }
         }
