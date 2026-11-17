@@ -34,7 +34,7 @@ class RouteSketchTest {
         assertEquals(bus.point, model.position); assertFalse(model.positionIsGps)
         val (title, status) = RouteSketch.texts(tracking, model, now)
         assertEquals("006 · Halt 5", title)
-        assertTrue(status, status.contains("Bus laut NEW") && status.contains("noch etwa 4 Min"))
+        assertTrue(status, status.contains("Bus laut NEW") && status.contains("etwa 4 Min"))
         save("12-widget-buskarte", RouteSketch.render(model, 640, 300, dark = false))
         save("12-widget-buskarte-dunkel", RouteSketch.render(model, 640, 300, dark = true))
     }
@@ -55,4 +55,41 @@ class RouteSketchTest {
         assertNull(RouteSketch.model(TrackingState(), now))
         assertEquals("Buskarte", RouteSketch.texts(TrackingState(), null, now).first)
     }
+    @Test fun `route clipping keeps a real loop instead of joining shortcuts`() {
+        val points = RouteFixtures.street.take(7) + listOf(RouteFixtures.at(400.0, 0.0), RouteFixtures.at(200.0, 0.0),
+            RouteFixtures.at(400.0, 0.0), RouteFixtures.at(600.0, 0.0)) + RouteFixtures.street.drop(7)
+        val shape = RouteShape.verify(ride, points, RouteShapeSource.TRIP)!!
+        val model = RouteSketch.model(state().copy(routeShape = shape), now)!!
+        assertTrue(model.line.contains(RouteFixtures.at(200.0, 0.0)))
+        assertEquals(shape.line.pointAt(shape.offsetOf(ride.boardingIndex)!!), model.line.first())
+    }
+
+    @Test fun `gps privacy and journey identity apply to the widget`() {
+        val gps = GpsProgressState(journeyKey = ride.departure.key, active = true, offset = 1500.0, confirmedAt = now,
+            confirmedPoint = RouteFixtures.along(1500.0), status = GpsProgressStatus.TRACKING, exact = true)
+        val tracking = state().copy(gpsProgress = gps)
+        assertNotNull(RouteSketch.model(tracking, now)!!.position)
+        assertNull(RouteSketch.model(tracking, now, gpsEnabled = false)!!.position)
+        assertNull(RouteSketch.model(tracking.copy(gpsProgress = gps.copy(journeyKey = "another-ride")), now)!!.position)
+        assertNull(RouteSketch.model(tracking.copy(running = false), now)!!.position)
+        assertNull(RouteSketch.model(tracking, now.plusSeconds(46))!!.position)
+    }
+
+    @Test fun `widget remote views obey disabled calculation and gps settings`() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val settings = AppSettingsStore(context)
+        try {
+            settings.set("gps_travel_time", "false")
+            settings.set("gps_next_stop", "false")
+            val gps = GpsProgressState(journeyKey = ride.departure.key, active = true, offset = 1500.0, confirmedAt = now,
+                confirmedPoint = RouteFixtures.along(1500.0), status = GpsProgressStatus.TRACKING, exact = true)
+            val views = BusMapWidget.build(context, state().copy(gpsProgress = gps), now, android.os.Bundle())
+            val widget = views.apply(context, android.widget.FrameLayout(context))
+            val text = widget.findViewById<android.widget.TextView>(de.luca.mitfahrt.R.id.mitfahrt_map_widget_status).text.toString()
+            assertFalse(text.contains("Fahrzeit"))
+            assertTrue(text.contains("Keine aktuelle Position"))
+            assertEquals(android.view.View.GONE, widget.findViewById<android.widget.Chronometer>(de.luca.mitfahrt.R.id.mitfahrt_map_widget_age).visibility)
+        } finally { settings.close() }
+    }
+
 }

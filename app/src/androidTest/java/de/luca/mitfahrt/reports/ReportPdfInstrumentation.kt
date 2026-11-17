@@ -58,6 +58,7 @@ class ReportPdfInstrumentation : Instrumentation() {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 .apply { clipData = android.content.ClipData.newRawUri("Fahrtbericht", uri) }
             val activity = startActivitySync(Intent(targetContext, de.luca.mitfahrt.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            de.luca.mitfahrt.maps.MapFeatureProbe.run(this, activity, directory)
             waitForIdleSync()
             activity.runOnUiThread { activity.startActivity(Intent.createChooser(share, "Testbericht teilen")) }
             val deadline = android.os.SystemClock.elapsedRealtime() + 10_000
@@ -76,7 +77,7 @@ class ReportPdfInstrumentation : Instrumentation() {
             uiAutomation.waitForIdle(500, 5_000)
             android.os.SystemClock.sleep(500)
             saveScreenshot(directory)
-            result.putString("result", "PASS: PDF written, $pageCount pages opened and rendered through FileProvider, frozen export preserved, share sheet visibly verified")
+            result.putString("result", "PASS: PDF written, $pageCount pages opened and rendered through FileProvider, frozen export preserved, share sheet visibly verified; native map fullscreen and widget verified")
             finish(Activity.RESULT_OK, result)
         } catch (e: Throwable) {
             runCatching { saveScreenshot(directory) }

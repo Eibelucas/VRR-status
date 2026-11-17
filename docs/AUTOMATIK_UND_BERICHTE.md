@@ -145,3 +145,9 @@ Ergebnis: kein FAIL. R-32/R-39 und R-35 sind nur so weit bestätigt, wie es ohne
 ### Nachweis Android-PDF-Test
 
 GitHub Actions [43381319255](https://github.com/Eibelucas/VRR-status/actions/runs/43381319255), Job `pdf-device-test`, Android 10/API 29: erfolgreich. Eine echte PDF mit drei Seiten wurde geschrieben und über FileProvider mit `PdfRenderer` geöffnet und gerendert; der alte Export blieb unverändert, der Teilen-Dialog wurde geöffnet. PDF-Dateien, Testprotokoll und Bildschirmfoto liegen im Artefakt `android-pdf-device-test`. Die Testdaten sind synthetisch.
+
+## Integration 0.20.0
+
+- Aktuelle VRR-Prognosen haben Vorrang vor aus Position und Fahrplan berechneten Restzeiten. Zeitablauf allein verschiebt die gemessene Position nicht. Berechnungen für den nächsten Halt sind an dessen Index gebunden.
+- Das Karten-Widget prüft Fahrtidentität, laufende Begleitung und GPS-Einstellungen. Die Streckenskizze nutzt die geordnete Geometrie einschließlich Schleifen; ein Inexact-Alarm aktualisiert die Darstellung beim Ablauf der Positionsgültigkeit. Der hostseitige Alterszähler zeigt das Datenalter auch bei verzögerten Updates.
+- Native Android-Prüfung: bestehender PDF-/Teilen-Test wird um das Rendern der echten Widget-RemoteViews sowie Öffnen und Schließen der Vollbildkarte erweitert. Die verwendeten Positionen sind synthetisch; keine Erkennungsquote oder reale Fahrzeitgenauigkeit wird behauptet.

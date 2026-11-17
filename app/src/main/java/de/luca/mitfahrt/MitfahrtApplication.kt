@@ -61,9 +61,9 @@ class MitfahrtApplication : Application() {
             }.collect { snapshot -> runCatching { journeyReports.sync(snapshot, settings.current().bool("report_auto", true)) } }
         }
         widgetScope.launch { runCatching { journeyReports.prune() } }
-        widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
-        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
-        widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } } }
+        widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
+        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
+        widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
         widgetScope.launch { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } }
     }
 }

@@ -139,7 +139,7 @@ object SettingsCatalog {
         b("gps_travel_time", "Restzeit aus Position berechnen", "map", true,
             hint = "Nutzt den gewählten oder zugeordneten Bus, im Bus auch dein GPS, und die Fahrzeiten des Fahrplans. Als berechnet gekennzeichnet."),
         b("gps_next_stop", "Nächsten Halt auch per GPS erkennen", "map", true, true,
-            "Erst wenn du im Bus bist. Ohne Live-Daten wird keine Restzeit berechnet."),
+            "Erst wenn du im Bus bist. Berechnete Restzeiten lassen sich separat einschalten."),
         c("map_theme", "Kartendarstellung", "map", "system", "system" to "Wie App", "light" to "Hell", "dark" to "Dunkel"),
         c("map_external", "Externe Karten-App", "map", "chooser", "chooser" to "Jedes Mal wählen", "google" to "Google Maps", "osm" to "OpenStreetMap"),
         c("map_cache_mb", "Kartenspeicher", "map", "64", "16" to "16 MB", "32" to "32 MB", "64" to "64 MB", "128" to "128 MB", advanced = true),

@@ -1,5 +1,7 @@
 package de.luca.mitfahrt.ui
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -69,7 +71,7 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
         sectionFrom = routeShape?.offsetOf(ride.boardingIndex), sectionTo = routeShape?.offsetOf(targetIndex),
         passedTo = travelled, projected = state.routePoint, offRoute = state.offRoute, phone = phone)
 
-    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var fullscreen by androidx.compose.runtime.saveable.rememberSaveable(ride.departure.key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("Busposition", fontWeight = FontWeight.SemiBold, fontSize = 21.sp, modifier = Modifier.weight(1f))
@@ -241,7 +243,9 @@ private fun FullscreenMap(title: String, onClose: () -> Unit, map: @Composable (
                         Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     // Header, card padding, label rows and legend take about 200 dp; the map gets the rest.
-                    map((available - 200.dp).coerceAtLeast(240.dp))
+                    Box(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                        map((available - 200.dp).coerceAtLeast(96.dp))
+                    }
                 }
             }
         }

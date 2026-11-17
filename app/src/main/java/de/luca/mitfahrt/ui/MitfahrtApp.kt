@@ -599,6 +599,9 @@ private fun DetectionCard(state: TrackingState, onMonitor: () -> Unit, onStop: (
 
 @Composable
 internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: TravelEstimate? = null) {
+    val positionEstimate = TravelEstimator.fallback(ride, now, liveAllowed, estimate)
+    val dataFresh = liveAllowed && now.epochSecond - ride.fetchedAt.epochSecond in -30..120
+    val remaining = if (dataFresh || ride.demo) ride.minutesToTarget(now) else ride.displayTarget().planned?.let { minutesUntil(it, now) }
     val waiting = !ride.boarded
     val boarding = ride.boardingTime()
     val liveBoarding = if (liveAllowed) ride.liveBoardingTime(now) else null
@@ -617,7 +620,7 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: 
             Spacer(Modifier.height(28.dp))
             if (waiting) {
                 // Without a live time, the chosen bus' position gives a calculated time to the stop.
-                val calculated = estimate?.takeIf { !countdownAvailable && !ride.departure.cancelled }
+                val calculated = positionEstimate?.takeIf { !countdownAvailable && !ride.departure.cancelled }
                 Text(if (calculated != null) "Dein Bus kommt in etwa" else if (!countdownAvailable) "Dein Bus" else if (boarding.isArrival) "Dein Bus kommt in" else "Abfahrt in", fontSize = 15.sp)
                 Spacer(Modifier.height(8.dp))
                 Text(if (ride.departure.cancelled) "Fällt aus" else if (calculated != null) "${calculated.minutes} Min" else if (!countdownAvailable) "Keine Live-Zeit"
@@ -629,12 +632,12 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: 
                 if (calculated != null) Text(calculated.label.replaceFirstChar { it.uppercase() } + ", keine VRR-Angabe", fontSize = 13.sp)
             } else {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text((estimate?.minutes ?: ride.minutesToTarget(now))?.toString() ?: "–", fontSize = 88.sp,
+                    Text((positionEstimate?.minutes ?: remaining)?.toString() ?: "–", fontSize = 88.sp,
                         fontWeight = FontWeight.Medium, letterSpacing = (-6).sp, lineHeight = 88.sp)
                     Text(" Min", fontSize = 23.sp, modifier = Modifier.padding(bottom = 10.dp), fontWeight = FontWeight.Medium)
                 }
                 Text("bis ${shortName(ride.displayTarget().name)}", fontSize = 19.sp, fontWeight = FontWeight.Medium)
-                if (estimate != null) Text(estimate.label.replaceFirstChar { it.uppercase() } + ", keine VRR-Angabe", fontSize = 13.sp)
+                if (positionEstimate != null) Text(positionEstimate.label.replaceFirstChar { it.uppercase() } + ", keine VRR-Angabe", fontSize = 13.sp)
             }
             if (!ride.demo) {
                 val next = if (waiting) ride.boardingIndex else ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex)
@@ -650,15 +653,16 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: 
                 color = Color.White, trackColor = Color.White.copy(alpha = 0.16f))
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(if (countdownAvailable) boarding.at else plannedBoarding)}"
-                    else if (estimate != null) "Ankunft etwa ${clockTime(now.plusSeconds(estimate.seconds))}"
-                    else "Ankunft ${clockTime(ride.displayTarget().effective(ride.offsetSeconds))}", fontSize = 13.sp)
+                Text(if (waiting && positionEstimate != null) "Ankunft etwa ${clockTime(now.plusSeconds(positionEstimate.seconds))}"
+                    else if (waiting) "${if (boarding.isArrival) "Ankunft" else "Abfahrt"} ${clockTime(if (countdownAvailable) boarding.at else plannedBoarding)}"
+                    else if (positionEstimate != null) "Ankunft etwa ${clockTime(now.plusSeconds(positionEstimate.seconds))}"
+                    else "Ankunft ${clockTime(if (dataFresh || ride.demo) ride.displayTarget().effective(ride.offsetSeconds) else ride.displayTarget().planned)}", fontSize = 13.sp)
                 Text(when {
                     ride.demo -> "Beispieldaten"
-                    estimate != null && (!waiting || liveBoarding == null) -> "Berechnet"
+                    positionEstimate != null && (!waiting || liveBoarding == null) -> "Berechnet"
                     waiting -> if (liveBoarding != null) "Live" else "Fahrplan"
-                    ride.displayTarget().estimated != null -> "Live"
-                    ride.departure.estimated != null -> "Geschätzt"
+                    dataFresh && ride.displayTarget().estimated != null -> "Live"
+                    dataFresh && ride.departure.estimated != null -> "Geschätzt"
                     else -> "Laut Fahrplan"
                 }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
@@ -669,7 +673,7 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: 
 @Composable
 private fun NextStopCard(tracking: TrackingState, now: Instant, gpsEnabled: Boolean, travelTime: Boolean = true) {
     val info = NextStopResolver.resolve(tracking, now, gpsEnabled)
-    val calculated = if (travelTime) TravelEstimator.estimate(tracking, now, gpsEnabled)?.nextStopMinutes else null
+    val calculated = if (travelTime) TravelEstimator.estimate(tracking, now, gpsEnabled)?.takeIf { it.nextStopIndex == info?.index }?.nextStopMinutes else null
     val next = info?.stop
     val uncertain = info?.source == NextStopSource.UNCERTAIN
     Row(Modifier.fillMaxWidth().clip(Shape).background(Panel).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {

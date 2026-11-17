@@ -19,10 +19,10 @@ class TravelEstimatorTest {
         val bus = RouteFixtures.bus("v7", 1000.0, 0.0, now.minusSeconds(10))
         val result = TravelEstimator.estimate(state(boarded, LiveBusState(vehicle = bus, selectedVehicleId = "v7", routeOffset = 1000.0)), now)!!
         assertEquals("bus", result.basis)
-        // Stop 2 (1000 m) is planned at T0+240, the exit at T0+600: 360 s, minus 10 s since the measurement.
-        assertEquals(350.0, result.seconds.toDouble(), 1.0)
+        // Stop 2 (1000 m) to the exit is 360 s of timetable travel time.
+        assertEquals(360.0, result.seconds.toDouble(), 1.0)
         assertEquals(6, result.minutes)
-        assertEquals(110.0, result.nextStopSeconds!!.toDouble(), 1.0) // stop 3 at 1500 m, 120 s further
+        assertEquals(120.0, result.nextStopSeconds!!.toDouble(), 1.0) // stop 3 at 1500 m, 120 s further
     }
 
     @Test fun `an unassigned bus nearby is not used`() {
@@ -37,7 +37,7 @@ class TravelEstimatorTest {
         val result = TravelEstimator.estimate(state(boarded, LiveBusState(vehicle = bus, selectedVehicleId = "v7", routeOffset = 1000.0),
             gps(1500.0, now.minusSeconds(5))), now)!!
         assertEquals("gps", result.basis)
-        assertEquals(235.0, result.seconds.toDouble(), 1.0) // stop 3 at T0+360 to exit at T0+600, minus 5 s
+        assertEquals(240.0, result.seconds.toDouble(), 1.0) // stop 3 to the exit: 240 s
     }
 
     @Test fun `without any fresh position nothing is calculated`() {
@@ -51,7 +51,7 @@ class TravelEstimatorTest {
         val now = T0.plusSeconds(60)
         val bus = RouteFixtures.bus("v7", 250.0, 0.0, now.minusSeconds(4))
         val result = TravelEstimator.estimate(state(waiting, LiveBusState(vehicle = bus, selectedVehicleId = "v7", routeOffset = 250.0)), now)!!
-        assertEquals(56.0, result.seconds.toDouble(), 1.0) // half way between stop 0 and stop 1: 60 s, minus 4 s
+        assertEquals(60.0, result.seconds.toDouble(), 1.0) // half way between stop 0 and stop 1: 60 s
         assertNull(result.nextStopSeconds)
         assertNull(TravelEstimator.estimate(state(waiting, gps = gps(250.0, now, waiting)), now))
     }
@@ -66,4 +66,38 @@ class TravelEstimatorTest {
         val cancelled = boarded.copy(departure = boarded.departure.copy(cancelled = true))
         assertNull(TravelEstimator.estimate(state(cancelled, gps = gps(1500.0, T0, cancelled)), T0))
     }
+    @Test fun `a stationary observation does not count down by itself`() {
+        val now = T0.plusSeconds(300)
+        val bus = RouteFixtures.bus("v7", 1000.0, 0.0, now)
+        val tracking = state(boarded, LiveBusState(vehicle = bus, selectedVehicleId = "v7", routeOffset = 1000.0))
+        assertEquals(TravelEstimator.estimate(tracking, now)!!.seconds,
+            TravelEstimator.estimate(tracking, now.plusSeconds(60))!!.seconds)
+    }
+
+    @Test fun `fresh operator forecast takes priority and old forecasts allow the calculation`() {
+        val now = T0.plusSeconds(300)
+        val ride = RouteFixtures.ride(boarded = true, delaySeconds = 180, fetchedAt = now)
+        val estimate = TravelEstimate(400, 100, "bus", now)
+        assertNull(TravelEstimator.fallback(ride, now, true, estimate))
+        assertEquals(estimate, TravelEstimator.fallback(ride, now.plusSeconds(121), true, estimate))
+        assertEquals(estimate, TravelEstimator.fallback(ride, now, false, estimate))
+    }
+
+    @Test fun `paused rides and vehicles away from the route give no calculated time`() {
+        val now = T0.plusSeconds(300)
+        val bus = RouteFixtures.bus("v7", 1000.0, 0.0, now)
+        val tracking = state(boarded, LiveBusState(vehicle = bus, selectedVehicleId = "v7", routeOffset = 1000.0))
+        assertNull(TravelEstimator.estimate(tracking.copy(running = false), now))
+        assertNull(TravelEstimator.estimate(tracking.copy(liveBus = tracking.liveBus.copy(offRoute = true)), now))
+        val remote = bus.copy(point = RouteFixtures.at(1000.0, 2000.0))
+        assertNull(TravelEstimator.estimate(tracking.copy(liveBus = tracking.liveBus.copy(vehicle = remote)), now))
+    }
+
+    @Test fun `the next stop estimate identifies the destination when it is next`() {
+        val now = T0.plusSeconds(500)
+        val result = TravelEstimator.estimate(state(boarded, gps = gps(2500.0, now)), now)!!
+        assertEquals(boarded.exitTargetIndex(), result.nextStopIndex)
+        assertEquals(result.seconds, result.nextStopSeconds)
+    }
+
 }
