@@ -1,5 +1,14 @@
 package de.luca.mitfahrt.ui
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import de.luca.mitfahrt.data.LiveFleet
+import de.luca.mitfahrt.data.shortName
+import de.luca.mitfahrt.data.FleetAge
+import de.luca.mitfahrt.data.VehicleObservation
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,6 +40,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 
 /** Public NEW positions, without assigning any vehicle to a user's departure. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BusMapOverview(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -66,60 +76,90 @@ fun BusMapOverview(onBack: () -> Unit) {
     }
     val blocked = settings.string("line_block", "").split(',', ';', '\n').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
     val allowed = settings.string("line_allow", "").split(',', ';', '\n').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
-    val current = vehicles.filter { it.isFresh(now) && (line.isBlank() || it.line.contains(line.trim(), ignoreCase = true)) &&
-        it.line.lowercase() !in blocked && (allowed.isEmpty() || it.line.lowercase() in allowed) }
-        .sortedWith(compareBy<NewVehicle> { it.line.toIntOrNull() ?: Int.MAX_VALUE }.thenBy { it.line }.thenBy { it.id })
+    var direction by rememberSaveable { mutableStateOf<String?>(null) }
+    var follow by rememberSaveable { mutableStateOf(false) }
+    var history by remember { mutableStateOf<Map<String, List<VehicleObservation>>>(emptyMap()) }
+    var fetchedAt by remember { mutableStateOf<Instant?>(null) }
+    LaunchedEffect(vehicles) { history = LiveFleet.remember(history, vehicles, Instant.now()); if (vehicles.isNotEmpty()) fetchedAt = Instant.now() }
+    val fresh = vehicles.filter { LiveFleet.age(it, now) != FleetAge.GONE }
+    val lineChoice = line.takeIf { it.isNotBlank() }
+    val current = LiveFleet.filter(vehicles, now, lineChoice, direction, blocked, allowed)
     val selected = current.firstOrNull { it.id == selectedId } ?: current.firstOrNull()
+    val headings = LiveFleet.headings(history, current)
+    val online = rememberOnline()
     Dialog(onDismissRequest = onBack,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                 Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
                     Column(Modifier.weight(1f)) {
                         Text("Buskarte", style = MaterialTheme.typography.titleLarge)
-                        Text("NEW · ${current.size} aktuelle Fahrzeuge", style = MaterialTheme.typography.labelSmall, color = Soft)
+                        Text(listOfNotNull("NEW · ${current.size} Busse", fetchedAt?.let { "Abruf vor ${(now.epochSecond - it.epochSecond).coerceAtLeast(0)} s" },
+                            "offline".takeIf { !online }).joinToString(" · "), fontSize = 13.sp, color = if (online) Soft else Amber)
                     }
-                    IconButton(onClick = { request++ }, enabled = !loading) { Icon(Icons.Outlined.Refresh, "Positionen aktualisieren") }
+                    IconButton(onClick = { request++ }, enabled = !loading, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Refresh, "Positionen aktualisieren") }
                 }
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item {
-                        OutlinedTextField(value = line, onValueChange = { line = it.take(30) }, label = { Text("Linie filtern") },
-                            singleLine = true, modifier = Modifier.fillMaxWidth(),
-                            leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                            trailingIcon = { if (line.isNotEmpty()) IconButton(onClick = { line = "" }) { Icon(Icons.Outlined.Close, "Filter leeren") } })
+                        // Quick filters from the lines that are actually on the road right now.
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = lineChoice == null, onClick = { line = ""; direction = null }, label = { Text("Alle") }, modifier = Modifier.heightIn(min = 48.dp))
+                            LiveFleet.lines(fresh).forEach { value ->
+                                FilterChip(selected = lineChoice == value, onClick = { line = if (lineChoice == value) "" else value; direction = null },
+                                    label = { Text(value) }, modifier = Modifier.heightIn(min = 48.dp))
+                            }
+                        }
+                        if (lineChoice != null) {
+                            val directions = LiveFleet.directions(fresh, lineChoice)
+                            if (directions.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                directions.forEach { value ->
+                                    FilterChip(selected = direction == value, onClick = { direction = if (direction == value) null else value },
+                                        label = { Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier = Modifier.heightIn(min = 48.dp))
+                                }
+                            }
+                        }
                     }
-                    if (loading) item { AppLinearProgressIndicator(Modifier.fillMaxWidth()) }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = !follow, onClick = { follow = false }, label = { Text("Übersicht") }, modifier = Modifier.heightIn(min = 48.dp))
+                            FilterChip(selected = follow, onClick = { follow = true }, enabled = selected != null,
+                                label = { Text(selected?.let { "Bus ${it.id} folgen" } ?: "Bus folgen") }, modifier = Modifier.heightIn(min = 48.dp))
+                        }
+                    }
+                    if (loading && vehicles.isEmpty()) item { AppLinearProgressIndicator(Modifier.fillMaxWidth()) }
                     if (error != null) item { Text(error!!, color = Amber, style = MaterialTheme.typography.bodySmall) }
                     if (selected != null) item {
                         WaitingBusMap(selected.point, null, "Linie ${selected.line} · Fahrzeug ${selected.id}", selected.observedAt, now,
-                            otherVehicles = current, selectedVehicleId = selected.id, overview = true,
+                            otherVehicles = current, selectedVehicleId = selected.id, overview = !follow,
                             // NEW publishes only stop points for the path; they are shown as stops, not joined into a line.
                             routeStops = selected.routeStops.takeIf {
-                                selected.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
+                                follow && selected.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
                             }.orEmpty().mapIndexed { index, stop -> Stop("new-path-$index", stop.name.ifBlank { "Halt" }, stop.point) },
-                            onSelectVehicle = { selectedId = it.id })
+                            onSelectVehicle = { selectedId = it.id }, heading = headings[selected.id], headings = headings)
                     }
                     item {
-                        Text("Gemeldete Linienfahrzeuge", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                        Text("Die Karte ordnet diese Fahrzeuge keiner bestimmten Abfahrt zu.", color = Soft, fontSize = 12.sp)
+                        Text("Busse auf der Straße", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                        Text("Keine Zuordnung zu einer Abfahrt. Blasse Busse melden seit über ${LiveFleet.OLDER_SECONDS} s nichts Neues.",
+                            color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
                     }
                     if (current.isEmpty() && !loading) item {
-                        Text(if (line.isBlank()) "Keine aktuellen Fahrzeugpositionen verfügbar." else "Für diese Linie gibt es gerade keine aktuellen Positionen.",
+                        Text(if (lineChoice == null) "Keine aktuellen Fahrzeugpositionen verfügbar." else "Für diese Auswahl gibt es gerade keine aktuellen Positionen.",
                             color = Soft, modifier = Modifier.padding(vertical = 16.dp))
                     }
                     items(current, key = { it.id }) { vehicle ->
-                        Surface(onClick = { selectedId = vehicle.id }, shape = Shape,
+                        val older = LiveFleet.age(vehicle, now) == FleetAge.OLDER
+                        Surface(onClick = { selectedId = vehicle.id }, shape = ControlShape,
                             color = if (selected?.id == vehicle.id) MaterialTheme.colorScheme.secondaryContainer else Panel) {
-                            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Outlined.DirectionsBus, null, tint = Lime)
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                LineSign(vehicle.line)
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Linie ${vehicle.line} · ${vehicle.id}", fontWeight = FontWeight.SemiBold)
-                                    if (vehicle.destination.isNotBlank()) Text(vehicle.destination, color = Soft, fontSize = 12.sp,
-                                        maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    Text("Stand vor ${(now.epochSecond - vehicle.observedAt.epochSecond).coerceAtLeast(0)} Sek.", color = Soft, fontSize = 11.sp)
+                                    Text(if (vehicle.destination.isBlank()) "Richtung nicht gemeldet" else if (vehicle.directionReliable) shortName(vehicle.destination)
+                                        else "${shortName(vehicle.destination)} (Anzeige, unsicher)", fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text("Fahrzeug ${vehicle.id} · vor ${(now.epochSecond - vehicle.observedAt.epochSecond).coerceAtLeast(0)} s" +
+                                        if (older) " · älter" else "", color = if (older) Amber else Soft, fontSize = 13.sp)
                                 }
                                 if (selected?.id == vehicle.id) Icon(Icons.Outlined.Check, "Ausgewählt", tint = Lime)
                             }

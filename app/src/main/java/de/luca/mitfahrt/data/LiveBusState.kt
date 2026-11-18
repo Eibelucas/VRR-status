@@ -20,5 +20,7 @@ data class LiveBusState(
     val routePoint: GeoPoint? = null,
     val routeOffset: Double? = null,
     /** The vehicle repeatedly reports positions away from the known line (possible diversion). */
-    val offRoute: Boolean = false
+    val offRoute: Boolean = false,
+    /** Direction of travel in degrees, only from a verified line or clear movement; null = unknown. */
+    val heading: Double? = null
 )

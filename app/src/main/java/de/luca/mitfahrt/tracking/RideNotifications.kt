@@ -150,7 +150,8 @@ class RideNotifications(private val context: Context) {
         val text = customText ?: builtInText
         builder.setContentTitle(title)
             .setContentText(text)
-            .setSubText(if (waiting) "$displaySource · ${shortName(ride.departure.stopName)}" else "$displaySource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
+            .setSubText(PositionHint.text(state, now)?.takeIf { settings.bool("notification_position", true) }
+                ?: if (waiting) "$displaySource · ${shortName(ride.departure.stopName)}" else "$displaySource · ${remaining?.let { "$it Min bis Ziel" } ?: "Ankunft unbekannt"}")
         if (waiting && mode in setOf("full", "time") && !ride.departure.cancelled && waitingTime?.at?.isAfter(now) == true) {
             builder.setWhen(waitingTime.at.toEpochMilli()).setShowWhen(true)
                 .setUsesChronometer(true).setChronometerCountDown(true)

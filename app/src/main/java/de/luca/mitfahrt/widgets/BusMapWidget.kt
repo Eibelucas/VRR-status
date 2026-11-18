@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.content.Intent
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
@@ -190,7 +191,11 @@ object BusMapWidget {
         }
         val density = app.resources.displayMetrics.density
         val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250).coerceIn(110, 600)
-        val heightDp = (options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180) - 76).coerceIn(60, 500)
+        val rawHeight = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180)
+        val heightDp = (rawHeight - 76).coerceIn(60, 500)
+        // Small lock-screen and home-screen slots: no sketch, just line, target and position in larger text.
+        val compact = rawHeight < 110 || widthDp < 150 ||
+            options.getInt(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY, -1) == AppWidgetProviderInfo.WIDGET_CATEGORY_KEYGUARD && rawHeight < 160
         val views = RemoteViews(app.packageName, R.layout.mitfahrt_map_widget)
         views.setInt(R.id.mitfahrt_map_widget_background, "setColorFilter", if (dark) Color.rgb(39, 29, 44) else Color.WHITE)
         views.setInt(R.id.mitfahrt_map_widget_background, "setImageAlpha", settings.int("widget_opacity", 100).coerceIn(20, 100) * 255 / 100)
@@ -200,7 +205,8 @@ object BusMapWidget {
         views.setTextColor(R.id.mitfahrt_map_widget_age, muted)
         views.setTextViewText(R.id.mitfahrt_map_widget_title, title)
         views.setTextViewText(R.id.mitfahrt_map_widget_status, status)
-        if (model != null) {
+        views.setTextViewTextSize(R.id.mitfahrt_map_widget_status, android.util.TypedValue.COMPLEX_UNIT_SP, if (compact) 14f else 12f)
+        if (model != null && !compact) {
             val scale = minOf(density, 2f)
             views.setImageViewBitmap(R.id.mitfahrt_map_widget_image, RouteSketch.render(model, (widthDp * scale).toInt(), (heightDp * scale).toInt(), dark))
             views.setViewVisibility(R.id.mitfahrt_map_widget_image, android.view.View.VISIBLE)
@@ -210,9 +216,11 @@ object BusMapWidget {
         views.setViewVisibility(R.id.mitfahrt_map_widget_age, if (measured != null) android.view.View.VISIBLE else android.view.View.GONE)
         views.setChronometer(R.id.mitfahrt_map_widget_age, SystemClock.elapsedRealtime() -
             (measured?.let { java.time.Duration.between(it, now).toMillis() } ?: 0L).coerceAtLeast(0), "Positionsstand vor %s", measured != null)
+        // One tap leads straight to the map: the ride page during a ride, otherwise the bus map.
         app.packageManager.getLaunchIntentForPackage(app.packageName)?.let {
+            it.putExtra("widget_action", if (state.ride != null) "ride" else "map")
             views.setOnClickPendingIntent(R.id.mitfahrt_map_widget_root,
-                PendingIntent.getActivity(app, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                PendingIntent.getActivity(app, 7, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
         return views
     }

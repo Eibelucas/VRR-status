@@ -109,6 +109,7 @@ fun MitfahrtApp(
     val companionNext by vm.companionNext.collectAsStateWithLifecycle()
     val journeyReports by vm.journeyReports.collectAsStateWithLifecycle()
     var openReportId by rememberSaveable { mutableStateOf<String?>(null) }
+    var editLayouts by rememberSaveable { mutableStateOf(false) }
     var savingReportId by rememberSaveable { mutableStateOf<String?>(null) }
     var savingJourneyReport by rememberSaveable { mutableStateOf(false) }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -287,6 +288,8 @@ fun MitfahrtApp(
             editHomeLayout = false
         }) { editHomeLayout = false }
         if (personalModule == "templates") TemplateEditorScreen(settings, { key, value -> vm.settingsStore.set(key, value) }) { personalModule = null }
+        else if (personalModule == "network") NetworkPlanScreen(onBack = { personalModule = null }, onStop = { stop -> personalModule = null; selectStop(stop) })
+        else if (personalModule?.startsWith("platforms:") == true) StationPlatformsScreen(personalModule!!.removePrefix("platforms:")) { personalModule = null }
         else if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
             onReport = { openReportId = vm.archivedReportId(it) }) { personalModule = null }
         else if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false },
@@ -402,6 +405,18 @@ fun MitfahrtApp(
                                 phone = tracking.location?.takeIf { tracking.locationAt?.let { at -> now.epochSecond - at.epochSecond in -10..60 } == true },
                                 onReject = { vm.rejectLiveVehicle(ride.departure.key, it) })
                         }
+                        if (tracking.powerSaving) item {
+                            Text(if (ride.isStale(now) || tracking.lastRefreshFailed) "Akku sparen · Daten länger nicht aktualisiert"
+                                else "Akku sparen · seltener aktualisiert, kurz vor Ein- und Ausstieg wieder normal",
+                                color = if (ride.isStale(now) || tracking.lastRefreshFailed) Amber else Soft, fontSize = 13.sp, lineHeight = 18.sp)
+                        }
+                        if (ride.boarded && settings.string("announce_stops", "off") != "off") item {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (tracking.announcementsPaused) "Ansagen pausiert" else "Nächster Halt wird angesagt",
+                                    color = Soft, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                                TextButton(onClick = vm::toggleAnnouncements) { Text(if (tracking.announcementsPaused) "Fortsetzen" else "Pausieren") }
+                            }
+                        }
                         if (ride.boarded) item { NextStopCard(tracking, now, settings.bool("gps_next_stop", true), settings.bool("gps_travel_time", true)) }
                         if (!ride.demo && !ride.departure.cancelled) item { ExitTargetCard(ride, alertPreferences.exitEnabled, vm::setExitTarget, vm::saveSchoolTrip) }
                         if (!ride.demo) item {
@@ -498,6 +513,7 @@ fun MitfahrtApp(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { showLiveMap = true }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                                 Icon(Icons.Outlined.Map, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Livekarte") }
+                            TextButton(onClick = { personalModule = "network" }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Liniennetz") }
                             TextButton(onClick = if (tracking.monitoring) onStop else onMonitor, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                                 Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (tracking.monitoring) "Suche stoppen" else "Bus finden") }
                         }
@@ -511,7 +527,8 @@ fun MitfahrtApp(
                         }
                     }
                 }
-                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings) { departureBoard = it }
+                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings,
+                    onOpenBoard = { departureBoard = it }, onOpenModule = { personalModule = it })
                 2 -> ReportsPage(reports, journeyReports, lastRide, Modifier.padding(insets), onOpen = { openReportId = it },
                     onCreate = { openReportId = vm.archivedReportId(it) }, onShare = vm::shareReport,
                     onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide, onOpenModule = { personalModule = it },
@@ -551,13 +568,22 @@ fun MitfahrtApp(
             confirmButton = { TextButton(onClick = { confirmStop = false; onStop() }) { Text("Beenden") } },
             dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("Weiterfahren") } })
         journeyReports.firstOrNull { it.id == openReportId }?.let { report ->
-            JourneyReportScreen(report, de.luca.mitfahrt.reports.ReportCustomization.from(settings), now, reports.busy,
+            val layoutState by vm.reportLayouts.collectAsStateWithLifecycle()
+            val layout = layoutState.first.firstOrNull { it.id == layoutState.second }
+            JourneyReportScreen(report, de.luca.mitfahrt.reports.ReportLayouts.apply(de.luca.mitfahrt.reports.ReportCustomization.from(settings), layout), now, reports.busy,
                 onBack = { openReportId = null }, onShare = { vm.exportJourneyReport(report.id) },
                 onSave = { savingReportId = report.id; savingJourneyReport = true; savePdf.launch(vm.exportName(report.id)) },
                 onObserve = { vm.addObservation(report.id, it) }, onRemoveObservation = { vm.removeObservation(report.id, it) },
                 onShareExport = { vm.shareExport(report.id, it) },
-                onDelete = { openReportId = null; vm.deleteJourneyReport(report.id) })
+                onDelete = { openReportId = null; vm.deleteJourneyReport(report.id) },
+                layouts = layoutState.first, selectedLayout = layoutState.second, onSelectLayout = vm::selectReportLayout,
+                onEditLayouts = { editLayouts = true })
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) { SnackbarHost(snackbar, Modifier.navigationBarsPadding().padding(bottom = 84.dp)) }
+        }
+        if (editLayouts) {
+            val layoutState by vm.reportLayouts.collectAsStateWithLifecycle()
+            ReportLayoutsScreen(layoutState.first, layoutState.second, vm::newReportLayout, vm::saveReportLayout, vm::removeReportLayout,
+                vm::selectReportLayout) { editLayouts = false }
         }
         arrivalRide?.let { selected ->
             AlertDialog(onDismissRequest = { arrivalRide = null },
@@ -773,7 +799,7 @@ private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean
 @Composable
 private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier,
     home: HomeState, routes: List<FrequentRoute>, onNearbyLocation: () -> Unit, savedStops: SavedStopsState, onFavorite: (Stop) -> Unit,
-    settings: AppSettings, onOpenBoard: (String) -> Unit) {
+    settings: AppSettings, onOpenBoard: (String) -> Unit, onOpenModule: (String) -> Unit) {
     var waitingNearby by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -839,6 +865,11 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                 }
             }
             if (search.routeFilter != null || search.plannedRoute != null) item { TextButton(onClick = { vm.selectStop(stop, recordVisit = false) }) { Text("Alle Linien anzeigen") } }
+            if (PlatformStations.isKnown(stop.id)) item {
+                OutlinedButton(shape = ControlShape, onClick = { onOpenModule("platforms:${stopKey(stop.id)}") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text("Steige am ${PlatformStations.known[stopKey(stop.id)]}")
+                }
+            }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(JourneyOptions.walking(stop, TripSettings.walkingSpeed(settings))?.label ?: "Gehzeit nicht verfügbar", color = Soft, fontSize = 13.sp, modifier = Modifier.weight(1f))

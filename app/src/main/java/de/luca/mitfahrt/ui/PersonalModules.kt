@@ -21,7 +21,7 @@ import de.luca.mitfahrt.data.*
 import java.time.LocalDate
 
 internal val personalModules = linkedMapOf("exceptions" to "Routenausnahmen", "calendar" to "Schulkalender NRW",
-    "archive" to "Fahrtenarchiv", "arrivals" to "Eigene Ankünfte")
+    "archive" to "Fahrtenarchiv", "arrivals" to "Eigene Ankünfte", "punctuality" to "Pünktlichkeit", "backup" to "Sicherung")
 
 @Composable
 internal fun PersonalModuleLinks(onOpen: (String) -> Unit, query: String = "") {
@@ -59,6 +59,8 @@ internal fun PersonalModuleScreen(module: String, vm: RideViewModel, today: Loca
                 "archive" -> JourneyArchiveScreen(archived, today, vm::removeArchived, vm::restoreArchived, vm::clearArchive,
                     vm::setArchiveEnabled, vm::setArchiveRetention, modifier = Modifier.weight(1f), onReport = onReport)
                 "arrivals" -> ArrivalHistoryScreen(arrivals, today, vm::removeArrival, modifier = Modifier.weight(1f))
+                "punctuality" -> Box(Modifier.weight(1f)) { PunctualityScreen(archived.entries, arrivals, today) }
+                "backup" -> Box(Modifier.weight(1f)) { BackupScreen(vm) }
                 "calendar" -> SchoolCalendarScreen(calendar, today, vm::setCalendarEnabled, vm::addFreeDay,
                     vm::removeFreeDay, vm::markSchoolDay, vm::removeSchoolDay, modifier = Modifier.weight(1f))
                 "exceptions" -> LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), contentPadding = PaddingValues(vertical = 12.dp),

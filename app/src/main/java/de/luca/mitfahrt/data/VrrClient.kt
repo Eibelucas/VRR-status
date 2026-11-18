@@ -91,6 +91,32 @@ class VrrClient {
         return EfaShapeParser.coords(request("XML_STOPSEQCOORD_REQUEST", tripParameters(departure)), departure)
     }
 
+    /** Platforms of a station with VRR's public platform coordinates, from its departure board. */
+    suspend fun platforms(stopId: String): StationPlatforms = StationPlatformParser.parse(request("XML_DM_REQUEST", mapOf(
+        "type_dm" to "stop", "name_dm" to stopKey(stopId), "mode" to "direct", "limit" to "120", "useRealtime" to "1"
+    )), stopId, java.time.Instant.now())
+
+    /** NEW lines with this number, one entry per direction. */
+    suspend fun linesByNumber(number: String): List<NetworkLine> {
+        val clean = number.trim().take(8)
+        require(clean.isNotEmpty())
+        // EFA searches Germany-wide; only NEW lines of Mönchengladbach are kept.
+        val padded = clean.toIntOrNull()?.let { "%03d".format(it) } ?: clean
+        return NetworkParser.lines(requestRaw("XML_SERVINGLINES_REQUEST", mapOf(
+            "mode" to "line", "lineName" to padded, "lineReqType" to "1", "mergeDir" to "0", "withoutTrains" to "1"
+        ))).filter { it.number.equals(padded, true) || it.number.equals(clean, true) }
+    }
+
+    /** NEW lines serving a stop, one entry per direction. */
+    suspend fun servingLines(stopId: String): List<NetworkLine> = NetworkParser.lines(requestRaw("XML_SERVINGLINES_REQUEST", mapOf(
+        "mode" to "odv", "type_sl" to "stopID", "name_sl" to stopKey(stopId), "lineReqType" to "1", "mergeDir" to "0", "withoutTrains" to "1"
+    )))
+
+    /** Stop sequence of one line direction. Platforms are reduced to their stops. */
+    suspend fun lineStops(lineId: String): List<LineStop> = NetworkParser.stops(request("XML_LINESTOP_REQUEST", mapOf(
+        "line" to lineId, "allStopInfo" to "1", "lineReqType" to "1"
+    )))
+
     /**
      * Journey planning (XML_TRIP_REQUEST2). No operator filter: trains, trams and other buses
      * belong to a journey. An answer without journeys is an empty result, not an invented one.
