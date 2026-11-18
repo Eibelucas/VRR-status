@@ -68,6 +68,7 @@ fun PlainMap(lines: List<MapLine>, pins: List<MapPin>, description: String, modi
         onDispose { lifecycle.removeObserver(observer); current?.setActive(false) }
     }
     if (validPins.isEmpty() && validLines.isEmpty()) return
+    val online = rememberOnline()
     Box(modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(16.dp)).semantics { contentDescription = description }) {
         AndroidView(modifier = Modifier.fillMaxSize(), factory = { viewContext ->
             PlainMapController(viewContext).also { controller = it; it.update(validLines, validPins, dark, onPin) }.map
@@ -79,6 +80,9 @@ fun PlainMap(lines: List<MapLine>, pins: List<MapPin>, description: String, modi
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                 Text("© OpenStreetMap contributors", color = Color(0xFF263445), fontSize = 10.sp)
             }
+        }
+        if (!online) Surface(Modifier.align(Alignment.TopStart).padding(8.dp), color = Color.White.copy(alpha = .96f), shape = RoundedCornerShape(8.dp)) {
+            Text(OFFLINE_MAP_NOTE, color = Color(0xFF6B3A00), fontSize = 12.sp, modifier = Modifier.padding(8.dp))
         }
     }
 }

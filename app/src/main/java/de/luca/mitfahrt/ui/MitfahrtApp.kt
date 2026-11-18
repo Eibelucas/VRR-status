@@ -272,6 +272,8 @@ fun MitfahrtApp(
     }
     MitfahrtTheme {
         if (personalModule == "templates") TemplateEditorScreen(settings, { key, value -> vm.settingsStore.set(key, value) }) { personalModule = null }
+        else if (personalModule == "network") NetworkPlanScreen(onBack = { personalModule = null }, onStop = { stop -> personalModule = null; selectStop(stop) })
+        else if (personalModule?.startsWith("platforms:") == true) StationPlatformsScreen(personalModule!!.removePrefix("platforms:")) { personalModule = null }
         else if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
             onReport = { openReportId = vm.archivedReportId(it) }) { personalModule = null }
         else if (showCustomization) CustomizationScreen(vm.settingsStore, onBack = { showCustomization = false },
@@ -461,6 +463,7 @@ fun MitfahrtApp(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { showLiveMap = true }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                                 Icon(Icons.Outlined.Map, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Livekarte") }
+                            TextButton(onClick = { personalModule = "network" }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Liniennetz") }
                             TextButton(onClick = if (tracking.monitoring) onStop else onMonitor, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                                 Icon(Icons.Outlined.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (tracking.monitoring) "Suche stoppen" else "Bus finden") }
                         }
@@ -474,7 +477,8 @@ fun MitfahrtApp(
                         }
                     }
                 }
-                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings)
+                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings,
+                    onOpenModule = { personalModule = it })
                 2 -> ReportsPage(reports, journeyReports, lastRide, Modifier.padding(insets), onOpen = { openReportId = it },
                     onCreate = { openReportId = vm.archivedReportId(it) }, onShare = vm::shareReport,
                     onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide, onOpenModule = { personalModule = it },
@@ -736,7 +740,7 @@ private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean
 @Composable
 private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier,
     home: HomeState, routes: List<FrequentRoute>, onNearbyLocation: () -> Unit, savedStops: SavedStopsState, onFavorite: (Stop) -> Unit,
-    settings: AppSettings) {
+    settings: AppSettings, onOpenModule: (String) -> Unit = {}) {
     var waitingNearby by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -793,6 +797,11 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                 }
             }
             if (search.routeFilter != null || search.plannedRoute != null) item { TextButton(onClick = { vm.selectStop(stop, recordVisit = false) }) { Text("Alle Linien anzeigen") } }
+            if (PlatformStations.isKnown(stop.id)) item {
+                OutlinedButton(shape = ControlShape, onClick = { onOpenModule("platforms:${stopKey(stop.id)}") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text("Steige am ${PlatformStations.known[stopKey(stop.id)]}")
+                }
+            }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(JourneyOptions.walking(stop)?.label ?: "Gehzeit nicht verfügbar", color = Soft, fontSize = 13.sp, modifier = Modifier.weight(1f))

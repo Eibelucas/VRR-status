@@ -166,6 +166,8 @@ object SettingsCatalog {
         c("nowbar_content", "Now-Bar-Anzeige", "nowbar", "full", "full" to "Alle Fahrtdetails", "line" to "Linie & Ziel", "time" to "Zeit", "next" to "Nächster Halt"),
         t("notification_actions", "Aktionen in der Benachrichtigung", "nowbar", "board,arrival,stop", hint = "board, arrival, map, stop; maximal drei Aktionen."),
         b("lockscreen_details", "Fahrtdetails auf dem Sperrbildschirm", "nowbar", true),
+        b("notification_position", "Busposition in der Benachrichtigung", "nowbar", true,
+            hint = "Kurz, wie weit dein zugeordneter Bus entfernt ist. Nur frische NEW-Positionen."),
         b("templates_enabled", "Eigene Texte verwenden", "nowbar", false,
             hint = "Texte für Now Bar, Benachrichtigung und Buskarten-Widget aus Platzhaltern wie {linie}. Bearbeiten unter Einstellungen, Eigene Texte."),
         t("tpl_nowbar_title_wait", "Eigener Text: Titel beim Warten", "nowbar"),

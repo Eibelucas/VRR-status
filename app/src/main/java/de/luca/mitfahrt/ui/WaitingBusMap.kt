@@ -58,6 +58,8 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import java.io.File
+import de.luca.mitfahrt.data.VehicleHeading
+import kotlin.math.roundToInt
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -92,7 +94,11 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
     /** Opens the same map on the whole screen; null inside the full-screen view itself. */
     onFullscreen: (() -> Unit)? = null,
     /** Fixed map height for the full-screen view; null keeps the card sizes. */
-    mapHeight: androidx.compose.ui.unit.Dp? = null) {
+    mapHeight: androidx.compose.ui.unit.Dp? = null,
+    /** Direction of the main marker; null keeps it neutral. */
+    heading: Double? = null,
+    /** Directions of other vehicles by id, only where known. */
+    headings: Map<String, Double> = emptyMap()) {
     if (!busPoint.mapValid() || now.epochSecond - positionAt.epochSecond !in -15..90) return
     val context = LocalContext.current
     val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
@@ -128,6 +134,7 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                 Column(Modifier.weight(1f)) {
                     Text(vehicleLabel, fontWeight = FontWeight.SemiBold, fontSize = 17.sp,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (!rememberOnline()) Text(OFFLINE_MAP_NOTE, color = Amber, fontSize = 13.sp, lineHeight = 18.sp)
                     Text(if (gpsSource) positionLabel(positionAt, now).replace("NEW", "GPS deines Handys") else positionLabel(positionAt, now),
                         color = Soft, fontSize = 13.sp)
                 }
@@ -147,11 +154,11 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                         it.onMoved = { value -> moved = value }
                         controller = it
                         it.update(busPoint, boarding, vehicleLabel, settings, dark, mapRoute, stops,
-                            visibleVehicles, onSelectVehicle, overview)
+                            visibleVehicles, onSelectVehicle, overview, heading, headings)
                     }.map
                 }, update = { view ->
                     controller?.takeIf { it.map === view }?.update(busPoint, boarding, vehicleLabel, settings, dark,
-                        mapRoute, stops, visibleVehicles, onSelectVehicle, overview)
+                        mapRoute, stops, visibleVehicles, onSelectVehicle, overview, heading, headings)
                 }, onReset = null, onRelease = { view ->
                     view.owner?.close()
                     if (controller?.map === view) controller = null
@@ -260,6 +267,8 @@ private class WaitingMapController(private val context: Context) {
     private val phoneMarker: Marker
     private val extraMarkers = mutableListOf<Marker>()
     private val stationMarkers = mutableListOf<Marker>()
+    private val arrowMarkers = mutableListOf<Marker>()
+    private val iconCache = HashMap<String, BitmapDrawable>()
     private var overlayIdentity: Any? = null
     val map: WaitingMapView
     private val bus: Marker
@@ -338,7 +347,7 @@ private class WaitingMapController(private val context: Context) {
 
     fun update(point: GeoPoint, boardingStop: Stop?, label: String, settings: AppSettings, dark: Boolean,
         mapRoute: MapRoute, stops: List<Stop>, vehicles: List<NewVehicle>,
-        onSelect: ((NewVehicle) -> Unit)?, fleetOverview: Boolean) {
+        onSelect: ((NewVehicle) -> Unit)?, fleetOverview: Boolean, heading: Double? = null, headings: Map<String, Double> = emptyMap()) {
         if (closed || !point.mapValid()) return
         val changedPoint = busPoint != point
         busPoint = point
@@ -357,6 +366,7 @@ private class WaitingMapController(private val context: Context) {
         }
         map.overlayManager.tilesOverlay?.setColorFilter(if (dark) TilesOverlay.INVERT_COLORS else null)
         bus.position = OsmPoint(point.lat, point.lon); bus.title = label
+        bus.icon = markerIcon(true, heading)
         stop.isEnabled = settings.bool("map_stops", true) && boarding != null
         boarding?.let { stop.position = OsmPoint(it.point!!.lat, it.point!!.lon); stop.title = "Einstieg: ${it.name}" }
         target.isEnabled = mapRoute.target?.point?.mapValid() == true
@@ -374,7 +384,7 @@ private class WaitingMapController(private val context: Context) {
         val to = mapRoute.sectionTo
         // Rounded so that a new GPS fix does not rebuild the overlays every few seconds.
         val passedKey = mapRoute.passedTo?.let { (it / 25.0).toInt() }
-        val identity = listOf(shape?.journeyKey, shape?.source, routePoints.size, from?.toInt(), to?.toInt(), passedKey, stops, vehicles)
+        val identity = listOf(shape?.journeyKey, shape?.source, routePoints.size, from?.toInt(), to?.toInt(), passedKey, stops, vehicles, headings)
         if (identity != overlayIdentity) {
             overlayIdentity = identity
             route.setPoints(routePoints.map { OsmPoint(it.lat, it.lon) }); route.isEnabled = routePoints.size > 1
@@ -393,11 +403,24 @@ private class WaitingMapController(private val context: Context) {
                     map.overlays.add(this); stationMarkers.add(this)
                 }
             }
+            arrowMarkers.forEach { map.overlays.remove(it) }; arrowMarkers.clear()
+            // Arrows only on verified geometry, pointing the way this trip runs.
+            if (line != null) VehicleHeading.arrows(line, from ?: 0.0, to ?: line.length).forEach { (where, bearing) ->
+                Marker(map).apply {
+                    position = OsmPoint(where.lat, where.lon); icon = arrowIcon(bearing)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER); infoWindow = null
+                    setOnMarkerClickListener { _, _ -> true }
+                    map.overlays.add(1, this); arrowMarkers.add(this)
+                }
+            }
+            val nowMillis = System.currentTimeMillis()
             vehicles.take(200).forEach { vehicle ->
                 Marker(map).apply {
                     position = OsmPoint(vehicle.point.lat, vehicle.point.lon)
-                    title = "Linie ${vehicle.line} · Fahrzeug ${vehicle.id}"
-                    icon = markerIcon(true); alpha = .65f
+                    val age = (nowMillis - vehicle.observedAt.toEpochMilli()) / 1000
+                    title = "Linie ${vehicle.line} · Fahrzeug ${vehicle.id}" + if (age >= 60) " · älter als eine Minute" else ""
+                    // Older positions are drawn faint so they do not read as live.
+                    icon = markerIcon(true, headings[vehicle.id]); alpha = if (age >= 60) .35f else .7f
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                     infoWindow = null
                     setOnMarkerClickListener { _, _ -> onSelect?.invoke(vehicle); true }
@@ -407,12 +430,13 @@ private class WaitingMapController(private val context: Context) {
             map.overlays.remove(bus); map.overlays.add(bus)
         }
         map.contentDescription = if (boarding != null) "$label und Einstieg ${boarding!!.name} auf der Karte" else "$label auf der Karte"
-        val cameraKey = "$label/${boardingStop?.id}/$camera/$zoom/$fleetOverview"
+        // In the fleet overview the viewport stays where the user left it; only the first show fits all buses.
+        val cameraKey = if (fleetOverview) "overview/$zoom" else "$label/${boardingStop?.id}/$camera/$zoom"
         val canFollow = manualSince == 0L || resumeSeconds > 0 &&
             SystemClock.elapsedRealtime() - manualSince >= resumeSeconds * 1000L
         if (cameraKey != cameraIdentity) {
             cameraIdentity = cameraKey; recenter()
-        } else if (canFollow && changedPoint) {
+        } else if (canFollow && changedPoint && !fleetOverview) {
             manualSince = 0L; needsFit = true; fitIfSized()
         }
         map.invalidate()
@@ -461,20 +485,49 @@ private class WaitingMapController(private val context: Context) {
         return BitmapDrawable(context.resources, bitmap)
     }
 
-    private fun markerIcon(isBus: Boolean): BitmapDrawable {
-        val size = ((if (isBus) 42 else 30) * density).toInt().coerceAtLeast(1)
+    /** Bus marker; with a known [heading] a wedge outside the circle points the way it travels. */
+    private fun markerIcon(isBus: Boolean, heading: Double? = null): BitmapDrawable {
+        val bucket = heading?.let { ((it / 15.0).roundToInt() * 15) % 360 }
+        iconCache["m/$isBus/$bucket"]?.let { return it }
+        val circle = ((if (isBus) 42 else 30) * density)
+        val size = (if (bucket != null) circle + 22 * density else circle).toInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap); val paint = Paint(Paint.ANTI_ALIAS_FLAG); val center = size / 2f
-        paint.color = android.graphics.Color.WHITE; canvas.drawCircle(center, center, center, paint)
+        if (bucket != null) {
+            canvas.save(); canvas.rotate(bucket.toFloat(), center, center)
+            val wedge = android.graphics.Path().apply {
+                moveTo(center, 0f); lineTo(center - 9 * density, 12 * density); lineTo(center + 9 * density, 12 * density); close()
+            }
+            paint.color = android.graphics.Color.WHITE; canvas.drawPath(wedge, paint)
+            paint.color = 0xFFB40055.toInt(); canvas.scale(.72f, .72f, center, 7 * density); canvas.drawPath(wedge, paint)
+            canvas.restore()
+        }
+        val radius = circle / 2f
+        paint.color = android.graphics.Color.WHITE; canvas.drawCircle(center, center, radius, paint)
         paint.color = if (isBus) 0xFFB40055.toInt() else 0xFFEAF6EA.toInt()
-        canvas.drawCircle(center, center, center - 2 * density, paint)
+        canvas.drawCircle(center, center, radius - 2 * density, paint)
         if (isBus) context.getDrawable(R.drawable.ic_bus)?.mutate()?.let { icon ->
-            val inset = (size * .23f).toInt(); icon.setBounds(inset, inset, size - inset, size - inset); icon.draw(canvas)
+            val inset = (radius * .46f).toInt(); val c = center.toInt(); val r = radius.toInt()
+            icon.setBounds(c - r + inset, c - r + inset, c + r - inset, c + r - inset); icon.draw(canvas)
         } else {
             paint.color = 0xFF20824B.toInt(); paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
             paint.textSize = size * .58f; paint.textAlign = Paint.Align.CENTER
             canvas.drawText("H", center, center - (paint.ascent() + paint.descent()) / 2, paint)
         }
-        return BitmapDrawable(context.resources, bitmap)
+        return BitmapDrawable(context.resources, bitmap).also { iconCache["m/$isBus/$bucket"] = it }
+    }
+
+    private fun arrowIcon(bearing: Double): BitmapDrawable {
+        val bucket = ((bearing / 15.0).roundToInt() * 15) % 360
+        iconCache["a/$bucket"]?.let { return it }
+        val size = (18 * density).toInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap); val paint = Paint(Paint.ANTI_ALIAS_FLAG); val c = size / 2f
+        canvas.rotate(bucket.toFloat(), c, c)
+        val path = android.graphics.Path().apply { moveTo(c, 1.5f * density); lineTo(c + 6 * density, c + 5 * density)
+            lineTo(c, c + 1.5f * density); lineTo(c - 6 * density, c + 5 * density); close() }
+        paint.color = android.graphics.Color.WHITE; paint.style = Paint.Style.STROKE; paint.strokeWidth = 2.5f * density; canvas.drawPath(path, paint)
+        paint.style = Paint.Style.FILL; paint.color = 0xFFB40055.toInt(); canvas.drawPath(path, paint)
+        return BitmapDrawable(context.resources, bitmap).also { iconCache["a/$bucket"] = it }
     }
 }
