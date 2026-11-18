@@ -33,6 +33,7 @@ class MitfahrtApplication : Application() {
     val routeShapes by lazy { de.luca.mitfahrt.data.RouteShapeRepository(vrr::tripPath,
         de.luca.mitfahrt.data.RouteShapeCache(java.io.File(cacheDir, "route_shapes.json"))) }
     val reports by lazy { ReportFiles(this) }
+    val reportLayouts by lazy { de.luca.mitfahrt.reports.ReportLayoutStore(this) }
     /** One report per accompanied connection; stays on the device until exported by hand. */
     val journeyReports by lazy { de.luca.mitfahrt.reports.JourneyReportStore(this) }
     val arrivals by lazy { ArrivalStore(this) }

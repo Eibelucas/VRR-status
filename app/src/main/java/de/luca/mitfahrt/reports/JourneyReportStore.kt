@@ -24,7 +24,8 @@ class JourneyReportStore(private val directory: File, private val options: () ->
     private val writer: (List<ReportBlock>, File) -> Int = JourneyReportPdf::render) {
     constructor(context: Context) : this(context, AppSettingsStore(context))
     private constructor(context: Context, settings: AppSettingsStore) : this(File(File(context.filesDir, "reports"), "journeys"),
-        { ReportCustomization.from(settings.current()) }, { settings.current().int("report_retention_days", 0) })
+        { ReportLayouts.apply(ReportCustomization.from(settings.current()), ReportLayoutStore(context).selected) },
+        { settings.current().int("report_retention_days", 0) })
 
     private val mutable = MutableStateFlow(read())
     val state: StateFlow<List<JourneyReport>> = mutable.asStateFlow()

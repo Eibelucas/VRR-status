@@ -10,8 +10,12 @@ data class ReportCustomization(
     val name: String = "", val schoolClass: String = "", val note: String = "",
     val compact: Boolean = false,
     val fields: Set<String> = setOf("line", "route", "date", "operator_times", "own_arrival", "sources"),
-    val filename: String = "Mitfahrt"
+    val filename: String = "Mitfahrt",
+    /** From a report layout: sender lines above the report, school name and the sections shown. */
+    val senderLines: List<String> = emptyList(), val school: String = "",
+    val sections: Set<String> = ReportLayout.SECTIONS.keys, val layoutName: String = ""
 ) {
+    fun shows(section: String) = section in sections
     fun includes(field: String) = field in fields
     fun exportName(evidence: DelayEvidence): String {
         val prefix = filename.trim().replace(Regex("[^\\p{L}\\p{N} _.-]"), "_")

@@ -46,6 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import de.luca.mitfahrt.data.ArchivedJourney
@@ -89,6 +92,8 @@ fun JourneyArchiveScreen(
     var detail by remember { mutableStateOf<ArchivedJourney?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
+    var calendar by rememberSaveable { mutableStateOf(false) }
+    var month by remember { mutableStateOf(java.time.YearMonth.from(today)) }
 
     val allLines = JourneyArchive.lines(state.entries)
     val activeLine = line?.takeIf { it in allLines }
@@ -130,6 +135,13 @@ fun JourneyArchiveScreen(
                                 start.year, start.monthValue - 1, start.dayOfMonth).show()
                         }, label = { Text(day?.let(::dayLabelShort) ?: "Datum wählen") }, modifier = Modifier.heightIn(min = 48.dp))
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !calendar, onClick = { calendar = false }, label = { Text("Liste") }, modifier = Modifier.heightIn(min = 48.dp))
+                        FilterChip(selected = calendar, onClick = { calendar = true; month = java.time.YearMonth.from(day ?: today) },
+                            label = { Text("Kalender") }, modifier = Modifier.heightIn(min = 48.dp))
+                    }
+                    if (calendar) ArchiveCalendarView(JourneyArchive.filter(state.entries, JourneyArchiveFilter(query, activeLine)), month, today,
+                        onMonth = { month = it }, onDay = { chosen -> day = chosen; calendar = false })
                     val lines = allLines
                     if (lines.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = activeLine == null, onClick = { line = null }, label = { Text("Alle Linien") },
@@ -273,3 +285,46 @@ private fun dayLabel(date: LocalDate, today: LocalDate): String = when (date) {
     else -> dayFormat.format(date)
 }
 private fun dayLabelShort(date: LocalDate): String = shortDayFormat.format(date)
+
+
+/** Month view of the archive; days with rides show their count and open that day's list. */
+@Composable
+private fun ArchiveCalendarView(entries: List<ArchivedJourney>, month: java.time.YearMonth, today: LocalDate,
+    onMonth: (java.time.YearMonth) -> Unit, onDay: (LocalDate) -> Unit) {
+    val weeks = de.luca.mitfahrt.data.ArchiveCalendar.month(entries, month)
+    val title = month.atDay(1).format(java.time.format.DateTimeFormatter.ofPattern("LLLL yyyy", java.util.Locale.GERMANY))
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { onMonth(month.minusMonths(1)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Zurück") }
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            TextButton(onClick = { onMonth(month.plusMonths(1)) }, enabled = month < java.time.YearMonth.from(today), modifier = Modifier.heightIn(min = 48.dp)) { Text("Weiter") }
+        }
+        Row(Modifier.fillMaxWidth()) {
+            listOf("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So").forEach {
+                Text(it, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        weeks.forEach { week ->
+            Row(Modifier.fillMaxWidth()) {
+                week.forEach { cell ->
+                    val date = cell.day
+                    Box(Modifier.weight(1f).heightIn(min = 48.dp).padding(2.dp), contentAlignment = Alignment.Center) {
+                        if (date != null) {
+                            val label = "${date.dayOfMonth}. " + if (cell.rides == 0) "keine Fahrten" else "${cell.rides} Fahrten"
+                            Surface(onClick = { onDay(date) }, enabled = cell.rides > 0, shape = ControlShape,
+                                color = if (cell.rides > 0) MaterialTheme.colorScheme.primary.copy(alpha = .14f) else androidx.compose.ui.graphics.Color.Transparent,
+                                modifier = Modifier.fillMaxSize().semantics { contentDescription = label }) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.padding(vertical = 6.dp)) {
+                                    Text("${date.dayOfMonth}", fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (cell.rides > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (cell.rides > 0) Text("${cell.rides}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

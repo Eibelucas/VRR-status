@@ -564,6 +564,48 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun boardBus() { correctBoarding(de.luca.mitfahrt.tracking.RideService.BOARD) { it.board("manual", Instant.now()) } }
     /** "Doch nicht im Bus": back to waiting; the detection pauses for a few minutes. */
     fun notOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.UNBOARD) { it.unboard() } }
+    // --- local backup: only on explicit request, through Android's file picker ---
+    private val backupState = MutableStateFlow<String?>(null)
+    val backupMessage = backupState.asStateFlow()
+    private val backupBusyState = MutableStateFlow(false)
+    val backupBusy = backupBusyState.asStateFlow()
+    fun exportBackup(target: android.net.Uri) { if (backupBusyState.value) return; backupBusyState.value = true; viewModelScope.launch {
+        try {
+            val counts = withContext(Dispatchers.IO) {
+                (app.contentResolver.openOutputStream(target, "wt") ?: error("Speicherort nicht verfügbar")).use { out ->
+                    de.luca.mitfahrt.data.backup.BackupWriter.write(out, app.archive.state.value, java.io.File(app.filesDir, "reports"), Instant.now())
+                }
+            }
+            backupState.value = "Gesichert: ${counts["rides"]} Fahrten, ${counts["reports"]} Berichte, ${counts["exports"]} PDFs"
+        } catch (e: CancellationException) { throw e
+        } catch (_: Exception) { backupState.value = "Die Sicherung konnte nicht geschrieben werden." }
+        finally { backupBusyState.value = false }
+    } }
+    fun importBackup(source: android.net.Uri) { if (backupBusyState.value) return; backupBusyState.value = true; viewModelScope.launch {
+        try {
+            val result = withContext(Dispatchers.IO) {
+                // Everything is read and checked before anything is written.
+                val contents = (app.contentResolver.openInputStream(source) ?: error("Datei nicht lesbar")).use {
+                    de.luca.mitfahrt.data.backup.BackupReader.read(it, Instant.now())
+                }
+                val rides = app.archive.importEntries(contents.archive)
+                de.luca.mitfahrt.data.backup.BackupMerge.reports(contents, java.io.File(app.filesDir, "reports")).copy(rides = rides)
+            }
+            app.journeyReports.reload()
+            reportState.value = reportState.value.copy(entries = withContext(Dispatchers.IO) { app.reports.list() })
+            backupState.value = "Übernommen: ${result.rides} Fahrten, ${result.reports} Berichte, ${result.exports} PDFs, ${result.legacy} ältere Belege" +
+                if (result.skipped > 0) ". ${result.skipped} schon vorhanden oder neuer auf dem Gerät." else "."
+        } catch (e: CancellationException) { throw e
+        } catch (e: de.luca.mitfahrt.data.backup.BackupException) { backupState.value = "${e.message} Es wurde nichts geändert."
+        } catch (_: Exception) { backupState.value = "Die Sicherung konnte nicht gelesen werden. Es wurde nichts geändert." }
+        finally { backupBusyState.value = false }
+    } }
+
+    val reportLayouts = app.reportLayouts.state
+    fun selectReportLayout(id: String?) = app.reportLayouts.select(id)
+    fun saveReportLayout(layout: de.luca.mitfahrt.reports.ReportLayout) = app.reportLayouts.save(layout)
+    fun removeReportLayout(id: String) = app.reportLayouts.remove(id)
+    fun newReportLayout() = app.reportLayouts.newLayout()
     fun toggleAnnouncements() { app.store.update { it.copy(announcementsPaused = !it.announcementsPaused) } }
     fun stillOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.STILL_ON_BOARD) { it } }
     private fun correctBoarding(action: String, change: (Ride) -> Ride) {

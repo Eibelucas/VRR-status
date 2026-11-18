@@ -42,7 +42,9 @@ private val observationPresets = listOf("Bus ist nicht gekommen", "Bus ist durch
 internal fun JourneyReportScreen(
     report: JourneyReport, options: ReportCustomization, now: Instant, busy: Boolean,
     onBack: () -> Unit, onShare: () -> Unit, onSave: () -> Unit, onObserve: (String) -> Unit,
-    onRemoveObservation: (String) -> Unit, onShareExport: (ReportExport) -> Unit, onDelete: () -> Unit
+    onRemoveObservation: (String) -> Unit, onShareExport: (ReportExport) -> Unit, onDelete: () -> Unit,
+    layouts: List<ReportLayout> = emptyList(), selectedLayout: String? = null,
+    onSelectLayout: (String?) -> Unit = {}, onEditLayouts: (() -> Unit)? = null
 ) {
     BackHandler(onBack = onBack)
     var note by rememberSaveable { mutableStateOf("") }
@@ -59,6 +61,16 @@ internal fun JourneyReportScreen(
                 }
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
+                // The layout only changes header and sections of the preview and of new PDFs.
+                if (onEditLayouts != null) item(key = "layout") {
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = selectedLayout == null, onClick = { onSelectLayout(null) }, label = { Text("Standard") }, modifier = Modifier.heightIn(min = 48.dp))
+                        layouts.forEach { layout -> FilterChip(selected = layout.id == selectedLayout, onClick = { onSelectLayout(layout.id) },
+                            label = { Text(layout.name) }, modifier = Modifier.heightIn(min = 48.dp)) }
+                        TextButton(onClick = onEditLayouts, modifier = Modifier.heightIn(min = 48.dp)) { Text("Layouts") }
+                    }
+                }
                 blocks.forEachIndexed { index, block -> item(key = index) { ReportBlockView(block) } }
                 item(key = "own") {
                     ReportHeading("Eigene Beobachtung")

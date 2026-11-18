@@ -237,6 +237,20 @@ class JourneyArchiveStore(private val file: File, private val clock: () -> Insta
     init { persist(mutable.value) }
 
     @Synchronized fun record(ride: Ride) { persist(JourneyArchive.record(mutable.value, ride, clock())) }
+    /**
+     * Adds archived rides from a backup. A ride already here is replaced only by a newer revision;
+     * deleted rides come back only through the import the user started. Returns the number taken over.
+     */
+    @Synchronized fun importEntries(entries: List<ArchivedJourney>): Int {
+        val current = mutable.value
+        if (!current.settings.enabled) return 0
+        val byId = current.entries.associateBy { it.id }
+        val taken = entries.filter { incoming -> byId[incoming.id]?.let { incoming.updatedAt.isAfter(it.updatedAt) } ?: true }
+        if (taken.isEmpty()) return 0
+        val merged = (current.entries.filterNot { existing -> taken.any { it.id == existing.id } } + taken).sortedByDescending { it.startedAt }
+        val pruned = JourneyArchive.prune(current.copy(entries = merged, tombstones = current.tombstones - taken.map { it.id }.toSet()), clock())
+        return if (persist(pruned)) taken.count { entry -> pruned.entries.any { it.id == entry.id } } else 0
+    }
     @Synchronized fun update(ride: Ride) {
         val updated = JourneyArchive.update(mutable.value, ride, clock())
         if (updated !== mutable.value) persist(updated)

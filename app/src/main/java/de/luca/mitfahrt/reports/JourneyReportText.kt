@@ -106,15 +106,21 @@ object JourneyReportText {
     fun build(report: JourneyReport, options: ReportCustomization, generatedAt: Instant): List<ReportBlock> {
         val blocks = mutableListOf<ReportBlock>()
         val preliminary = report.state == ReportState.RUNNING
+        // Sender lines first, like a letterhead; they are the user's own text.
+        options.senderLines.forEach { blocks += ReportBlock.Small(it) }
         blocks += ReportBlock.Title("Fahrtbericht", report.title)
         if (preliminary) blocks += ReportBlock.Paragraph("Vorläufiger Stand von ${clock(generatedAt)} Uhr. Die Fahrt läuft noch; spätere Angaben fehlen.", strong = true)
         if (options.name.isNotBlank()) blocks += ReportBlock.Field("Name", options.name)
+        if (options.school.isNotBlank()) blocks += ReportBlock.Field("Schule", options.school)
         if (options.schoolClass.isNotBlank()) blocks += ReportBlock.Field("Klasse", options.schoolClass)
 
-        blocks += ReportBlock.Heading("Zusammenfassung")
-        summary(report).forEach { blocks += ReportBlock.Paragraph(it) }
+        if (options.shows("summary")) {
+            blocks += ReportBlock.Heading("Zusammenfassung")
+            summary(report).forEach { blocks += ReportBlock.Paragraph(it) }
+        }
         if (options.note.isNotBlank()) blocks += ReportBlock.Field("Eigene Notiz", options.note)
 
+        if (options.shows("timeline")) {
         blocks += ReportBlock.Heading("Verlauf")
         val shown = report.events.filter { it.type != ReportEventType.NOTICE }.sortedBy { it.at }
         if (shown.isEmpty()) blocks += ReportBlock.Paragraph("Für diese Fahrt wurden keine Ereignisse erfasst.")
@@ -124,7 +130,9 @@ object JourneyReportText {
         val missing = expected.filter { (type, _) -> report.events.none { it.type == type } }
             .filterNot { (type, _) -> report.state == ReportState.ABORTED && type != ReportEventType.ARRIVED_AT_STOP }
         if (missing.isNotEmpty()) blocks += ReportBlock.Small(missing.joinToString(", ") { it.second } + ": $MISSING.")
+        }
 
+        if (options.shows("connection")) {
         blocks += ReportBlock.Heading("Verbindung")
         report.legs.forEach { leg ->
             if (leg.walk) {
@@ -154,8 +162,9 @@ object JourneyReportText {
                 else "Für diese Fahrt lag keine VRR-Prognose vor, nur der Fahrplan.")
             leg.notices.forEach { blocks += ReportBlock.Small("Meldung: $it") }
         }
+        }
 
-        if (options.includes("sources")) {
+        if (options.includes("sources") && options.shows("sources")) {
             blocks += ReportBlock.Heading("Datenquellen")
             blocks += ReportBlock.Small("Fahrplan, Prognosen, Ausfälle und Meldungen: VRR (openservice.vrr.de).")
             report.transit.filter { it.lineId.isNotBlank() }.forEach { leg ->
