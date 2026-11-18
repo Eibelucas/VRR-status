@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.watch" android:required="true" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Only for an explicitly requested VRR check while the phone is not reachable. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application android:name=".WatchApplication" android:allowBackup="false" android:label="Mitfahrt"
         android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="false"
         android:icon="@drawable/ic_launcher" android:theme="@android:style/Theme.DeviceDefault">

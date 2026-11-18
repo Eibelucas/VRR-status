@@ -45,6 +45,8 @@ class RideService : Service(), LocationListener {
     private var foregroundType = 0
     private var lastAutoArrival: String? = null
     private var locationProfile: LocationProfile? = null
+    private var speech: RideSpeech? = null
+    private var announced: Pair<String, Int>? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) { readWifi() }
@@ -127,8 +129,7 @@ class RideService : Service(), LocationListener {
                     ensureRouteShape()
                     refreshLiveBus()
                     val settings = customization.current()
-                    val interval = settings.int(if (store.state.value.ride?.boarded == true) "refresh_riding" else "refresh_waiting",
-                        if (store.state.value.ride?.boarded == true) 30 else 15).coerceIn(15, 120) * 1000L
+                    val interval = powerPlan(settings).refreshMillis
                     withTimeoutOrNull(interval) { liveWake.receive() }
                 }
             }
@@ -148,8 +149,9 @@ class RideService : Service(), LocationListener {
                     readWifi()
                     val ride = store.state.value.ride
                     if (ride != null) {
-                        val interval = settings.int(if (ride.boarded) "refresh_riding" else "refresh_waiting", if (ride.boarded) 30 else 15)
-                            .coerceIn(15, 120) * 1000L
+                        val plan = powerPlan(settings)
+                        if (plan.saving != store.state.value.powerSaving) store.update { it.copy(powerSaving = plan.saving) }
+                        val interval = plan.refreshMillis
                         if (RideRefreshPolicy.needsRefresh(ride, elapsed - lastRideRefresh, lastCompletionCheck, Instant.now(), interval)) {
                             lastRideRefresh = elapsed
                             refreshRide(ride)
@@ -193,11 +195,21 @@ class RideService : Service(), LocationListener {
                         // On a planned journey the exit is a transfer: name the next vehicle (plan time).
                         val transfer = app.companion.state.value?.takeIf { it.trackedKey == currentRide.departure.key }
                             ?.let(JourneyCompanions::transferHint)
-                        if (id != null) emitAlert(id, "exit", if (transfer != null) "Bald umsteigen" else "Bald aussteigen",
+                        val emitted = id != null && emitAlert(id, "exit", if (transfer != null) "Bald umsteigen" else "Bald aussteigen",
                             "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}" +
                                 (if (gpsBased) " · per GPS erkannt" else "") + (transfer?.let { " · $it" } ?: ""),
                             currentRide.exitTargetStop()?.estimated?.takeIf { it > now } ?: now.plusSeconds(60), runtime)
+                        // Spoken only together with the vibration it accompanies, so it never repeats.
+                        val exitRoute = SpeechRoute.of(settings.string("exit_audio", "off"))
+                        if (emitted && exitRoute != SpeechRoute.OFF) speechFor().speak(
+                            (if (transfer != null) "Bald umsteigen. " else "Bald aussteigen. ") +
+                                "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}.", exitRoute) {
+                            val active = store.state.value
+                            active.running && active.ride?.let(ExitAlarm::id) == id &&
+                                SpeechRoute.of(customization.current().string("exit_audio", "off")) == exitRoute
+                        }
                     }
+                    announceNextStop(settings)
                     notifications.post(store.state.value)
                     delay(10_000)
                 }
@@ -426,7 +438,7 @@ class RideService : Service(), LocationListener {
             if (store.state.value.location != null) store.update { it.copy(location = null, locationAt = null) }
             return
         }
-        val profile = LocationProfile.of(store.state.value.ride, store.state.value.boarding?.phase, Instant.now())
+        val profile = powerPlan(customization.current()).location
         if (locationSubscribed && profile != locationProfile) {
             // Tighter or looser measuring for the new situation; the foreground type stays.
             runCatching { locations.removeUpdates(this) }
@@ -456,7 +468,37 @@ class RideService : Service(), LocationListener {
         }
     }
 
+    private fun powerPlan(settings: AppSettings): PowerPlan {
+        val state = store.state.value
+        val boarded = state.ride?.boarded == true
+        return PowerPolicy.plan(state.ride, state.boarding?.phase, settings.string("battery_saver", "off"),
+            settings.int(if (boarded) "refresh_riding" else "refresh_waiting", if (boarded) 30 else 15), Instant.now())
+    }
+
+    private fun speechFor(): RideSpeech = speech ?: RideSpeech(this).also { speech = it }
+
+    /** Announces each next stop once; a correction backwards resets without speaking. */
+    private fun announceNextStop(settings: AppSettings) {
+        val route = SpeechRoute.of(settings.string("announce_stops", "off"))
+        val state = store.state.value
+        val key = state.ride?.departure?.key ?: run { announced = null; return }
+        if (state.ride?.boarded != true) { announced = null; return }
+        val last = announced?.takeIf { it.first == key }?.second
+        val info = NextStopResolver.resolve(state, Instant.now(), settings.bool("gps_next_stop", true))
+        // A stop index that moved back (manual correction, GPS reset) only resets the memory.
+        if (last != null && info?.index != null && info.index < last) { announced = key to info.index; return }
+        if (route == SpeechRoute.OFF) { announced = info?.index?.let { key to it } ?: announced; return }
+        val next = SpeechPolicy.announcement(state, Instant.now(), last, settings.bool("gps_next_stop", true)) ?: return
+        announced = key to next.first
+        speechFor().speak(next.second, route) {
+            val active = store.state.value
+            active.running && !active.announcementsPaused && active.ride?.departure?.key == key &&
+                SpeechRoute.of(customization.current().string("announce_stops", "off")) == route
+        }
+    }
+
     private fun noteCorrection() {
+        announced = null
         val ride = store.state.value.ride ?: return
         val now = Instant.now()
         store.update { state -> if (state.ride?.departure?.key != ride.departure.key) state
@@ -583,6 +625,7 @@ class RideService : Service(), LocationListener {
 
     override fun onDestroy() {
         scope.cancel()
+        speech?.shutdown(); speech = null
         customization.close()
         alertPreferences.close()
         if (sensorsRegistered) runCatching { unregisterReceiver(receiver) }

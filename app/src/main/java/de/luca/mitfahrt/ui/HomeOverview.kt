@@ -32,6 +32,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
     val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
     var allRoutes by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    val speed = TripSettings.walkingSpeed(settings)
     val matches = if (home.status == NearbyStatus.READY) RouteHistory.suggestions(routes, home.stops, home.departures, now) else emptyList()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (showSearch) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel).clickable(onClick = onSearch).padding(18.dp),
@@ -50,8 +51,8 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         DepartureRow(match.departure, now, choosingKey == match.departure.key, !choosing,
                             showStop = true, distance = match.stop.distance) { onDeparture(match.departure) }
-                        JourneyOptions.walking(match.stop)?.let { walk ->
-                            Text("${walk.label} · ${JourneyOptions.reachability(match.stop, match.departure, now).label}",
+                        JourneyOptions.walking(match.stop, speed)?.let { walk ->
+                            Text("${walk.label} · ${JourneyOptions.reachability(match.stop, match.departure, now, speed).label}",
                                 color = Soft, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
                         }
                     }

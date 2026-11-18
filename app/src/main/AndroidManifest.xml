@@ -15,6 +15,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <queries>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+    </queries>
     <application
         android:name=".MitfahrtApplication"
         android:allowBackup="false"
@@ -35,6 +38,11 @@
             android:label="@string/mitfahrt_widget_label">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/mitfahrt_widget_info" />
+        </receiver>
+        <receiver android:name=".widgets.FavoriteStopsWidget" android:exported="false"
+            android:label="@string/mitfahrt_favorite_stops_label">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/mitfahrt_favorite_stops_widget_info" />
         </receiver>
         <receiver android:name=".widgets.BusMapWidgetProvider" android:exported="false"
             android:label="@string/mitfahrt_map_widget_label">

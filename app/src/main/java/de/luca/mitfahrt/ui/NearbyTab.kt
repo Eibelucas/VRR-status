@@ -118,7 +118,7 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
 
 @Composable
 private fun NearbyStopRow(stop: Stop, favorite: Boolean, onClick: () -> Unit, onFavorite: () -> Unit) {
-    val walk = JourneyOptions.walking(stop)
+    val walk = JourneyOptions.walking(stop, TripSettings.walkingSpeed(LocalAppSettings.current))
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).heightIn(min = 56.dp).clickable(role = Role.Button, onClickLabel = "Abfahrten anzeigen", onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {

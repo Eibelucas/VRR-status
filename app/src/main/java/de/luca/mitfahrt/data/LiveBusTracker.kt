@@ -106,11 +106,13 @@ class LiveBusTracker(
     }
 
     private fun withRoute(state: LiveBusState, shape: RouteShape?, previous: LiveBusState): LiveBusState {
-        val vehicle = state.vehicle ?: return state.copy(routePoint = null, routeOffset = null, offRoute = false)
+        val vehicle = state.vehicle ?: return state.copy(routePoint = null, routeOffset = null, offRoute = false, heading = null)
         val around = previous.routeOffset?.takeIf { previous.vehicle?.id == vehicle.id }
         val result = RouteSnapping.vehicle(shape?.takeIf { it.journeyKey == state.journeyKey }, vehicle.point,
             history.track(vehicle.id).filter { it.at.isBefore(vehicle.observedAt) }, around)
-        return state.copy(routePoint = result.projected?.point, routeOffset = result.projected?.offset, offRoute = result.deviating)
+        val heading = VehicleHeading.of(result.projected, state.confirmed, history.track(vehicle.id),
+            VehicleObservation(vehicle.point, vehicle.observedAt))
+        return state.copy(routePoint = result.projected?.point, routeOffset = result.projected?.offset, offRoute = result.deviating, heading = heading)
     }
 
     private suspend fun fleetAt(now: Instant): List<NewVehicle> {

@@ -46,6 +46,34 @@ class VrrClient {
         "timeOffset" to "-5", "useRealtime" to "1"
     )), newOnly = newOnly)
 
+    suspend fun offlineTimetable(stop: Stop, day: java.time.LocalDate): OfflineBoard {
+        val zone = OfflineBoards.zone
+        val end = day.plusDays(1).atStartOfDay(zone).toInstant()
+        var cursor = day.atStartOfDay(zone).toInstant()
+        val rows = linkedMapOf<String, OfflineDeparture>()
+        repeat(16) {
+            val local = cursor.atZone(zone)
+            val root = request("XML_DM_REQUEST", mapOf(
+                "type_dm" to "stop", "name_dm" to stop.id, "mode" to "direct", "limit" to "250",
+                "itdDate" to local.toLocalDate().format(DateTimeFormatter.BASIC_ISO_DATE),
+                "itdTime" to local.format(DateTimeFormatter.ofPattern("HHmm")), "useRealtime" to "0"
+            ))
+            val events = root.optJSONArray("stopEvents")?.objects().orEmpty()
+            val last = events.mapNotNull { it.instant("departureTimePlanned") }.maxOrNull()
+            EfaParser.departures(root).filter { it.planned.atZone(zone).toLocalDate() == day }.forEach { departure ->
+                rows[departure.key] = OfflineDeparture(departure.line, departure.destination, departure.planned, departure.platform)
+            }
+            if (last == null || !last.isBefore(end)) {
+                return OfflineBoard(day, java.time.Instant.now(), rows.values.sortedBy { it.time }, true)
+            }
+            val next = last.truncatedTo(java.time.temporal.ChronoUnit.MINUTES)
+            if (next <= cursor)
+                return OfflineBoard(day, java.time.Instant.now(), rows.values.sortedBy { it.time }, false)
+            cursor = next
+        }
+        return OfflineBoard(day, java.time.Instant.now(), rows.values.sortedBy { it.time }, false)
+    }
+
     suspend fun ride(departure: Departure): Ride {
         val root = request("XML_TRIPSTOPTIMES_REQUEST", tripParameters(departure))
         val ride = EfaParser.ride(root, departure)
@@ -63,6 +91,32 @@ class VrrClient {
         return EfaShapeParser.coords(request("XML_STOPSEQCOORD_REQUEST", tripParameters(departure)), departure)
     }
 
+    /** Platforms of a station with VRR's public platform coordinates, from its departure board. */
+    suspend fun platforms(stopId: String): StationPlatforms = StationPlatformParser.parse(request("XML_DM_REQUEST", mapOf(
+        "type_dm" to "stop", "name_dm" to stopKey(stopId), "mode" to "direct", "limit" to "120", "useRealtime" to "1"
+    )), stopId, java.time.Instant.now())
+
+    /** NEW lines with this number, one entry per direction. */
+    suspend fun linesByNumber(number: String): List<NetworkLine> {
+        val clean = number.trim().take(8)
+        require(clean.isNotEmpty())
+        // EFA searches Germany-wide; only NEW lines of Mönchengladbach are kept.
+        val padded = clean.toIntOrNull()?.let { "%03d".format(it) } ?: clean
+        return NetworkParser.lines(requestRaw("XML_SERVINGLINES_REQUEST", mapOf(
+            "mode" to "line", "lineName" to padded, "lineReqType" to "1", "mergeDir" to "0", "withoutTrains" to "1"
+        ))).filter { it.number.equals(padded, true) || it.number.equals(clean, true) }
+    }
+
+    /** NEW lines serving a stop, one entry per direction. */
+    suspend fun servingLines(stopId: String): List<NetworkLine> = NetworkParser.lines(requestRaw("XML_SERVINGLINES_REQUEST", mapOf(
+        "mode" to "odv", "type_sl" to "stopID", "name_sl" to stopKey(stopId), "lineReqType" to "1", "mergeDir" to "0", "withoutTrains" to "1"
+    )))
+
+    /** Stop sequence of one line direction. Platforms are reduced to their stops. */
+    suspend fun lineStops(lineId: String): List<LineStop> = NetworkParser.stops(request("XML_LINESTOP_REQUEST", mapOf(
+        "line" to lineId, "allStopInfo" to "1", "lineReqType" to "1"
+    )))
+
     /**
      * Journey planning (XML_TRIP_REQUEST2). No operator filter: trains, trams and other buses
      * belong to a journey. An answer without journeys is an empty result, not an invented one.
@@ -79,6 +133,11 @@ class VrrClient {
         if (text.isBlank()) return emptyList()
         return TripParser.places(requestRaw("XML_STOPFINDER_REQUEST", TripRequest.placeSearch(text)))
     }
+
+    suspend fun plannerStops(text: String): List<Stop> = places(text)
+        .filter { it.kind == PlaceKind.STOP && it.id.isNotBlank() }
+        .map { Stop(it.id, it.name, it.point) }
+        .distinctBy { stopKey(it.id) }
 
     private fun tripParameters(departure: Departure): Map<String, String> {
         val date = departure.planned.atZone(ZoneId.of("Europe/Berlin"))

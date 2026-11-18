@@ -44,6 +44,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     val navigation = navigationState.asStateFlow()
     fun consumeNavigation() { navigationState.value = null }
     fun handleLaunchIntent(intent: android.content.Intent) {
+        if (intent.getBooleanExtra("open_favorites", false)) {
+            query(""); backToStops(); navigationState.value = "stops"; return
+        }
         if (intent.getBooleanExtra("open_settings", false)) { navigationState.value = "settings"; return }
         if (intent.getBooleanExtra("open_live_map", false) || intent.getStringExtra("widget_action") == "map") { navigationState.value = "map"; return }
         if (intent.getStringExtra("widget_kind") == "active" || intent.getStringExtra("widget_action") == "ride") {
@@ -51,7 +54,11 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         }
         val id = intent.getStringExtra("widget_id")?.takeIf { it.isNotBlank() && it.length <= 256 } ?: return
         when (intent.getStringExtra("widget_kind")) {
-            "route" -> app.routePlans.current().routes.firstOrNull { it.id == id }?.let { selectRoutePlan(it, recordVisit = false); navigationState.value = "stops" }
+            "route" -> {
+                val route = app.routePlans.current().routes.firstOrNull { it.id == id }
+                if (route == null) actionState.value = "Diese Route ist nicht mehr gespeichert."
+                else { selectRoutePlan(route, recordVisit = false); navigationState.value = "stops" }
+            }
             "stop" -> {
                 val saved = app.savedStops.state.value
                 val widgetStore = de.luca.mitfahrt.widgets.WidgetStore(app)
@@ -60,7 +67,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                     ?.let { Stop(it.targetId, it.targetName) }
                 val stop = (saved.favorites + saved.recent).firstOrNull { stopKey(it.id) == stopKey(id) } ?: fromWidget
                 if (stop != null) { selectStop(stop, recordVisit = false); navigationState.value = "stops" }
-                else actionState.value = "Diese Haltestelle ist nicht mehr im Widget gespeichert. Bitte das Widget neu einrichten."
+                else actionState.value = "Diese Haltestelle ist nicht mehr gespeichert."
             }
             "active" -> navigationState.value = "ride"
         }
@@ -138,6 +145,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun findRouteStops(query: String): List<Stop> = app.vrr.search(query)
     suspend fun resolveRouteStop(stop: Stop): Stop = app.vrr.resolveStop(stop)
     val schoolTrips = app.schoolTrips.trips
+    val offlineBoards get() = app.offlineBoards
+    suspend fun fetchOfflineBoard(stop: Stop, day: java.time.LocalDate): OfflineBoard = app.vrr.offlineTimetable(stop, day)
+
     val savedStops = app.savedStops.state
     private val alertStore = AlertPreferencesStore(app)
     val alertPreferences = alertStore.state
@@ -564,6 +574,65 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun boardBus() { correctBoarding(de.luca.mitfahrt.tracking.RideService.BOARD) { it.board("manual", Instant.now()) } }
     /** "Doch nicht im Bus": back to waiting; the detection pauses for a few minutes. */
     fun notOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.UNBOARD) { it.unboard() } }
+    // --- local backup: only on explicit request, through Android's file picker ---
+    private val backupState = MutableStateFlow<String?>(null)
+    val backupMessage = backupState.asStateFlow()
+    private val backupBusyState = MutableStateFlow(false)
+    val backupBusy = backupBusyState.asStateFlow()
+    fun exportBackup(target: android.net.Uri) { if (backupBusyState.value) return; backupBusyState.value = true; viewModelScope.launch {
+        try {
+            val counts = withContext(Dispatchers.IO) {
+                val temporary = File.createTempFile("mitfahrt-backup-", ".zip", app.cacheDir)
+                try {
+                    val counts = synchronized(app.journeyReports) {
+                        temporary.outputStream().use { out -> de.luca.mitfahrt.data.backup.BackupWriter.write(
+                            out, app.archive.state.value, File(app.filesDir, "reports"), Instant.now()) }
+                    }
+                    (app.contentResolver.openOutputStream(target, "wt") ?: error("Speicherort nicht verfügbar")).use { out ->
+                        temporary.inputStream().use { it.copyTo(out) }
+                    }
+                    counts
+                } finally {
+                    temporary.delete()
+                }
+            }
+            backupState.value = "Gesichert: ${counts["rides"]} Fahrten, ${counts["reports"]} Berichte, ${counts["exports"]} PDFs"
+        } catch (e: CancellationException) { throw e
+        } catch (e: de.luca.mitfahrt.data.backup.BackupException) { backupState.value = e.message
+        } catch (_: Exception) { backupState.value = "Die Sicherung konnte nicht geschrieben werden." }
+        finally { backupBusyState.value = false }
+    } }
+    fun importBackup(source: android.net.Uri) { if (backupBusyState.value) return; backupBusyState.value = true; viewModelScope.launch {
+        try {
+            val result = withContext(Dispatchers.IO) {
+                // Everything is read and checked before anything is written.
+                val contents = (app.contentResolver.openInputStream(source) ?: error("Datei nicht lesbar")).use {
+                    de.luca.mitfahrt.data.backup.BackupReader.read(it)
+                }
+                val rides = app.archive.importEntries(contents.archive)
+                synchronized(app.journeyReports) {
+                    try {
+                        de.luca.mitfahrt.data.backup.BackupMerge.reports(contents, File(app.filesDir, "reports")).copy(rides = rides)
+                    } finally {
+                        app.journeyReports.reload()
+                    }
+                }
+            }
+            reportState.value = reportState.value.copy(entries = withContext(Dispatchers.IO) { app.reports.list() })
+            backupState.value = "Übernommen: ${result.rides} Fahrten, ${result.reports} Berichte, ${result.exports} PDFs, ${result.legacy} ältere Belege" +
+                if (result.skipped > 0) ". ${result.skipped} schon vorhanden oder neuer auf dem Gerät." else "."
+        } catch (e: CancellationException) { throw e
+        } catch (e: de.luca.mitfahrt.data.backup.BackupException) { backupState.value = "${e.message} Es wurde nichts geändert."
+        } catch (_: Exception) { backupState.value = "Die Sicherung konnte nicht gelesen werden. Es wurde nichts geändert." }
+        finally { backupBusyState.value = false }
+    } }
+
+    val reportLayouts = app.reportLayouts.state
+    fun selectReportLayout(id: String?) = app.reportLayouts.select(id)
+    fun saveReportLayout(layout: de.luca.mitfahrt.reports.ReportLayout) = app.reportLayouts.save(layout)
+    fun removeReportLayout(id: String) = app.reportLayouts.remove(id)
+    fun newReportLayout() = app.reportLayouts.newLayout()
+    fun toggleAnnouncements() { app.store.update { it.copy(announcementsPaused = !it.announcementsPaused) } }
     fun stillOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.STILL_ON_BOARD) { it } }
     private fun correctBoarding(action: String, change: (Ride) -> Ride) {
         val state = tracking.value

@@ -37,6 +37,8 @@ import de.luca.mitfahrt.data.clockTime
 import de.luca.mitfahrt.data.shortName
 import java.time.Duration
 import java.time.Instant
+import de.luca.mitfahrt.data.AssignmentStatus
+import de.luca.mitfahrt.data.VehicleComparison
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -92,12 +94,12 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                 current.observedAt, now, route = mapRoute,
                 routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
                 otherVehicles = candidates, selectedVehicleId = current.id,
-                onSelectVehicle = onSelect, onFullscreen = { fullscreen = true })
+                onSelectVehicle = onSelect, onFullscreen = { fullscreen = true }, heading = state.heading)
             if (fullscreen) FullscreenMap("Linie ${ride.departure.line} · ${shortName(ride.departure.destination)}", { fullscreen = false }) { height ->
                 WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
                     current.observedAt, now, route = mapRoute,
                     routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
-                    otherVehicles = candidates, selectedVehicleId = current.id, onSelectVehicle = onSelect, mapHeight = height)
+                    otherVehicles = candidates, selectedVehicleId = current.id, onSelectVehicle = onSelect, mapHeight = height, heading = state.heading)
             }
             if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
@@ -160,7 +162,7 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
         if (choices.size >= 2) {
             Text("Welcher Bus ist deiner?", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             choices.forEach { vehicle ->
-                VehicleChoiceRow(vehicle, boarding, now, false) { onSelect(vehicle) }
+                VehicleChoiceRow(vehicle, boarding, now, false, VehicleComparison.rows(ride, state, now).firstOrNull { it.vehicle.id == vehicle.id }?.status) { onSelect(vehicle) }
             }
         }
         state.error?.let { Text(it, color = Amber, fontSize = 13.sp, lineHeight = 19.sp) }
@@ -179,12 +181,13 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Fahrzeug auswählen", style = MaterialTheme.typography.headlineSmall)
-            Text("Vergleiche Richtung und Entfernung. Deine Wahl bleibt, bis du sie aufhebst.",
+            Text("Gleiche Liniennummer heißt noch nicht, dass es dein Bus ist. Vergleiche Richtung, Entfernung und Stand. Deine Wahl bleibt, bis du sie aufhebst.",
                 color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
             if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(candidates, key = { it.id }) { vehicle ->
-                    VehicleChoiceRow(vehicle, boarding, now, state.selectedVehicleId == vehicle.id) {
+                val compared = VehicleComparison.rows(ride, state, now).associateBy { it.vehicle.id }
+                items(candidates.sortedBy { compared[it.id]?.status?.ordinal ?: Int.MAX_VALUE }, key = { it.id }) { vehicle ->
+                    VehicleChoiceRow(vehicle, boarding, now, state.selectedVehicleId == vehicle.id, compared[vehicle.id]?.status) {
                         chooseVehicle = false
                         onSelect(vehicle)
                     }
@@ -202,16 +205,20 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
 }
 
 @Composable
-private fun VehicleChoiceRow(vehicle: NewVehicle, boarding: Stop?, now: Instant, selected: Boolean, onSelect: () -> Unit) {
+private fun VehicleChoiceRow(vehicle: NewVehicle, boarding: Stop?, now: Instant, selected: Boolean, status: AssignmentStatus? = null, onSelect: () -> Unit) {
     ListItem(headlineContent = {
         Text("Linie ${vehicle.line} · Fahrzeug ${vehicle.id}", fontWeight = FontWeight.SemiBold)
     }, supportingContent = {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(if (vehicle.destination.isBlank()) "Richtung nicht gemeldet" else "${if (vehicle.directionReliable) "Richtung" else "Anzeige am Bus"} ${shortName(vehicle.destination)}",
+            Text(if (vehicle.destination.isBlank()) "Richtung nicht gemeldet" else "${if (vehicle.directionReliable) "Richtung" else "Anzeige am Bus, Richtung unsicher:"} ${shortName(vehicle.destination)}",
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             val distance = boarding?.point?.distanceTo(vehicle.point)?.takeIf { it.isFinite() }
+            val age = Duration.between(vehicle.observedAt, now).seconds
             Text(listOfNotNull(distance?.let { "ca. ${vehicleDistance(it)} Luftlinie zum Einstieg" },
-                "NEW · ${vehicleAge(vehicle.observedAt, now)}").joinToString(" · "), fontSize = 12.sp)
+                "NEW · ${vehicleAge(vehicle.observedAt, now)}").joinToString(" · "), fontSize = 12.sp,
+                color = if (age >= 60) Amber else Soft)
+            status?.let { Text(it.label, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                color = if (it == AssignmentStatus.WRONG_DIRECTION || it == AssignmentStatus.REJECTED) Amber else Paper) }
         }
     }, leadingContent = { Icon(Icons.Outlined.DirectionsBus, null, tint = Lime) },
         trailingContent = { if (selected) Icon(Icons.Outlined.Check, "Ausgewählt", tint = Lime) },

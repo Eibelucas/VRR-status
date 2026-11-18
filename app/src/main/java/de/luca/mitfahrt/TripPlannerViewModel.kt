@@ -102,7 +102,12 @@ class TripPlannerViewModel(application: Application) : AndroidViewModel(applicat
         changed()
     }
 
-    fun setOptions(options: TripOptions) {
+    fun excludedStops(): Map<String, String> = ExcludedTripStops.decode(settingsStore.current().string("trip_excluded_stops"))
+
+    suspend fun findExcludedStops(text: String): List<Stop> = app.vrr.plannerStops(text)
+
+    fun setOptions(options: TripOptions, excludedStops: Map<String, String> = this.excludedStops()) {
+        settingsStore.set("trip_excluded_stops", ExcludedTripStops.encode(excludedStops))
         TripSettings.values(options).forEach { (key, value) -> settingsStore.set(key, value) }
         changed()
     }

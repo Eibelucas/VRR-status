@@ -25,7 +25,7 @@ data class SettingDefinition(
         return when (kind) {
             SettingKind.BOOLEAN -> text.takeIf { it == "true" || it == "false" }
             SettingKind.CHOICE -> (SettingsMigration.choice(key, text) ?: text).takeIf { v -> choices.any { it.value == v } }
-            SettingKind.NUMBER -> text.toIntOrNull()?.takeIf { it in range }?.toString()
+            SettingKind.NUMBER -> text.toIntOrNull()?.takeIf { it in range && (key != "trip_walking_speed" || it == 0 || it >= 50) }?.toString()
             SettingKind.TEXT -> when (key) {
                 "quiet_start", "quiet_end" -> runCatching { LocalTime.parse(text).toString() }.getOrNull()
                 "routes_free_dates" -> runCatching {
@@ -35,6 +35,9 @@ data class SettingDefinition(
                 "alert_leads" -> text.split(',').mapNotNull { it.trim().toIntOrNull() }
                     .filter { it in listOf(60, 120, 180, 300) }.distinct().sortedDescending()
                     .takeIf { it.isNotEmpty() }?.joinToString(",")
+                "trip_excluded_stops" -> ExcludedTripStops.encode(ExcludedTripStops.decode(text))
+                "trip_preferred_lines" -> TripResultPreferences.lines(text).joinToString(", ")
+                "line_route_colors" -> TransitColors.encode(TransitColors.decode(text))
                 "accent_hex" -> text.takeIf { Regex("#[0-9a-fA-F]{6}").matches(it) }
                 // "nearby" and "favorites" moved to the "In der Nähe" tab; they are dropped from the start page.
                 "home_cards" -> text.split(',').map(String::trim)
@@ -92,6 +95,11 @@ object SettingsCatalog {
         c("trip_route_type", "Verbindungen bevorzugen", "trip", "leasttime", "leasttime" to "Schnellste", "leastinterchange" to "Wenig Umstiege", "leastwalking" to "Wenig Fußweg"),
         c("trip_max_changes", "Umstiege höchstens", "trip", "any", "any" to "Beliebig", "0" to "Nur direkt", "1" to "1", "2" to "2", "3" to "3"),
         c("trip_walk_speed", "Gehgeschwindigkeit", "trip", "normal", "slow" to "Langsam", "normal" to "Normal", "fast" to "Schnell"),
+        n("trip_walking_speed", "Eigene Gehgeschwindigkeit in cm/s", "trip", 0, 0..220, true, "0 verwendet die Stufe oben. Eigene Werte ab 50 cm/s."),
+        n("trip_transfer_buffer", "Extra Zeit beim Umsteigen", "trip", 0, 0..20, hint = "Minuten zusätzlich zum Fußweg."),
+        t("trip_preferred_lines", "Wunschlinien", "trip", hint = "Zum Beispiel 017, 025 oder RE8."),
+        t("trip_excluded_stops", "Haltestellen bei der Suche meiden", "trip"),
+        t("line_route_colors", "Eigene Linienfarben", "appearance"),
         c("trip_max_walk", "Fußweg zur Haltestelle höchstens", "trip", "default", "default" to "Wie VRR", "5" to "5 Min", "10" to "10 Min", "15" to "15 Min", "20" to "20 Min", "30" to "30 Min"),
         t("trip_modes", "Verkehrsmittel", "trip", "train,light_rail,bus,on_demand,other", false, "Mindestens ein Verkehrsmittel."),
         b("trip_no_stairs", "Ohne Treppen", "trip", false),
@@ -166,6 +174,11 @@ object SettingsCatalog {
         c("nowbar_content", "Now-Bar-Anzeige", "nowbar", "full", "full" to "Alle Fahrtdetails", "line" to "Linie & Ziel", "time" to "Zeit", "next" to "Nächster Halt"),
         t("notification_actions", "Aktionen in der Benachrichtigung", "nowbar", "board,arrival,stop", hint = "board, arrival, map, stop; maximal drei Aktionen."),
         b("lockscreen_details", "Fahrtdetails auf dem Sperrbildschirm", "nowbar", true),
+        c("battery_saver", "Akku sparen bei langen Fahrten", "live", "off", "off" to "Aus", "long" to "Bei Fahrten über 20 Minuten", "always" to "Immer"),
+        c("announce_stops", "Nächsten Halt ansagen", "alerts", "off", "off" to "Aus", "headphones" to "Nur über Kopfhörer", "always" to "Immer"),
+        c("exit_audio", "Ausstieg zusätzlich ansagen", "alerts", "off", "off" to "Aus", "headphones" to "Nur über Kopfhörer", "always" to "Immer"),
+        b("notification_position", "Busposition in der Benachrichtigung", "nowbar", true,
+            hint = "Kurz, wie weit dein zugeordneter Bus entfernt ist. Nur frische NEW-Positionen."),
         b("templates_enabled", "Eigene Texte verwenden", "nowbar", false,
             hint = "Texte für Now Bar, Benachrichtigung und Buskarten-Widget aus Platzhaltern wie {linie}. Bearbeiten unter Einstellungen, Eigene Texte."),
         t("tpl_nowbar_title_wait", "Eigener Text: Titel beim Warten", "nowbar"),

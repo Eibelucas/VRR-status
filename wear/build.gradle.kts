@@ -12,8 +12,8 @@ android {
         applicationId = "de.luca.mitfahrt"
         minSdk = 30
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.20.0"
+        versionCode = rootProject.extra["mitfahrtVersionCode"] as Int
+        versionName = rootProject.extra["mitfahrtVersionName"] as String
     }
     val releaseStore = System.getenv("MITFAHRT_KEYSTORE")?.takeIf { it.isNotBlank() }
     signingConfigs {
@@ -55,4 +55,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

@@ -34,12 +34,12 @@ data class JourneyAlternative(val stop: Stop, val departure: Departure, val reac
 
 object JourneyOptions {
     /** 35% detour allowance, 1.2 m/s walking speed and a separate one-minute buffer. */
-    fun walking(stop: Stop): WalkingEstimate? = stop.distance?.takeIf { it >= 0 }?.let {
-        WalkingEstimate(it, ceil(it.toDouble() * 1.35 / 1.2).toLong())
+    fun walking(stop: Stop, speed: Int = 120): WalkingEstimate? = stop.distance?.takeIf { it >= 0 }?.let {
+        WalkingEstimate(it, ceil(it.toDouble() * 135 / speed.coerceIn(50, 220)).toLong())
     }
 
-    fun reachability(stop: Stop, departure: Departure, now: Instant): Reachability {
-        val walk = walking(stop)
+    fun reachability(stop: Stop, departure: Departure, now: Instant, speed: Int = 120): Reachability {
+        val walk = walking(stop, speed)
         val remaining = departure.effective.epochSecond - now.epochSecond
         val state = when {
             departure.cancelled -> ReachabilityState.CANCELLED
@@ -59,7 +59,7 @@ object JourneyOptions {
      * Pass only nearby stops from a current location lookup. Without a distance, only the
      * original station is retained, explicitly labelled UNKNOWN instead of reachable.
      */
-    fun alternatives(selected: Departure, nearbyStops: List<Stop>, departures: List<Departure>, now: Instant): List<JourneyAlternative> {
+    fun alternatives(selected: Departure, nearbyStops: List<Stop>, departures: List<Departure>, now: Instant, speed: Int = 120): List<JourneyAlternative> {
         val destination = destinationKey(selected.destination)
         if (destination.isBlank()) return emptyList()
         val nearby = nearbyStops.groupBy { stopKey(it.id) }.mapValues { (_, variants) ->
@@ -72,7 +72,7 @@ object JourneyOptions {
                 val id = stopKey(departure.stopId)
                 val sameStop = id == originalId
                 val stop = nearby[id] ?: if (sameStop) Stop(originalId, selected.stopName) else return@mapNotNull null
-                val reachability = reachability(stop, departure, now)
+                val reachability = reachability(stop, departure, now, speed)
                 if (reachability.isPossible || sameStop && reachability.state == ReachabilityState.UNKNOWN)
                     JourneyAlternative(stop, departure, reachability, sameStop)
                 else null

@@ -8,6 +8,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -256,6 +258,8 @@ private fun SettingControl(definition: SettingDefinition, settings: AppSettings,
 
 private fun settingSummary(definition: SettingDefinition, settings: AppSettings): String {
     val value = settings.string(definition.key)
+    if (definition.key == "trip_excluded_stops") return ExcludedTripStops.decode(value).size.let { if (it == 0) "Keine" else "$it ausgewählt" }
+    if (definition.key == "line_route_colors") return TransitColors.decode(value).size.let { if (it == 0) "Standardfarben" else "$it eigene Farben" }
     definition.choices.firstOrNull { it.value == value }?.let { return it.label }
     if (definition.key in listOf("home_cards", "nav_order", "report_fields", "notification_actions", "watch_actions", "alert_leads", "trip_modes")) {
         val choices = listChoices(definition.key)
@@ -347,6 +351,12 @@ private fun SettingEditor(definition: SettingDefinition, settings: AppSettings, 
                     }
                 }
                 if (definition.key == "report_fields") Text("Quellen und Kennzeichnung eigener Angaben bleiben enthalten.", style = MaterialTheme.typography.bodySmall, color = Soft)
+            } else if (definition.key == "line_route_colors") {
+                LineColorsEditor(text) { text = it }
+            } else if (definition.key == "trip_excluded_stops" && app != null) {
+                Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                    ExcludedTripStopsEditor(ExcludedTripStops.decode(text), app.vrr::plannerStops) { text = ExcludedTripStops.encode(it) }
+                }
             } else if (stationPicker || routePicker) {
                 if (namedChoices.isEmpty()) Text(if (routePicker) "Lege zuerst eine eigene Route an." else "Merke zuerst eine Haltestelle als Favorit.")
                 else LazyColumn(Modifier.heightIn(max = 420.dp)) {

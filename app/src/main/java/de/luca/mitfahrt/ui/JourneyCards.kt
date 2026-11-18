@@ -122,7 +122,7 @@ fun ExitTargetCard(ride: Ride, exitEnabled: Boolean, onTarget: (Int?) -> Unit, o
 
 @Composable
 fun AlternativesCard(ride: Ride, state: AlternativesState, now: Instant, onRefresh: () -> Unit, onChoose: (Departure) -> Unit) {
-    val options = if (state.forJourney == ride.departure.key) JourneyOptions.alternatives(ride.departure, state.stops, state.departures, now) else emptyList()
+    val options = if (state.forJourney == ride.departure.key) JourneyOptions.alternatives(ride.departure, state.stops, state.departures, now, TripSettings.walkingSpeed(LocalAppSettings.current)) else emptyList()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Andere Verbindung", fontWeight = FontWeight.SemiBold, fontSize = 20.sp, modifier = Modifier.weight(1f))
@@ -142,7 +142,7 @@ fun AlternativesCard(ride: Ride, state: AlternativesState, now: Instant, onRefre
 
 @Composable
 fun WalkingHint(stop: Stop, departure: Departure, now: Instant) {
-    val reachability = JourneyOptions.reachability(stop, departure, now)
+    val reachability = JourneyOptions.reachability(stop, departure, now, TripSettings.walkingSpeed(LocalAppSettings.current))
     if (reachability.walking != null && !departure.cancelled) Text(reachability.label,
         color = if (reachability.isPossible) Lime else Amber, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
 }

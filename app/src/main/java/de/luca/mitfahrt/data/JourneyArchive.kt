@@ -198,27 +198,38 @@ object JourneyArchive {
     fun encode(state: JourneyArchiveState): String = storage(state).second
 
     fun decode(value: String, now: Instant): JourneyArchiveState = runCatching {
+        prune(decodeState(value, strict = false), now)
+    }.getOrDefault(JourneyArchiveState())
+
+    internal fun decodeBackup(value: String): List<ArchivedJourney> = decodeState(value, strict = true).entries
+
+    private fun decodeState(value: String, strict: Boolean): JourneyArchiveState {
         require(value.toByteArray(Charsets.UTF_8).size <= MAX_FILE_BYTES)
         val obj = JSONObject(value)
-        val array = obj.optJSONArray("entries")
+        val array = if (strict) obj.getJSONArray("entries") else obj.optJSONArray("entries")
+        if (strict) require(obj.getInt("version") == 1 && array!!.length() <= MAX_ENTRIES)
         val entries = (0 until minOf(array?.length() ?: 0, MAX_ENTRIES)).mapNotNull { index ->
-            runCatching {
+            val parsed = runCatching {
                 val item = array!!.getJSONObject(index)
-                val encoded = item.getString("ride").takeIf { it.length <= MAX_RIDE_CHARS } ?: return@runCatching null
-                val ride = RideCodec.decode(encoded).takeIf(::validRide) ?: return@runCatching null
-                val id = item.getString("id").takeIf { it == id(ride) } ?: return@runCatching null
+                val encoded = item.getString("ride")
+                require(encoded.length <= MAX_RIDE_CHARS)
+                val ride = RideCodec.decode(encoded)
+                val id = item.getString("id")
+                require(validRide(ride) && id == id(ride))
                 ArchivedJourney(id, ride, Instant.parse(item.getString("startedAt")), Instant.parse(item.getString("updatedAt")),
                     item.optLong("revision", 1).coerceAtLeast(1))
-            }.getOrNull()
+            }
+            if (strict) parsed.getOrThrow() else parsed.getOrNull()
         }
+        if (strict) require(entries.distinctBy { it.id }.size == entries.size)
         val tombstoneJson = obj.optJSONObject("tombstones")
         val tombstones = tombstoneJson?.keys()?.asSequence()?.mapNotNull { key ->
             tombstoneJson.optLong(key, -1).takeIf { it >= 0 && key.matches(Regex("[0-9a-f]{32}")) }?.let { key to it }
         }?.take(MAX_TOMBSTONES)?.toMap().orEmpty()
         val days = obj.optInt("retentionDays", 0).coerceIn(0, 3650)
-        prune(JourneyArchiveState(JourneyArchiveSettings(obj.optBoolean("enabled", true), days), entries,
-            obj.optLong("sequence", 0).coerceAtLeast(tombstones.values.maxOrNull() ?: 0), tombstones), now)
-    }.getOrDefault(JourneyArchiveState())
+        return JourneyArchiveState(JourneyArchiveSettings(obj.optBoolean("enabled", true), days), entries,
+            obj.optLong("sequence", 0).coerceAtLeast(tombstones.values.maxOrNull() ?: 0), tombstones)
+    }
 }
 
 /**
@@ -237,6 +248,25 @@ class JourneyArchiveStore(private val file: File, private val clock: () -> Insta
     init { persist(mutable.value) }
 
     @Synchronized fun record(ride: Ride) { persist(JourneyArchive.record(mutable.value, ride, clock())) }
+    /**
+     * Adds archived rides from a backup. A ride already here is replaced only by a newer revision;
+     * deleted rides come back only through the import the user started. Returns the number taken over.
+     */
+    @Synchronized fun importEntries(entries: List<ArchivedJourney>): Int {
+        val current = mutable.value
+        if (!current.settings.enabled) return 0
+        val byId = current.entries.associateBy { it.id }
+        val taken = entries.filter { incoming -> byId[incoming.id]?.let { incoming.updatedAt.isAfter(it.updatedAt) } ?: true }
+        if (taken.isEmpty()) return 0
+        val merged = (current.entries.filterNot { existing -> taken.any { it.id == existing.id } } + taken).sortedByDescending { it.startedAt }
+        val pruned = JourneyArchive.prune(current.copy(entries = merged, tombstones = current.tombstones - taken.map { it.id }.toSet()), clock())
+        val snapshot = JourneyArchive.storage(pruned).first
+        val retained = snapshot.entries.map { it.id }.toSet()
+        // Reaching retention or storage limits during import must never evict local rides.
+        if (!retained.containsAll(byId.keys)) return 0
+        check(persist(snapshot)) { "Archiv konnte nicht geschrieben werden" }
+        return taken.count { it.id in retained }
+    }
     @Synchronized fun update(ride: Ride) {
         val updated = JourneyArchive.update(mutable.value, ride, clock())
         if (updated !== mutable.value) persist(updated)

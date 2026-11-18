@@ -1,5 +1,9 @@
 package de.luca.mitfahrt.wear
 
+import androidx.compose.runtime.rememberCoroutineScope
+
+import kotlinx.coroutines.launch
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +52,21 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
     var confirmationContext by remember { mutableStateOf("") }
     var confirmationJourney by remember { mutableStateOf("") }
     val journey = library.settings["journey_key"].orEmpty()
+    // Journey key at the moment a start was sent; the screen changes only once the phone reports the new ride.
+    var pendingStart by remember { mutableStateOf<String?>(null) }
+    var direct by remember { mutableStateOf<DirectDeparture?>(null) }
+    var directBusy by remember { mutableStateOf(false) }
+    var directMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(journey, commandFeedback, commandBusy) {
+        val sent = pendingStart ?: return@LaunchedEffect
+        when (WatchStartFlow.resolve(sent, journey, commandFeedback != null && !commandBusy)) {
+            WatchStartFlow.Result.DONE -> { pendingStart = null; view = "active" }
+            WatchStartFlow.Result.FAILED -> pendingStart = null
+            WatchStartFlow.Result.WAITING -> Unit
+        }
+    }
+    LaunchedEffect(journey) { direct = null; directMessage = null }
     LaunchedEffect(library.settings["watch_start"]) { view = library.settings["watch_start"] ?: "active" }
     LaunchedEffect(journey, library.selected) { confirmation = null; confirmStop = false }
     val allowedActions = library.settings["watch_actions"].orEmpty().ifEmpty { "board,arrival,stop" }.split(',').toSet()
@@ -123,8 +142,37 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                         }
                     } else {
                         if (current.demo) item { StatusText("Demofahrt", Lime) }
-                        if (current.stale(now)) item { StatusText(if (!current.running) "Fahrt pausiert" else "Daten veraltet", Amber) }
-                        item { RideHero(current, now, library.settings["watch_detail"] != "detail") }
+                        val dataState = WatchFreshness.state(current, now)
+                        if (dataState != WatchDataState.LIVE) item {
+                            StatusText(if (!current.running && dataState == WatchDataState.OFFLINE) "Fahrt pausiert · Stand ${WatchFreshness.clock(current.fetchedAt ?: current.sentAt)}"
+                                else WatchFreshness.label(current, now), Amber)
+                        }
+                        if (dataState != WatchDataState.EXPIRED) item { RideHero(current, now, library.settings["watch_detail"] != "detail") }
+                        // Without the phone, the watch may ask VRR itself, but only on request and only for this exact departure.
+                        val identity = DepartureIdentity.from(library.settings)
+                        if (dataState != WatchDataState.LIVE && !current.boarded && identity != null) {
+                            direct?.takeIf { now.epochSecond - it.fetchedAt.epochSecond <= 120 }?.let { result -> item {
+                                StatusText(listOf(if (result.cancelled) "Fällt aus laut VRR" else
+                                    "${if (result.live) "VRR live" else "Fahrplan"} ${WatchFreshness.clock(result.at)}",
+                                    "direkt abgerufen ${WatchFreshness.clock(result.fetchedAt)}").joinToString(" · "), if (result.cancelled) Amber else Lime)
+                            } }
+                            directMessage?.let { item { StatusText(it, Soft) } }
+                            item {
+                                FilledTonalButton(onClick = {
+                                    directBusy = true; directMessage = null
+                                    scope.launch {
+                                        val result = runCatching { DirectVrr.fetch(identity) }
+                                        direct = result.getOrNull()
+                                        directMessage = when {
+                                            result.isFailure -> "Uhr hat gerade kein Internet"
+                                            direct == null -> "VRR meldet diese Fahrt nicht eindeutig"
+                                            else -> null
+                                        }
+                                        directBusy = false
+                                    }
+                                }, enabled = !directBusy, modifier = Modifier.fillMaxWidth()) { Text(if (directBusy) "Frage VRR …" else "Beim VRR prüfen") }
+                            }
+                        }
                         if (current.boarded) item {
                             WatchPanel {
                                 Text("Nächster Halt", color = Soft, fontSize = 12.sp)
@@ -156,11 +204,15 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                     }
                     confirmation?.let { departure ->
                         item { StatusText(if (current?.active == true) "Aktuelle Fahrt ersetzen?" else "${departure.line} verfolgen?", Lime) }
-                        item { FilledTonalButton(onClick = { onCommand(WatchCommand("start", departure.id, confirmationJourney, confirmationContext)); confirmation = null; view = "active" },
-                            enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) { Text("Fahrt verfolgen") } }
+                        item { FilledTonalButton(onClick = {
+                                store.commandFeedback.value = null
+                                pendingStart = confirmationJourney
+                                onCommand(WatchCommand("start", departure.id, confirmationJourney, confirmationContext)); confirmation = null },
+                            enabled = !commandBusy && pendingStart == null, modifier = Modifier.fillMaxWidth()) { Text(if (current?.active == true) "Wechseln" else "Fahrt verfolgen") } }
                         item { FilledTonalButton(onClick = { confirmation = null }, modifier = Modifier.fillMaxWidth()) { Text("Abbrechen") } }
                     }
-                    if (commandBusy) item { StatusText("Wird am Handy ausgeführt …", Soft) }
+                    if (pendingStart != null) item { StatusText("Wird am Handy gestartet …", Soft) }
+                    else if (commandBusy) item { StatusText("Wird am Handy ausgeführt …", Soft) }
                     commandFeedback?.let { message -> item { StatusText(message, Amber) } }
                     if (library.settings["watch_show_connection"] != "false") syncMessage?.let { message -> item { StatusText(message, Amber) } }
                     if (rideFirst) navigation()

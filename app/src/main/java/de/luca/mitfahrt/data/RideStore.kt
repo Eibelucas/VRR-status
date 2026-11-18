@@ -22,7 +22,11 @@ data class TrackingState(
     /** Locally measured progress; positions are never persisted or uploaded. */
     val gpsProgress: GpsProgressState? = null,
     /** Local boarding and exit detection for the tracked ride. */
-    val boarding: BoardingState? = null
+    val boarding: BoardingState? = null,
+    /** Stop announcements paused for now by the user. */
+    val announcementsPaused: Boolean = false,
+    /** The battery saver currently stretches refreshes and GPS. */
+    val powerSaving: Boolean = false
 )
 
 class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}) {
