@@ -1,5 +1,11 @@
 package de.luca.mitfahrt.wear
 
+import androidx.wear.watchface.complications.data.CountDownTimeReference
+
+import androidx.wear.watchface.complications.data.TimeDifferenceStyle
+
+import androidx.wear.watchface.complications.data.TimeDifferenceComplicationText
+
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
@@ -27,31 +33,24 @@ class RideComplicationService : ComplicationDataSourceService() {
     }
 
     private fun content(type: ComplicationType): ComplicationData {
-        val ride = (application as WatchApplication).store.ride.value
-        val now = Instant.now()
-        val current = ride?.takeIf { it.active }
-        val fresh = current != null && !current.stale(now) && !current.cancelled
-        val at = if (current?.boarded == true) current.terminalAt else current?.boardingAt
-        val clock = at?.atZone(ZoneId.of("Europe/Berlin"))?.format(DateTimeFormatter.ofPattern("HH:mm"))
-        val value = when {
-            current == null -> "–"
-            current.cancelled -> "Ausfall"
-            !fresh -> "Alt"
-            clock == null -> "–"
-            else -> clock
-        }
-        val title = current?.line?.take(7) ?: "Mitfahrt"
-        val description = listOfNotNull("Mitfahrt", current?.line, current?.destination, value,
-            if (current != null && !fresh) "Daten veraltet" else null).joinToString(" · ")
+        val store = (application as WatchApplication).store
+        val library = store.library.value
+        val ride = (if (library.sentAt != Instant.EPOCH) library.ride else null) ?: store.ride.value
+        val face = ComplicationFace.of(ride, library.tile, Instant.now())
         val tap = PendingIntent.getActivity(this, 0, Intent(this, WatchActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val expires = current?.let { listOfNotNull(it.sentAt, it.fetchedAt).minOrNull()?.plusSeconds(120) }
+        val now = Instant.now()
+        // A live countdown is drawn by the watch face itself; no extra updates are needed for it.
+        val countdown = face.countdownTo?.takeIf { it.isAfter(now) }?.let {
+            TimeDifferenceComplicationText.Builder(TimeDifferenceStyle.SHORT_SINGLE_UNIT, CountDownTimeReference(it)).build()
+        }
+        val valid = face.validUntil?.takeIf { it.isAfter(now) }
         return when (type) {
-            ComplicationType.LONG_TEXT -> LongTextComplicationData.Builder(text("$title · $value"), text(description))
-                .setTitle(text(if (current?.boarded == true) "${current.destination.take(24)}" else "Nächster Bus"))
-                .setTapAction(tap).apply { if (fresh && expires != null && expires > now) setValidTimeRange(TimeRange.between(now, expires)) }.build()
-            ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(text(value.take(7)), text(description))
-                .setTitle(text(title)).setTapAction(tap)
-                .apply { if (fresh && expires != null && expires > now) setValidTimeRange(TimeRange.between(now, expires)) }.build()
+            ComplicationType.LONG_TEXT -> LongTextComplicationData.Builder(countdown?.takeIf { face.longValue == null } ?: text(face.longValue ?: face.value), text(face.description))
+                .setTitle(text(face.title)).setTapAction(tap)
+                .apply { if (valid != null) setValidTimeRange(TimeRange.between(now, valid)) }.build()
+            ComplicationType.SHORT_TEXT -> ShortTextComplicationData.Builder(countdown ?: text(face.value.take(7)), text(face.description))
+                .setTitle(text(face.title.take(7))).setTapAction(tap)
+                .apply { if (valid != null) setValidTimeRange(TimeRange.between(now, valid)) }.build()
             else -> NoDataComplicationData()
         }
     }

@@ -38,7 +38,11 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
             "alert_target", "quiet_enabled", "quiet_start", "quiet_end", "quiet_critical", "vibration_arrival", "vibration_exit",
             "vibration_walking", "vibration_delay", "vibration_cancelled", "watch_avoid_duplicates")
         val preferences = preferenceKeys.associateWith { config.string(it) } +
-            mapOf("journey_key" to (ride?.departure?.key ?: ""), "stops_revision" to (ride?.let(::stopsRevision) ?: ""))
+            mapOf("journey_key" to (ride?.departure?.key ?: ""), "stops_revision" to (ride?.let(::stopsRevision) ?: "")) +
+            // Identity of the tracked departure, so the watch can ask VRR itself while the phone is away.
+            (ride?.takeUnless { it.demo }?.let { active -> mapOf("ride_stop_id" to active.departure.stopId,
+                "ride_line_id" to active.departure.lineId, "ride_trip_code" to active.departure.tripCode,
+                "ride_planned" to active.departure.planned.toString()) } ?: emptyMap())
         val now = Instant.now()
         refreshTile(config, now)
         val library = WatchLibrary(now, entries, selected,

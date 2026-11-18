@@ -564,6 +564,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun boardBus() { correctBoarding(de.luca.mitfahrt.tracking.RideService.BOARD) { it.board("manual", Instant.now()) } }
     /** "Doch nicht im Bus": back to waiting; the detection pauses for a few minutes. */
     fun notOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.UNBOARD) { it.unboard() } }
+    fun toggleAnnouncements() { app.store.update { it.copy(announcementsPaused = !it.announcementsPaused) } }
     fun stillOnBoard() { correctBoarding(de.luca.mitfahrt.tracking.RideService.STILL_ON_BOARD) { it } }
     private fun correctBoarding(action: String, change: (Ride) -> Ride) {
         val state = tracking.value

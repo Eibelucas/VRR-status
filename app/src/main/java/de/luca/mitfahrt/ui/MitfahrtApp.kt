@@ -372,6 +372,18 @@ fun MitfahrtApp(
                                 phone = tracking.location?.takeIf { tracking.locationAt?.let { at -> now.epochSecond - at.epochSecond in -10..60 } == true },
                                 onReject = { vm.rejectLiveVehicle(ride.departure.key, it) })
                         }
+                        if (tracking.powerSaving) item {
+                            Text(if (ride.isStale(now) || tracking.lastRefreshFailed) "Akku sparen · Daten länger nicht aktualisiert"
+                                else "Akku sparen · seltener aktualisiert, kurz vor Ein- und Ausstieg wieder normal",
+                                color = if (ride.isStale(now) || tracking.lastRefreshFailed) Amber else Soft, fontSize = 13.sp, lineHeight = 18.sp)
+                        }
+                        if (ride.boarded && settings.string("announce_stops", "off") != "off") item {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (tracking.announcementsPaused) "Ansagen pausiert" else "Nächster Halt wird angesagt",
+                                    color = Soft, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                                TextButton(onClick = vm::toggleAnnouncements) { Text(if (tracking.announcementsPaused) "Fortsetzen" else "Pausieren") }
+                            }
+                        }
                         if (ride.boarded) item { NextStopCard(tracking, now, settings.bool("gps_next_stop", true), settings.bool("gps_travel_time", true)) }
                         if (!ride.demo && !ride.departure.cancelled) item { ExitTargetCard(ride, alertPreferences.exitEnabled, vm::setExitTarget, vm::saveSchoolTrip) }
                         if (!ride.demo) item {
