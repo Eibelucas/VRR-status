@@ -12,8 +12,8 @@ android {
         applicationId = "de.luca.mitfahrt"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.20.0"
+        versionCode = rootProject.extra["mitfahrtVersionCode"] as Int
+        versionName = rootProject.extra["mitfahrtVersionName"] as String
         testInstrumentationRunner = "de.luca.mitfahrt.reports.ReportPdfInstrumentation"
     }
     val releaseStore = System.getenv("MITFAHRT_KEYSTORE")?.takeIf { it.isNotBlank() }

@@ -166,7 +166,9 @@ Die Update-Quelle ist ausschließlich `https://github.com/Eibelucas/VRR-status/r
 
 ## Automatischer Build und Releases
 
-GitHub Actions prüft Pushes und Pull Requests mit Tests des gemeinsamen Übertragungsformats, Handy-Unit-Tests, Android Lint für beide Apps und Builds beider APKs. Ein Tag wie `v0.4.0` baut nach erfolgreichen Prüfungen eine signierte APK und veröffentlicht sie zusammen mit `update.json` und Prüfsumme. Tag und APK-Version müssen übereinstimmen; die `versionCode` muss für jedes Update steigen.
+GitHub Actions prüft Pushes und Pull Requests mit Tests des gemeinsamen Übertragungsformats, Handy-Unit-Tests, Android Lint für beide Apps und Builds beider APKs. Ein Tag wie `v26.11.0` baut nach erfolgreichen Prüfungen signierte APKs und veröffentlicht sie mit den Update-Dateien und Prüfsummen.
+
+Handy und Watch beziehen ihre Version aus `mitfahrt.version` in [gradle.properties](gradle.properties). Das Format ist `JJ.Monat.Release`. Nach `26.11.0` folgt für ein weiteres November-Update `26.11.1`. Im Dezember beginnt die Zählung mit `26.12.0`. Der Git-Tag setzt ein `v` davor. Gradle leitet die steigende Android-Versionsnummer automatisch daraus ab.
 
 Für installierbare Folgeversionen muss immer derselbe private Signaturschlüssel verwendet werden. Der Release-Job benötigt das Repository-Secret `ANDROID_KEYSTORE_BASE64`. Für die bereits verteilte Vorschau gelten die Android-Debug-Standardwerte für Alias und Passwörter; bei einem eigenen Schlüssel können sie über `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS` und `ANDROID_KEY_PASSWORD` überschrieben werden. Die private Schlüsseldatei gehört niemals in Git oder einen öffentlichen Release. Ohne konfigurierten Schlüssel schlägt der Release-Job mit einem Hinweis fehl, statt eine anders signierte Update-APK zu veröffentlichen.
 
@@ -176,9 +178,9 @@ Lokal kann ein vorhandener Schlüssel über `MITFAHRT_KEYSTORE`, `MITFAHRT_STORE
 
 ```sh
 ./gradlew :app:assembleRelease
-python3 scripts/create_update_manifest.py --apk app/build/outputs/apk/release/app-release.apk --tag v0.4.0 --output dist
-git tag v0.4.0
-git push origin main v0.4.0
+python3 scripts/create_update_manifest.py --apk app/build/outputs/apk/release/app-release.apk --tag v26.11.0 --output dist
+git tag v26.11.0
+git push origin main v26.11.0
 ```
 
 ## Lokal entwickeln

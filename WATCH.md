@@ -16,8 +16,8 @@ Die App ist noch nicht im Play Store. Auf dem Handy lässt sich die normale APK 
 
 Die beiden APKs stehen öffentlich unter [Releases](https://github.com/Eibelucas/VRR-status/releases/latest):
 
-- **Mitfahrt-0.20.0.apk** ist für Android-Handys.
-- **Mitfahrt-Wear-0.20.0.apk** ist ausschließlich für die Uhr.
+- `Mitfahrt-<Version>.apk` ist für Android-Handys.
+- `Mitfahrt-Wear-<Version>.apk` ist ausschließlich für die Uhr.
 
 Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Computer mit den offiziellen [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) übertragen. Für ADB über WLAN:
 
@@ -28,10 +28,10 @@ Die Watch-APK kannst du mit einem Wear-OS-APK-Installer deiner Wahl oder am Comp
 ```sh
 adb pair UHR_IP:KOPPLUNGSPORT
 adb connect UHR_IP:VERBINDUNGSPORT
-adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-0.20.0.apk
+adb -s UHR_IP:VERBINDUNGSPORT install -r Mitfahrt-Wear-26.11.0.apk
 ```
 
-Danach Debugging wieder ausschalten und Mitfahrt aus der App-Liste der Uhr öffnen. Die alltägliche Nutzung benötigt kein Debugging. Für spätere Watch-Updates dieselbe APK-Variante mit `install -r` installieren. Die In-App-Updatefunktion der Handy-App aktualisiert zunächst nur die Handy-App.
+Verwende im letzten Befehl den Namen deiner heruntergeladenen Watch-APK. Danach Debugging wieder ausschalten und Mitfahrt aus der App-Liste der Uhr öffnen. Für spätere Watch-Updates dieselbe APK-Variante mit `install -r` installieren. Die In-App-Updatefunktion der Handy-App aktualisiert zunächst nur die Handy-App.
 
 ## Für Klassenkameraden
 

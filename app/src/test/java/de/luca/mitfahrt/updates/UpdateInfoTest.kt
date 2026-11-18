@@ -40,6 +40,14 @@ class UpdateInfoTest {
     @Test fun `newer signed package is accepted`() {
         verifyUpdateIdentity(installed, installed.copy(versionCode = 5), update())
     }
+    @Test fun `calendar release can update an installation using the old version numbering`() {
+        val name = "26.11.0"
+        val code = 20_261_100L
+        val info = UpdateInfo.parse(manifest().put("versionName", name).put("versionCode", code)
+            .put("apkAssetName", "Mitfahrt-$name.apk"), app)
+        assertEquals("https://github.com/Eibelucas/VRR-status/releases/download/v26.11.0/Mitfahrt-26.11.0.apk", info.downloadUrl)
+        verifyUpdateIdentity(installed.copy(versionCode = 20), installed.copy(versionCode = code), info)
+    }
     @Test(expected = IllegalArgumentException::class) fun `APK with different signature is rejected`() {
         verifyUpdateIdentity(installed, installed.copy(versionCode = 5, signerDigests = setOf("other")), update())
     }
