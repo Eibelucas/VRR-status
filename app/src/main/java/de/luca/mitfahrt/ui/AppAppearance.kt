@@ -10,6 +10,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import de.luca.mitfahrt.data.TransitColors
+import de.luca.mitfahrt.data.TripResultPreferences
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -91,8 +94,17 @@ internal fun MitfahrtTheme(content: @Composable () -> Unit) {
  */
 @Composable
 internal fun LineSign(line: String, onBrand: Boolean = false, large: Boolean = false, cancelled: Boolean = false) {
-    val background = if (cancelled) Color.Transparent else if (onBrand) Color.White else Lime
-    val content = if (cancelled) Amber else if (onBrand) Color(0xFF870040) else MaterialTheme.colorScheme.onPrimary
+    val colors = LocalAppSettings.current.string("line_route_colors")
+    val custom = remember(colors, line) {
+        TransitColors.decode(colors)[TripResultPreferences.lineKey(line)]?.let { Color(android.graphics.Color.parseColor(it)) }
+    }
+    val background = if (cancelled) Color.Transparent else custom ?: if (onBrand) Color.White else Lime
+    val content = when {
+        cancelled -> Amber
+        custom != null -> if (custom.luminance() >= .179f) Color.Black else Color.White
+        onBrand -> Color(0xFF870040)
+        else -> MaterialTheme.colorScheme.onPrimary
+    }
     Box(Modifier.clip(RoundedCornerShape(6.dp)).background(background)
         .then(if (cancelled) Modifier.border(1.dp, Amber, RoundedCornerShape(6.dp)) else Modifier)
         .widthIn(min = if (large) 52.dp else 40.dp).padding(horizontal = if (large) 10.dp else 8.dp, vertical = if (large) 7.dp else 4.dp),

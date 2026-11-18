@@ -10,4 +10,8 @@
     <string name="mitfahrt_map_widget_label">Mitfahrt Buskarte</string>
     <string name="mitfahrt_map_widget_description">Streckenskizze deiner begleiteten Fahrt mit Bus- oder GPS-Position</string>
     <string name="mitfahrt_map_widget_empty">Keine aktive Fahrt. Starte eine Begleitung in Mitfahrt.</string>
+    <string name="mitfahrt_favorite_stops_label">Mitfahrt Favoriten</string>
+    <string name="mitfahrt_favorite_stops_title">Lieblingshaltestellen</string>
+    <string name="mitfahrt_favorite_stops_description">Gespeicherte Haltestellen und ihre Abfahrtstafeln öffnen</string>
+    <string name="mitfahrt_favorite_stops_empty">Haltestellen merken</string>
 </resources>

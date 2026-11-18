@@ -44,6 +44,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     val navigation = navigationState.asStateFlow()
     fun consumeNavigation() { navigationState.value = null }
     fun handleLaunchIntent(intent: android.content.Intent) {
+        if (intent.getBooleanExtra("open_favorites", false)) {
+            query(""); backToStops(); navigationState.value = "stops"; return
+        }
         if (intent.getBooleanExtra("open_settings", false)) { navigationState.value = "settings"; return }
         if (intent.getBooleanExtra("open_live_map", false) || intent.getStringExtra("widget_action") == "map") { navigationState.value = "map"; return }
         if (intent.getStringExtra("widget_kind") == "active" || intent.getStringExtra("widget_action") == "ride") {
@@ -51,7 +54,11 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
         }
         val id = intent.getStringExtra("widget_id")?.takeIf { it.isNotBlank() && it.length <= 256 } ?: return
         when (intent.getStringExtra("widget_kind")) {
-            "route" -> app.routePlans.current().routes.firstOrNull { it.id == id }?.let { selectRoutePlan(it, recordVisit = false); navigationState.value = "stops" }
+            "route" -> {
+                val route = app.routePlans.current().routes.firstOrNull { it.id == id }
+                if (route == null) actionState.value = "Diese Route ist nicht mehr gespeichert."
+                else { selectRoutePlan(route, recordVisit = false); navigationState.value = "stops" }
+            }
             "stop" -> {
                 val saved = app.savedStops.state.value
                 val widgetStore = de.luca.mitfahrt.widgets.WidgetStore(app)
@@ -60,7 +67,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                     ?.let { Stop(it.targetId, it.targetName) }
                 val stop = (saved.favorites + saved.recent).firstOrNull { stopKey(it.id) == stopKey(id) } ?: fromWidget
                 if (stop != null) { selectStop(stop, recordVisit = false); navigationState.value = "stops" }
-                else actionState.value = "Diese Haltestelle ist nicht mehr im Widget gespeichert. Bitte das Widget neu einrichten."
+                else actionState.value = "Diese Haltestelle ist nicht mehr gespeichert."
             }
             "active" -> navigationState.value = "ride"
         }
@@ -138,6 +145,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun findRouteStops(query: String): List<Stop> = app.vrr.search(query)
     suspend fun resolveRouteStop(stop: Stop): Stop = app.vrr.resolveStop(stop)
     val schoolTrips = app.schoolTrips.trips
+    val offlineBoards get() = app.offlineBoards
+    suspend fun fetchOfflineBoard(stop: Stop, day: java.time.LocalDate): OfflineBoard = app.vrr.offlineTimetable(stop, day)
+
     val savedStops = app.savedStops.state
     private val alertStore = AlertPreferencesStore(app)
     val alertPreferences = alertStore.state

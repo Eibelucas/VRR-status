@@ -36,8 +36,16 @@ data class TripPlace(
 
 enum class TripTimeMode { NOW, DEPART, ARRIVE }
 
-enum class WalkSpeed(val efa: String, val label: String) {
-    SLOW("slow", "Langsam"), NORMAL("normal", "Normal"), FAST("fast", "Schnell")
+enum class WalkSpeed(val efa: String, val label: String, val pace: Int) {
+    SLOW("slow", "Langsam", 90), NORMAL("normal", "Normal", 120), FAST("fast", "Schnell", 155);
+
+    companion object {
+        fun forPace(speed: Int): WalkSpeed = when {
+            speed < 105 -> SLOW
+            speed > 140 -> FAST
+            else -> NORMAL
+        }
+    }
 }
 
 enum class RoutePreference(val efa: String, val label: String) {
@@ -69,7 +77,11 @@ data class TripOptions(
     val noSolidStairs: Boolean = false,
     val noEscalators: Boolean = false,
     val lowFloor: Boolean = false,
-    val wheelchair: Boolean = false
+    val wheelchair: Boolean = false,
+    val excludedStopIds: Set<String> = emptySet(),
+    val preferredLines: Set<String> = emptySet(),
+    val minimumTransferMinutes: Int = 0,
+    val walkingCentimetresPerSecond: Int = 120
 ) {
     val accessibility: Boolean get() = noSolidStairs || noEscalators || lowFloor || wheelchair
     val changedFromDefault: Boolean get() = this != TripOptions()
@@ -262,7 +274,9 @@ object TripRequest {
             put("itdDate", local.format(date))
             put("itdTime", local.format(time))
             put("routeType", options.preference.efa)
-            put("changeSpeed", options.walkSpeed.efa)
+            val providerSpeed = if (options.walkingCentimetresPerSecond == 120) options.walkSpeed
+                else WalkSpeed.forPace(options.walkingCentimetresPerSecond)
+            put("changeSpeed", providerSpeed.efa)
             options.maxChanges?.let { put("maxChanges", it.coerceIn(0, 9).toString()) }
             options.maxWalkMinutes?.let { put("trITMOT", "100"); put("trITMOTvalue100", it.coerceIn(1, 60).toString()) }
             if (options.excluded.isNotEmpty()) {
@@ -415,12 +429,21 @@ object TripSettings {
         return TripOptions(
             excluded = ProductGroup.entries.toSet() - allowed,
             maxChanges = settings.string("trip_max_changes").toIntOrNull()?.coerceIn(0, 9),
-            walkSpeed = WalkSpeed.entries.firstOrNull { it.efa == settings.string("trip_walk_speed") } ?: WalkSpeed.NORMAL,
+            walkSpeed = WalkSpeed.forPace(walkingSpeed(settings)),
             maxWalkMinutes = settings.string("trip_max_walk").toIntOrNull()?.coerceIn(1, 60),
             preference = RoutePreference.entries.firstOrNull { it.efa == settings.string("trip_route_type") } ?: RoutePreference.FASTEST,
             noSolidStairs = settings.bool("trip_no_stairs"), noEscalators = settings.bool("trip_no_escalators"),
-            lowFloor = settings.bool("trip_low_floor"), wheelchair = settings.bool("trip_wheelchair")
+            lowFloor = settings.bool("trip_low_floor"), wheelchair = settings.bool("trip_wheelchair"),
+            excludedStopIds = ExcludedTripStops.decode(settings.string("trip_excluded_stops")).keys,
+            preferredLines = TripResultPreferences.lines(settings.string("trip_preferred_lines")),
+            minimumTransferMinutes = settings.int("trip_transfer_buffer", 0).coerceIn(0, 20),
+            walkingCentimetresPerSecond = walkingSpeed(settings)
         )
+    }
+
+    fun walkingSpeed(settings: AppSettings): Int = when (val custom = settings.int("trip_walking_speed", 0)) {
+        0 -> WalkSpeed.entries.firstOrNull { it.efa == settings.string("trip_walk_speed") }?.pace ?: WalkSpeed.NORMAL.pace
+        else -> custom.coerceIn(50, 220)
     }
 
     /** Setting values for [options]; used by the options sheet. */
@@ -431,6 +454,9 @@ object TripSettings {
         "trip_max_walk" to (options.maxWalkMinutes?.toString() ?: "default"),
         "trip_route_type" to options.preference.efa,
         "trip_no_stairs" to options.noSolidStairs.toString(), "trip_no_escalators" to options.noEscalators.toString(),
-        "trip_low_floor" to options.lowFloor.toString(), "trip_wheelchair" to options.wheelchair.toString()
+        "trip_low_floor" to options.lowFloor.toString(), "trip_wheelchair" to options.wheelchair.toString(),
+        "trip_preferred_lines" to options.preferredLines.sorted().joinToString(", "),
+        "trip_transfer_buffer" to options.minimumTransferMinutes.toString(),
+        "trip_walking_speed" to (if (options.walkingCentimetresPerSecond == options.walkSpeed.pace) 0 else options.walkingCentimetresPerSecond).toString()
     )
 }

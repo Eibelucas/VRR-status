@@ -167,7 +167,8 @@ fun JourneyPlannerScreen(planner: TripPlannerViewModel, now: Instant, locationUs
             }
         }
     }
-    if (showOptions) TripOptionsSheet(planner.options(), onApply = { planner.setOptions(it); showOptions = false }, onDismiss = { showOptions = false })
+    if (showOptions) TripOptionsSheet(planner.options(), planner.excludedStops(), planner::findExcludedStops,
+        onApply = { options, stops -> planner.setOptions(options, stops); showOptions = false }, onDismiss = { showOptions = false })
     if (detail != null) JourneyDetailsScreen(detail, results, now, onBack = planner::closeDetails, onAccompany = { onAccompany(detail) },
         accompanyBusy = accompanyBusy, routeFor = { name -> planner.routeFrom(detail, name) }, onSaveRoute = onSaveRoute,
         destinationSaved = form.destination?.let { places.isSaved(it) } == true,
@@ -281,7 +282,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.resultItems(state: Tr
         PagingButton(if (state.noEarlier) "Keine früheren Verbindungen geliefert" else "Frühere Verbindungen",
             state.paging == TripPaging.EARLIER, enabled = !state.noEarlier && state.paging == TripPaging.NONE, onEarlier)
     }
-    items(state.journeys, key = { it.key }) { journey -> JourneyRow(journey, now) { onOpen(journey) } }
+    val visible = state.visibleJourneys(now)
+    if (visible.isEmpty()) item {
+        Text("Keine Verbindung mit diesen Filtern. Andere Uhrzeit oder weniger Einschränkungen wählen.", color = Soft)
+    }
+    items(visible, key = { it.key }) { journey -> JourneyRow(journey, now) { onOpen(journey) } }
     item {
         PagingButton(if (state.noLater) "Keine späteren Verbindungen geliefert" else "Spätere Verbindungen",
             state.paging == TripPaging.LATER, enabled = !state.noLater && state.paging == TripPaging.NONE, onLater)
@@ -492,11 +497,14 @@ private fun PlaceRow(place: TripPlace, saved: Boolean?, onToggleSaved: () -> Uni
     }
 }
 
-/** Only options that the VRR interface documents; nothing else gets a switch. */
+/** VRR request options and local filters for returned connections. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun TripOptionsSheet(initial: TripOptions, onApply: (TripOptions) -> Unit, onDismiss: () -> Unit) {
+private fun TripOptionsSheet(initial: TripOptions, initialStops: Map<String, String>, findStops: suspend (String) -> List<Stop>,
+    onApply: (TripOptions, Map<String, String>) -> Unit, onDismiss: () -> Unit) {
     var options by remember { mutableStateOf(initial) }
+    var excludedStops by remember { mutableStateOf(initialStops) }
+    var preferredLines by remember { mutableStateOf(initial.preferredLines.joinToString(", ")) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Panel, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -533,14 +541,30 @@ private fun TripOptionsSheet(initial: TripOptions, onApply: (TripOptions) -> Uni
                     }
                 }
             }
-            item { OptionLabel("Gehgeschwindigkeit") }
             item {
+                OptionLabel("Gehgeschwindigkeit")
+                Text(String.format(Locale.GERMANY, "%.1f km/h", options.walkingCentimetresPerSecond * .036), color = Soft)
+                Slider(value = options.walkingCentimetresPerSecond.toFloat(),
+                    onValueChange = { options = options.copy(walkSpeed = WalkSpeed.forPace(it.toInt()), walkingCentimetresPerSecond = it.toInt()) },
+                    valueRange = 50f..220f, steps = 16,
+                    modifier = Modifier.semantics { contentDescription = "Gehgeschwindigkeit" })
+            }
+            item {
+                OptionLabel("Zusätzliche Zeit zum Umsteigen")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    WalkSpeed.entries.forEach { speed ->
-                        FilterChip(selected = options.walkSpeed == speed, onClick = { options = options.copy(walkSpeed = speed) },
-                            label = { Text(speed.label) }, modifier = Modifier.heightIn(min = 48.dp))
+                    (listOf(0, 2, 3, 5, 8, 10) + options.minimumTransferMinutes).distinct().sorted().forEach { minutes ->
+                        FilterChip(selected = options.minimumTransferMinutes == minutes,
+                            onClick = { options = options.copy(minimumTransferMinutes = minutes) },
+                            label = { Text(if (minutes == 0) "Kein Extra" else "$minutes Min") })
                     }
                 }
+            }
+            item {
+                OutlinedTextField(preferredLines, { preferredLines = it.take(180) }, label = { Text("Wunschlinien") },
+                    placeholder = { Text("017, 025, RE8") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+            item {
+                ExcludedTripStopsEditor(excludedStops, findStops) { excludedStops = it }
             }
             item { OptionLabel("Fußweg zur Haltestelle höchstens") }
             item {
@@ -559,13 +583,13 @@ private fun TripOptionsSheet(initial: TripOptions, onApply: (TripOptions) -> Uni
             item { OptionSwitch("Niederflurfahrzeuge", options.lowFloor) { options = options.copy(lowFloor = it) } }
             item { OptionSwitch("Für Rollstuhl geeignet", options.wheelchair) { options = options.copy(wheelchair = it) } }
             item {
-                Text("Der VRR berücksichtigt diese Wünsche nach seinen Daten. Einen eigenen Umstiegspuffer bietet die Schnittstelle nicht an.",
+                Text("Wunschlinien, gemiedene Haltestellen und Extra-Umstiegszeit gelten für die vom VRR gefundenen Ergebnisse.",
                     color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
             }
             item {
                 Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(shape = ControlShape, onClick = { options = TripOptions() }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Zurücksetzen") }
-                    Button(shape = ControlShape, onClick = { onApply(options) }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Übernehmen") }
+                    OutlinedButton(shape = ControlShape, onClick = { options = TripOptions(); excludedStops = emptyMap(); preferredLines = "" }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Zurücksetzen") }
+                    Button(shape = ControlShape, onClick = { onApply(options.copy(preferredLines = TripResultPreferences.lines(preferredLines)), excludedStops) }, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Übernehmen") }
                 }
             }
         }

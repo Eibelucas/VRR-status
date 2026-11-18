@@ -61,7 +61,7 @@ private fun PlannedRouteItem(plan: RoutePlan, departures: List<Departure>, loadi
     AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(routeIcon(plan.icon), null, tint = Soft, modifier = Modifier.size(24.dp))
+                Icon(routeIcon(plan.icon), null, tint = routeColor(plan.color), modifier = Modifier.size(24.dp))
                 Column(Modifier.weight(1f)) {
                     Text(plan.name, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${shortName(plan.origin.name)} → ${shortName(plan.destination.name)}",

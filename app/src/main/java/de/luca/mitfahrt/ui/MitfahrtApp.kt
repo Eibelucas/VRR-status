@@ -123,6 +123,8 @@ fun MitfahrtApp(
     var personalModule by rememberSaveable { mutableStateOf<String?>(null) }
     var showDataManagement by rememberSaveable { mutableStateOf(false) }
     var showAll by rememberSaveable { mutableStateOf(false) }
+    var departureBoard by rememberSaveable { mutableStateOf<String?>(null) }
+    var editHomeLayout by rememberSaveable { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
     var showLiveMap by rememberSaveable { mutableStateOf(settings.string("start_page") == "map") }
     var showRoutePlans by rememberSaveable { mutableStateOf(settings.string("start_page") == "routes") }
@@ -194,13 +196,21 @@ fun MitfahrtApp(
         suggestedRoutes.size, lastRide != null)
     val companionPhase = companion?.let { JourneyCompanions.phase(it, tracking.ride?.departure?.key, companionSeen) }
     val gap = when (settings.string("density")) { "compact" -> 12.dp; "comfortable" -> 28.dp; else -> 20.dp }
-    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization && personalModule == null && !showPlanner) {
+    BackHandler(enabled = page != 0 && !showLiveMap && !showRoutePlans && !showCustomization && personalModule == null && !showPlanner && departureBoard == null) {
         keyboard?.hide(); focus.clearFocus()
         if (page == 1 && search.selectedStop != null) vm.backToStops() else page = 0
     }
     LaunchedEffect(navigation) {
         when (navigation) {
-            "settings" -> page = 3; "map" -> showLiveMap = true; "stops" -> { showPlanner = false; page = 1 }
+            "settings" -> page = 3; "map" -> showLiveMap = true; "stops" -> {
+                departureBoard = null
+                showPlanner = false
+                showCustomization = false
+                showRoutePlans = false
+                showLiveMap = false
+                personalModule = null
+                page = 1
+            }
             "ride" -> { showPlanner = false; page = if (tracking.ride != null) RIDE_PAGE else 0 }
         }
         if (navigation != null) vm.consumeNavigation()
@@ -271,6 +281,11 @@ fun MitfahrtApp(
         }
     }
     MitfahrtTheme {
+        if (editHomeLayout) HomeLayoutDialog(cardOrder, { selected ->
+            vm.settingsStore.set("home_cards", selected.joinToString(","))
+            vm.settingsStore.set("map_home", ("map" in selected).toString())
+            editHomeLayout = false
+        }) { editHomeLayout = false }
         if (personalModule == "templates") TemplateEditorScreen(settings, { key, value -> vm.settingsStore.set(key, value) }) { personalModule = null }
         else if (personalModule != null) PersonalModuleScreen(personalModule!!, vm, now.atZone(ZoneId.of("Europe/Berlin")).toLocalDate(),
             onReport = { openReportId = vm.archivedReportId(it) }) { personalModule = null }
@@ -283,6 +298,23 @@ fun MitfahrtApp(
             resolveStop = vm::resolveRouteStop, onMove = vm::moveRoutePlan, onOpen = { plan ->
                 showRoutePlans = false; vm.selectRoutePlan(plan); page = 1
             })
+        else if (departureBoard == "live" && search.selectedStop != null) {
+            val lifecycle = LocalLifecycleOwner.current.lifecycle
+            LaunchedEffect(search.selectedStop.id, lifecycle) {
+                lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    while (true) {
+                        delay(CustomizationPolicy.refreshMillis(vm.settingsStore.current()))
+                        vm.refreshSelectedStop()
+                    }
+                }
+            }
+            FullDepartureBoard(search, now, { departureBoard = null }, vm::reloadSelectedStop) {
+                departureBoard = null
+                vm.choose(it)
+            }
+        } else if (departureBoard == "offline" && search.selectedStop != null) {
+            OfflineDepartureBoard(search.selectedStop, now, vm.offlineBoards, vm::fetchOfflineBoard) { departureBoard = null }
+        }
         else Scaffold(
             containerColor = Ink,
             snackbarHost = { SnackbarHost(snackbar) },
@@ -414,7 +446,12 @@ fun MitfahrtApp(
                 }
                 0 -> LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(gap)) {
-                    item { Header("Mitfahrt", "", Icons.Outlined.DirectionsBus) }
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) { Header("Mitfahrt", "", Icons.Outlined.DirectionsBus) }
+                            IconButton(onClick = { editHomeLayout = true }) { Icon(Icons.Outlined.Tune, "Startseite anpassen") }
+                        }
+                    }
                     companion?.takeIf { companionPhase != null && companionPhase != CompanionPhase.TRACKING }?.let { current -> item {
                         CompanionCard(current, companionPhase!!, tracking.ride, companionNext, now, search.loading,
                             onContinue = vm::continueJourney, onResume = vm::resumeJourney,
@@ -474,7 +511,7 @@ fun MitfahrtApp(
                         }
                     }
                 }
-                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings)
+                1 -> StopSearch(search, tracking, arrivals, now, vm, Modifier.padding(insets), home, routes, onNearbyLocation, shownSavedStops, ::toggleFavorite, settings) { departureBoard = it }
                 2 -> ReportsPage(reports, journeyReports, lastRide, Modifier.padding(insets), onOpen = { openReportId = it },
                     onCreate = { openReportId = vm.archivedReportId(it) }, onShare = vm::shareReport,
                     onDeleteReport = vm::deleteReport, onDeleteRide = ::forgetLastRide, onOpenModule = { personalModule = it },
@@ -736,7 +773,7 @@ private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean
 @Composable
 private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: List<ArrivalMark>, now: Instant, vm: RideViewModel, modifier: Modifier,
     home: HomeState, routes: List<FrequentRoute>, onNearbyLocation: () -> Unit, savedStops: SavedStopsState, onFavorite: (Stop) -> Unit,
-    settings: AppSettings) {
+    settings: AppSettings, onOpenBoard: (String) -> Unit) {
     var waitingNearby by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -792,10 +829,19 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                     IconButton(onClick = vm::reloadSelectedStop, enabled = !search.loading) { Icon(Icons.Outlined.Refresh, "Abfahrten aktualisieren") }
                 }
             }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick = { onOpenBoard("live") }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                        Text("Vollbild")
+                    }
+                    if (savedStops.isFavorite(stop)) TextButton(onClick = { onOpenBoard("offline") },
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Offline-Fahrplan") }
+                }
+            }
             if (search.routeFilter != null || search.plannedRoute != null) item { TextButton(onClick = { vm.selectStop(stop, recordVisit = false) }) { Text("Alle Linien anzeigen") } }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(JourneyOptions.walking(stop)?.label ?: "Gehzeit nicht verfügbar", color = Soft, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Text(JourneyOptions.walking(stop, TripSettings.walkingSpeed(settings))?.label ?: "Gehzeit nicht verfügbar", color = Soft, fontSize = 13.sp, modifier = Modifier.weight(1f))
                     val observed = search.departures.mapNotNull { it.observedAt }.maxOrNull()
                     observed?.let { Text("Stand ${clockTime(it)}", color = Soft, fontSize = 12.sp) }
                 }

@@ -39,6 +39,7 @@ class MitfahrtApplication : Application() {
     val watch by lazy { WatchPublisher(this, store) }
     val routePlans by lazy { de.luca.mitfahrt.data.RoutePlansStore(this) }
     val routes by lazy { RouteHistoryStore(this, store.lastRide.value) }
+    val offlineBoards by lazy { de.luca.mitfahrt.data.OfflineBoards(this) }
     val savedStops by lazy { de.luca.mitfahrt.data.SavedStopsStore(this) }
     val schoolTrips by lazy { de.luca.mitfahrt.data.SchoolTripStore(this) }
     /** Saved destinations and the optional search history of the journey planner; never own coordinates. */
@@ -64,6 +65,11 @@ class MitfahrtApplication : Application() {
         widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
         widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
         widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
+        widgetScope.launch {
+            kotlinx.coroutines.flow.combine(savedStops.state, settings.state) { _, _ -> Unit }.collect {
+                runCatching { de.luca.mitfahrt.widgets.FavoriteStopsWidget.update(this@MitfahrtApplication) }
+            }
+        }
         widgetScope.launch { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication) } }
     }
 }

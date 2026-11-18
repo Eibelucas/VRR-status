@@ -29,6 +29,7 @@ data class TripResultsState(
 ) {
     val searched: Boolean get() = query != null && !loading && error == null
     val empty: Boolean get() = searched && journeys.isEmpty()
+    fun visibleJourneys(now: Instant): List<TripJourney> = query?.options?.let { TripResultPreferences.apply(journeys, it, now) } ?: journeys
 }
 
 /**

@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.AddToHomeScreen
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -67,6 +68,7 @@ fun RoutePlansScreen(
     onMove: ((String, Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val canPin = remember(context) { de.luca.mitfahrt.widgets.RouteShortcuts.supported(context) }
     fun newDraft(): RouteDraft {
         val settings = AppSettingsStore(context).current()
         return RouteDraft(walkingMinutes = settings.int("routes_default_walk_minutes", 5), bufferMinutes = settings.int("routes_default_buffer_minutes", 2))
@@ -119,6 +121,11 @@ fun RoutePlansScreen(
                         name = "${plan.name} zurück".take(RoutePlans.MAX_NAME_LENGTH), origin = plan.destination, destination = plan.origin).encode()
                 }, onRemove = { onRemove(plan) }, onOpen = onOpen?.let { open -> { open(plan) } },
                     onMove = onMove?.let { move -> { delta -> move(plan.id, delta) } },
+                    onPin = if (canPin) { {
+                        if (!de.luca.mitfahrt.widgets.RouteShortcuts.pin(context, plan))
+                            scope.launch { snackbar.showSnackbar("Verknüpfung konnte nicht hinzugefügt werden.") }
+                        Unit
+                    } } else null,
                     onHideToday = {
                         val date = LocalDate.now(ZoneId.of("Europe/Berlin")).toString()
                         val hidden = date in plan.excludedDates
@@ -146,7 +153,7 @@ fun RoutePlansScreen(
 
 @Composable
 private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, onEnabled: (Boolean) -> Unit,
-    onReverse: () -> Unit, onRemove: () -> Unit, onOpen: (() -> Unit)?, onMove: ((Int) -> Unit)?, onHideToday: () -> Unit) {
+    onReverse: () -> Unit, onRemove: () -> Unit, onOpen: (() -> Unit)?, onMove: ((Int) -> Unit)?, onPin: (() -> Unit)?, onHideToday: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     AppCard(onClick = onOpen ?: onEdit, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -165,6 +172,8 @@ private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, 
                             onClick = { menu = false; onEdit() })
                         DropdownMenuItem(text = { Text("Rückweg anlegen") }, leadingIcon = { Icon(Icons.Outlined.SwapVert, null) },
                             onClick = { menu = false; onReverse() }, enabled = canAdd)
+                        if (onPin != null) DropdownMenuItem(text = { Text("Zum Startbildschirm") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.AddToHomeScreen, null) }, onClick = { menu = false; onPin() })
                         if (onMove != null) {
                             DropdownMenuItem(text = { Text("Nach oben") }, leadingIcon = { Icon(Icons.Outlined.ArrowUpward, null) },
                                 onClick = { menu = false; onMove(-1) })
