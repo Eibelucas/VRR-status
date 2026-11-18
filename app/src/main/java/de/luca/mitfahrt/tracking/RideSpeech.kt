@@ -9,6 +9,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import de.luca.mitfahrt.data.*
@@ -60,14 +62,24 @@ class RideSpeech(private val context: Context) {
     private val audio = context.getSystemService(AudioManager::class.java)
     private var tts: TextToSpeech? = null
     private var ready = false
-    private var pending: String? = null
+    private data class Request(val text: String, val route: SpeechRoute, val stillRelevant: () -> Boolean)
+
+    private val main = Handler(Looper.getMainLooper())
+    private var pending: Request? = null
+    private var engineGeneration = 0
+    private var utterance = 0L
+    private var activeUtterance: String? = null
     private var focus: AudioFocusRequest? = null
     private var noisyRegistered = false
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
     /** Headphones unplugged mid-sentence: stop at once instead of continuing on the speaker. */
     private val noisy = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) { tts?.stop(); release() }
+        override fun onReceive(context: Context?, intent: Intent?) {
+            pending = null
+            tts?.stop()
+            release()
+        }
     }
 
     fun situation(): AudioSituation {
@@ -84,41 +96,68 @@ class RideSpeech(private val context: Context) {
             filter != null && filter != android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
     }
 
-    fun speak(text: String, route: SpeechRoute) {
+    fun speak(text: String, route: SpeechRoute, stillRelevant: () -> Boolean = { true }) {
         if (!SpeechPolicy.allowed(route, situation())) return
-        val engine = tts ?: TextToSpeech(context.applicationContext) { status ->
-            ready = status == TextToSpeech.SUCCESS
-            if (ready) { tts?.language = Locale.GERMANY; tts?.setAudioAttributes(attributes); pending?.let { pending = null; say(it) } }
-        }.also { created ->
-            tts = created
-            created.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) = Unit
-                override fun onDone(utteranceId: String?) = release()
-                @Deprecated("Deprecated in Java") override fun onError(utteranceId: String?) = release()
-            })
-        }
-        if (!ready) { pending = text; return }
-        engine.let { say(text) }
+        val request = Request(text, route, stillRelevant)
+        if (tts == null) startEngine()
+        if (ready) say(request) else pending = request
     }
 
-    private fun say(text: String) {
+    private fun startEngine() {
+        val generation = ++engineGeneration
+        val engine = TextToSpeech(context.applicationContext) { status ->
+            main.post {
+                if (generation != engineGeneration) return@post
+                ready = status == TextToSpeech.SUCCESS
+                val request = pending
+                pending = null
+                if (ready) {
+                    tts?.language = Locale.GERMANY
+                    tts?.setAudioAttributes(attributes)
+                    request?.let(::say)
+                } else {
+                    tts?.shutdown()
+                    tts = null
+                }
+            }
+        }
+        tts = engine
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) = Unit
+            override fun onDone(utteranceId: String?) = finished(utteranceId)
+            override fun onStop(utteranceId: String?, interrupted: Boolean) = finished(utteranceId)
+            @Deprecated("Deprecated in Java") override fun onError(utteranceId: String?) = finished(utteranceId)
+
+            private fun finished(id: String?) {
+                main.post { if (id != null && id == activeUtterance) release() }
+            }
+        })
+    }
+
+    private fun say(speech: Request) {
         val engine = tts ?: return
+        // The output route can change while Android initializes its speech engine.
+        if (!speech.stillRelevant() || !SpeechPolicy.allowed(speech.route, situation())) return
+        release()
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).setAudioAttributes(attributes).build()
         if (audio?.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return
         focus = request
-        if (!noisyRegistered) {
-            runCatching { context.registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)) }
-            noisyRegistered = true
-        }
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "mitfahrt-${System.currentTimeMillis()}")
+        if (!noisyRegistered) noisyRegistered = runCatching {
+            context.registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+        }.isSuccess
+        val id = "mitfahrt-${++utterance}"
+        activeUtterance = id
+        if (engine.speak(speech.text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) release()
     }
 
     private fun release() {
+        activeUtterance = null
         focus?.let { request -> runCatching { audio?.abandonAudioFocusRequest(request) } }
         focus = null
     }
 
     fun shutdown() {
+        engineGeneration++
         release()
         if (noisyRegistered) runCatching { context.unregisterReceiver(noisy) }
         noisyRegistered = false

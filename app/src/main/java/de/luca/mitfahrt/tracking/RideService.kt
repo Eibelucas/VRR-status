@@ -203,7 +203,11 @@ class RideService : Service(), LocationListener {
                         val exitRoute = SpeechRoute.of(settings.string("exit_audio", "off"))
                         if (emitted && exitRoute != SpeechRoute.OFF) speechFor().speak(
                             (if (transfer != null) "Bald umsteigen. " else "Bald aussteigen. ") +
-                                "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}.", exitRoute)
+                                "Nächster Ausstieg: ${shortName(currentRide.exitTargetStop()?.name.orEmpty())}.", exitRoute) {
+                            val active = store.state.value
+                            active.running && active.ride?.let(ExitAlarm::id) == id &&
+                                SpeechRoute.of(customization.current().string("exit_audio", "off")) == exitRoute
+                        }
                     }
                     announceNextStop(settings)
                     notifications.post(store.state.value)
@@ -486,7 +490,11 @@ class RideService : Service(), LocationListener {
         if (route == SpeechRoute.OFF) { announced = info?.index?.let { key to it } ?: announced; return }
         val next = SpeechPolicy.announcement(state, Instant.now(), last, settings.bool("gps_next_stop", true)) ?: return
         announced = key to next.first
-        speechFor().speak(next.second, route)
+        speechFor().speak(next.second, route) {
+            val active = store.state.value
+            active.running && !active.announcementsPaused && active.ride?.departure?.key == key &&
+                SpeechRoute.of(customization.current().string("announce_stops", "off")) == route
+        }
     }
 
     private fun noteCorrection() {

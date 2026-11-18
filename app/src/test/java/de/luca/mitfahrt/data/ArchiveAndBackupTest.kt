@@ -80,7 +80,7 @@ class ArchiveAndBackupTest {
         File(source, "${legacy.id}.json").writeText(legacy.encode()); File(source, "Mitfahrt-${legacy.id}.pdf").writeText("%PDF-1.4 old")
         val bytes = ByteArrayOutputStream().also { BackupWriter.write(it, archive(ride(0), ride(1)), source, T0) }.toByteArray()
 
-        val contents = BackupReader.read(ByteArrayInputStream(bytes), T0)
+        val contents = BackupReader.read(ByteArrayInputStream(bytes))
         assertEquals(2, contents.archive.size); assertEquals(1, contents.reports.size); assertEquals(1, contents.legacy.size)
 
         // Target device: a newer and a running report already exist, and an export with the same name.
@@ -118,10 +118,14 @@ class ArchiveAndBackupTest {
     }
 
     private fun zip(vararg entries: Pair<String, ByteArray>): ByteArray = ByteArrayOutputStream().also { out ->
-        ZipOutputStream(out).use { zip -> entries.forEach { (name, bytes) -> zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry() } }
+        val complete = if (entries.any { it.first == "archive.json" }) entries.toList()
+            else entries.toList() + ("archive.json" to JourneyArchive.encode(JourneyArchiveState()).toByteArray())
+        ZipOutputStream(out).use { zip -> complete.forEach { (name, bytes) ->
+            zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry()
+        } }
     }.toByteArray()
     private val manifest = """{"format":"mitfahrt-sicherung","version":1,"createdAt":"2026-11-18T08:00:00Z"}""".toByteArray()
-    private fun rejects(bytes: ByteArray) = try { BackupReader.read(ByteArrayInputStream(bytes), T0); false } catch (_: BackupException) { true }
+    private fun rejects(bytes: ByteArray) = try { BackupReader.read(ByteArrayInputStream(bytes)); false } catch (_: BackupException) { true }
 
     @Test fun `manipulated or damaged backups are rejected before anything is written`() {
         assertTrue("path traversal", rejects(zip("manifest.json" to manifest, "../../shared_prefs/x.xml" to "x".toByteArray())))
@@ -139,6 +143,11 @@ class ArchiveAndBackupTest {
             "reports/journeys/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.json" to report(id, 1).encode().toByteArray())))
         assertTrue("oversized", rejects(zip("manifest.json" to manifest, "archive.json" to ByteArray(5 * 1024 * 1024) { ' '.code.toByte() })))
         assertTrue("not a zip", rejects("hello".toByteArray()))
+        assertTrue("broken archive", rejects(zip("manifest.json" to manifest, "archive.json" to "{kaputt".toByteArray())))
+        assertTrue("directory is not part of this format", rejects(zip("manifest.json" to manifest, "unexpected/" to ByteArray(0))))
+        assertTrue("frozen snapshot has the wrong report id", rejects(zip("manifest.json" to manifest,
+            "reports/journeys/$id.json" to report(id, 1).encode().toByteArray(),
+            "reports/journeys/$id/export-1.json" to report("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", 1).encode().toByteArray())))
         assertFalse(BackupFormat.allowed("reports/journeys/$id/./a.pdf"))
         assertTrue(BackupFormat.allowed("reports/journeys/$id/Mitfahrt-Fahrtbericht-2026-11-18-aaaaaaaa-1.pdf"))
     }

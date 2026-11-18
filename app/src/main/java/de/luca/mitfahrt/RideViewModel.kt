@@ -582,12 +582,23 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun exportBackup(target: android.net.Uri) { if (backupBusyState.value) return; backupBusyState.value = true; viewModelScope.launch {
         try {
             val counts = withContext(Dispatchers.IO) {
-                (app.contentResolver.openOutputStream(target, "wt") ?: error("Speicherort nicht verfügbar")).use { out ->
-                    de.luca.mitfahrt.data.backup.BackupWriter.write(out, app.archive.state.value, java.io.File(app.filesDir, "reports"), Instant.now())
+                val temporary = File.createTempFile("mitfahrt-backup-", ".zip", app.cacheDir)
+                try {
+                    val counts = synchronized(app.journeyReports) {
+                        temporary.outputStream().use { out -> de.luca.mitfahrt.data.backup.BackupWriter.write(
+                            out, app.archive.state.value, File(app.filesDir, "reports"), Instant.now()) }
+                    }
+                    (app.contentResolver.openOutputStream(target, "wt") ?: error("Speicherort nicht verfügbar")).use { out ->
+                        temporary.inputStream().use { it.copyTo(out) }
+                    }
+                    counts
+                } finally {
+                    temporary.delete()
                 }
             }
             backupState.value = "Gesichert: ${counts["rides"]} Fahrten, ${counts["reports"]} Berichte, ${counts["exports"]} PDFs"
         } catch (e: CancellationException) { throw e
+        } catch (e: de.luca.mitfahrt.data.backup.BackupException) { backupState.value = e.message
         } catch (_: Exception) { backupState.value = "Die Sicherung konnte nicht geschrieben werden." }
         finally { backupBusyState.value = false }
     } }
@@ -596,12 +607,17 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
             val result = withContext(Dispatchers.IO) {
                 // Everything is read and checked before anything is written.
                 val contents = (app.contentResolver.openInputStream(source) ?: error("Datei nicht lesbar")).use {
-                    de.luca.mitfahrt.data.backup.BackupReader.read(it, Instant.now())
+                    de.luca.mitfahrt.data.backup.BackupReader.read(it)
                 }
                 val rides = app.archive.importEntries(contents.archive)
-                de.luca.mitfahrt.data.backup.BackupMerge.reports(contents, java.io.File(app.filesDir, "reports")).copy(rides = rides)
+                synchronized(app.journeyReports) {
+                    try {
+                        de.luca.mitfahrt.data.backup.BackupMerge.reports(contents, File(app.filesDir, "reports")).copy(rides = rides)
+                    } finally {
+                        app.journeyReports.reload()
+                    }
+                }
             }
-            app.journeyReports.reload()
             reportState.value = reportState.value.copy(entries = withContext(Dispatchers.IO) { app.reports.list() })
             backupState.value = "Übernommen: ${result.rides} Fahrten, ${result.reports} Berichte, ${result.exports} PDFs, ${result.legacy} ältere Belege" +
                 if (result.skipped > 0) ". ${result.skipped} schon vorhanden oder neuer auf dem Gerät." else "."

@@ -60,25 +60,38 @@ object BackupWriter {
     fun write(out: OutputStream, archive: JourneyArchiveState, reportsDir: File, now: Instant): Map<String, Int> {
         val counts = linkedMapOf("rides" to archive.entries.size, "reports" to 0, "exports" to 0, "legacy" to 0)
         ZipOutputStream(out).use { zip ->
+            var entries = 0
+            var size = 0L
+            fun limit(name: String) = if (name.endsWith(".json")) BackupFormat.MAX_JSON_BYTES else BackupFormat.MAX_FILE_BYTES
             fun put(name: String, bytes: ByteArray) {
                 check(BackupFormat.allowed(name)) { name }
+                if (++entries > BackupFormat.MAX_ENTRIES || bytes.size > limit(name) ||
+                    size + bytes.size > BackupFormat.MAX_TOTAL_BYTES) throw BackupException("Die Sicherung ist zu groß.")
+                size += bytes.size
                 zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry()
+            }
+            fun putFile(name: String, file: File) {
+                if (file.length() > limit(name)) throw BackupException("Die Sicherung ist zu groß.")
+                put(name, file.readBytes())
             }
             put("archive.json", JourneyArchive.encode(archive).toByteArray())
             val journeys = File(reportsDir, "journeys")
             journeys.listFiles().orEmpty().filter { it.isFile && BackupFormat.JOURNEY.matches("reports/journeys/${it.name}") }.forEach { json ->
-                put("reports/journeys/${json.name}", json.readBytes()); counts["reports"] = counts["reports"]!! + 1
+                putFile("reports/journeys/${json.name}", json); counts["reports"] = counts["reports"]!! + 1
                 File(journeys, json.nameWithoutExtension).listFiles().orEmpty().filter { it.isFile }.forEach { file ->
                     val name = "reports/journeys/${json.nameWithoutExtension}/${file.name}"
                     if (BackupFormat.allowed(name) && !name.endsWith(".tmp")) {
-                        put(name, file.readBytes()); if (file.extension == "pdf") counts["exports"] = counts["exports"]!! + 1
+                        putFile(name, file); if (file.extension == "pdf") counts["exports"] = counts["exports"]!! + 1
                     }
                 }
             }
             reportsDir.listFiles().orEmpty().filter { it.isFile }.forEach { file ->
                 val name = "reports/${file.name}"
-                if (BackupFormat.LEGACY.matches(name) || BackupFormat.LEGACY_PDF.matches(name)) {
-                    put(name, file.readBytes()); if (file.extension == "json") counts["legacy"] = counts["legacy"]!! + 1
+                if (BackupFormat.LEGACY.matches(name)) {
+                    putFile(name, file)
+                    counts["legacy"] = counts["legacy"]!! + 1
+                    val pdf = File(reportsDir, "Mitfahrt-${file.nameWithoutExtension}.pdf")
+                    if (pdf.isFile) putFile("reports/${pdf.name}", pdf)
                 }
             }
             put("manifest.json", JSONObject().apply {
@@ -95,15 +108,14 @@ object BackupReader {
      * Reads and checks the whole file in memory. Any unknown or manipulated path, an oversized
      * entry, a broken JSON or a PDF without PDF header rejects the backup as a whole.
      */
-    fun read(input: InputStream, now: Instant): BackupContents {
+    fun read(input: InputStream): BackupContents {
         val files = linkedMapOf<String, ByteArray>()
         var total = 0L
         ZipInputStream(input).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                if (entry.isDirectory) continue
                 val name = entry.name
-                if (!BackupFormat.allowed(name)) throw BackupException("Die Datei enthält unerwartete Einträge.")
+                if (entry.isDirectory || !BackupFormat.allowed(name)) throw BackupException("Die Datei enthält unerwartete Einträge.")
                 if (name in files) throw BackupException("Die Datei enthält doppelte Einträge.")
                 if (files.size >= BackupFormat.MAX_ENTRIES) throw BackupException("Die Sicherung ist zu groß.")
                 val limit = if (name.endsWith(".json")) BackupFormat.MAX_JSON_BYTES else BackupFormat.MAX_FILE_BYTES
@@ -122,7 +134,8 @@ object BackupReader {
         if (manifest.optInt("version") !in 1..BackupFormat.VERSION) throw BackupException("Diese Sicherung stammt aus einer neueren App-Version.")
         val created = runCatching { Instant.parse(manifest.getString("createdAt")) }.getOrElse { throw BackupException("Die Sicherung ist beschädigt.") }
         fun text(bytes: ByteArray) = String(bytes, Charsets.UTF_8)
-        val archive = files["archive.json"]?.let { JourneyArchive.decode(text(it), now).entries }.orEmpty()
+        val archive = runCatching { JourneyArchive.decodeBackup(text(files.getValue("archive.json"))) }
+            .getOrElse { throw BackupException("Das Fahrtenarchiv in der Sicherung ist beschädigt.") }
         val reports = files.filterKeys { BackupFormat.JOURNEY.matches(it) }.map { (name, bytes) ->
             val report = runCatching { JourneyReport.decode(text(bytes)) }.getOrElse { throw BackupException("Ein Bericht in der Sicherung ist beschädigt.") }
             if (BackupFormat.JOURNEY.matchEntire(name)!!.groupValues[1] != report.id) throw BackupException("Ein Bericht passt nicht zu seinem Dateinamen.")
@@ -131,7 +144,9 @@ object BackupReader {
         val exports = linkedMapOf<String, MutableMap<String, ByteArray>>()
         files.forEach { (name, bytes) ->
             BackupFormat.JOURNEY_EXPORT.matchEntire(name)?.let { match ->
-                runCatching { JourneyReport.decode(text(bytes)) }.getOrElse { throw BackupException("Ein PDF-Stand in der Sicherung ist beschädigt.") }
+                val frozen = runCatching { JourneyReport.decode(text(bytes)) }
+                    .getOrElse { throw BackupException("Ein PDF-Stand in der Sicherung ist beschädigt.") }
+                if (frozen.id != match.groupValues[1]) throw BackupException("Ein PDF-Stand passt nicht zu seinem Bericht.")
                 exports.getOrPut(match.groupValues[1]) { linkedMapOf() }[name.substringAfterLast('/')] = bytes
             }
             BackupFormat.JOURNEY_PDF.matchEntire(name)?.let { match ->
@@ -146,6 +161,9 @@ object BackupReader {
             val pdf = files["reports/Mitfahrt-${evidence.id}.pdf"]?.also { if (!isPdf(it)) throw BackupException("Eine PDF in der Sicherung ist beschädigt.") }
             evidence to pdf
         }
+        if (files.keys.any { name -> BackupFormat.LEGACY_PDF.matchEntire(name)?.let { match ->
+            legacy.none { (evidence, _) -> evidence.id == match.groupValues[1] }
+        } == true }) throw BackupException("Zu einer PDF fehlt der ältere Beleg.")
         return BackupContents(created, archive, reports, exports, legacy)
     }
 
