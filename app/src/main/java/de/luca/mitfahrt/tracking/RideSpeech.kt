@@ -83,7 +83,11 @@ class RideSpeech(private val context: Context) {
     }
 
     fun situation(): AudioSituation {
-        val outputs = runCatching { audio?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.map { it.type } }.getOrNull().orEmpty()
+        val routingAvailable = Build.VERSION.SDK_INT >= 33
+        val outputs = runCatching {
+            if (Build.VERSION.SDK_INT >= 33) audio?.getAudioDevicesForAttributes(attributes)?.map { it.type }
+            else audio?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.map { it.type }
+        }.getOrNull().orEmpty()
         val headphoneTypes = buildSet {
             addAll(listOf(AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET,
                 AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_USB_HEADSET))
@@ -91,7 +95,9 @@ class RideSpeech(private val context: Context) {
         }
         val mode = audio?.mode ?: AudioManager.MODE_NORMAL
         val filter = runCatching { context.getSystemService(android.app.NotificationManager::class.java)?.currentInterruptionFilter }.getOrNull()
-        return AudioSituation(outputs.any { it in headphoneTypes },
+        val headphones = if (routingAvailable) outputs.isNotEmpty() && outputs.all { it in headphoneTypes }
+            else outputs.any { it in headphoneTypes }
+        return AudioSituation(headphones,
             mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION,
             filter != null && filter != android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
     }
@@ -145,6 +151,10 @@ class RideSpeech(private val context: Context) {
         if (!noisyRegistered) noisyRegistered = runCatching {
             context.registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         }.isSuccess
+        if (!noisyRegistered && speech.route == SpeechRoute.HEADPHONES) {
+            release()
+            return
+        }
         val id = "mitfahrt-${++utterance}"
         activeUtterance = id
         if (engine.speak(speech.text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) release()
