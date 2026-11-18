@@ -252,4 +252,48 @@ class PlannerScreenshotTest {
         compose.setContent { MitfahrtTheme { TemplateEditorScreen(settings, { _, _ -> }, {}) } }
         capture("13-eigene-texte")
     }
+
+    // --- 0.21 additions, synthetic data ---
+
+    private fun archiveSample(): JourneyArchiveState = (0L..9L).fold(JourneyArchiveState()) { state, day ->
+        val ride = RouteFixtures.ride(delaySeconds = if (day % 3 == 0L) null else day * 50, stops = RouteFixtures.stops(RouteFixtures.T0.plusSeconds(day * 86_400 / 2)))
+            .let { it.copy(departure = it.departure.copy(tripCode = "t$day"), trackingStartedAt = it.departure.planned) }
+        JourneyArchive.record(state, ride, ride.trackingStartedAt!!)
+    }
+
+    @Test fun `punctuality`() {
+        compose.setContent { MitfahrtTheme { Box(Modifier.fillMaxSize().background(Ink)) {
+            PunctualityScreen(archiveSample().entries, emptyList(), java.time.LocalDate.of(2026, 11, 14)) } } }
+        capture("14-puenktlichkeit")
+    }
+
+    @Config(qualifiers = "+night")
+    @Test fun `archive calendar dark`() {
+        compose.setContent { MitfahrtTheme { Box(Modifier.fillMaxSize().background(Ink)) {
+            JourneyArchiveScreen(archiveSample(), java.time.LocalDate.of(2026, 11, 14), { null }, { 0 }, {}, {}, {}, startInCalendar = true) } } }
+        capture("15-archiv-kalender-dunkel")
+    }
+
+    @Config(qualifiers = "w320dp-h900dp-xxhdpi")
+    @Test fun `archive calendar narrow with large font`() {
+        org.robolectric.RuntimeEnvironment.setFontScale(1.5f)
+        compose.setContent { MitfahrtTheme { Box(Modifier.fillMaxSize().background(Ink)) {
+            JourneyArchiveScreen(archiveSample(), java.time.LocalDate.of(2026, 11, 14), { null }, { 0 }, {}, {}, {}, startInCalendar = true) } } }
+        capture("15-archiv-kalender-schmal-grosse-schrift")
+    }
+
+    @Test fun `report layouts`() {
+        val layout = de.luca.mitfahrt.reports.ReportLayout("aaaaaaaa-0000-4000-8000-000000000001", "Gymnasium", listOf("Max Muster"), "Gymnasium Odenkirchen", "9c")
+        compose.setContent { MitfahrtTheme { ReportLayoutsScreen(listOf(layout), layout.id, { layout }, {}, {}, {}, {}) } }
+        capture("16-berichtslayouts")
+    }
+
+    @Test fun `journey report with layout choice`() {
+        val layout = de.luca.mitfahrt.reports.ReportLayout("aaaaaaaa-0000-4000-8000-000000000001", "Gymnasium", listOf("Max Muster", "Musterweg 1"), "Gymnasium Odenkirchen", "9c")
+        compose.setContent { MitfahrtTheme {
+            JourneyReportScreen(reportSample, de.luca.mitfahrt.reports.ReportLayouts.apply(de.luca.mitfahrt.reports.ReportCustomization(), layout),
+                t0.plusSeconds(1300), false, {}, {}, {}, {}, {}, {}, {}, layouts = listOf(layout), selectedLayout = layout.id, onEditLayouts = {})
+        } }
+        capture("17-bericht-mit-layout")
+    }
 }

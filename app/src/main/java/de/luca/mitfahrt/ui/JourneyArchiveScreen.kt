@@ -48,6 +48,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,7 +82,8 @@ fun JourneyArchiveScreen(
     onEnabled: (Boolean) -> Unit,
     onRetentionDays: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    onReport: ((de.luca.mitfahrt.data.Ride) -> Unit)? = null
+    onReport: ((de.luca.mitfahrt.data.Ride) -> Unit)? = null,
+    startInCalendar: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -92,7 +96,7 @@ fun JourneyArchiveScreen(
     var detail by remember { mutableStateOf<ArchivedJourney?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
-    var calendar by rememberSaveable { mutableStateOf(false) }
+    var calendar by rememberSaveable { mutableStateOf(startInCalendar) }
     var month by remember { mutableStateOf(java.time.YearMonth.from(today)) }
 
     val allLines = JourneyArchive.lines(state.entries)
@@ -295,9 +299,12 @@ private fun ArchiveCalendarView(entries: List<ArchivedJourney>, month: java.time
     val title = month.atDay(1).format(java.time.format.DateTimeFormatter.ofPattern("LLLL yyyy", java.util.Locale.GERMANY))
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { onMonth(month.minusMonths(1)) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Zurück") }
-            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            TextButton(onClick = { onMonth(month.plusMonths(1)) }, enabled = month < java.time.YearMonth.from(today), modifier = Modifier.heightIn(min = 48.dp)) { Text("Weiter") }
+            IconButton(onClick = { onMonth(month.minusMonths(1)) }, modifier = Modifier.size(48.dp)) {
+                Icon(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Vorheriger Monat") }
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            IconButton(onClick = { onMonth(month.plusMonths(1)) }, enabled = month < java.time.YearMonth.from(today), modifier = Modifier.size(48.dp)) {
+                Icon(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Nächster Monat") }
         }
         Row(Modifier.fillMaxWidth()) {
             listOf("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So").forEach {
