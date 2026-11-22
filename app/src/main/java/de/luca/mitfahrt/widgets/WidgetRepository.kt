@@ -4,9 +4,11 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import de.luca.mitfahrt.MitfahrtApplication
+import de.luca.mitfahrt.data.CustomizationPolicy
 import de.luca.mitfahrt.data.Departure
 import de.luca.mitfahrt.data.PlannedJourneyLoader
 import de.luca.mitfahrt.data.Ride
+import de.luca.mitfahrt.data.RouteMatch
 import de.luca.mitfahrt.data.RoutePlan
 import de.luca.mitfahrt.data.Stop
 import de.luca.mitfahrt.data.VrrClient
@@ -33,6 +35,32 @@ internal class WidgetRepository(private val context: Context) {
 
     fun route(id: String): RoutePlan? = app.routePlans.current().routes.firstOrNull { it.id == id }
 
+    /** Picks the currently active route respecting school calendar, day overrides, and optional 30-min flip. */
+    fun selectSmartRoute(now: Instant, flippedRouteId: String? = null): RoutePlan? {
+        val routes = app.routePlans.current().routes
+        if (routes.isEmpty()) return null
+        if (!flippedRouteId.isNullOrBlank()) {
+            routes.firstOrNull { it.id == flippedRouteId && it.enabled }?.let { return it }
+        }
+        val settings = app.settingsStore.current()
+        val overrides = app.dayOverrides.current()
+        val calendar = app.schoolCalendar.state.value
+        return routes.firstOrNull { plan ->
+            CustomizationPolicy.active(plan, now, emptyList(), settings, overrides, calendar)
+        }
+    }
+
+    /** Finds the next route to flip to when tapping the SMART_ROUTE header (alternateRouteId or next enabled route). */
+    fun nextSmartFlipRoute(now: Instant, currentFlippedId: String?): RoutePlan? {
+        val routes = app.routePlans.current().routes.filter { it.enabled }
+        if (routes.size < 2) return null
+        val current = selectSmartRoute(now, currentFlippedId)
+        val explicitAlternate = current?.alternateRouteId?.let { altId -> routes.firstOrNull { it.id == altId } }
+        if (explicitAlternate != null && explicitAlternate.id != current.id) return explicitAlternate
+        val idx = routes.indexOfFirst { it.id == current?.id }
+        return routes[(idx + 1) % routes.size]
+    }
+
     fun isOnline(): Boolean = runCatching {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return true
         val network = manager.activeNetwork ?: return false
@@ -40,17 +68,63 @@ internal class WidgetRepository(private val context: Context) {
         manager.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }.getOrDefault(true)
 
-    /** Returns a new snapshot; on failure the previous data is kept and marked. */
-    suspend fun fetch(config: WidgetConfig, previous: WidgetSnapshot, now: Instant): WidgetSnapshot = try {
+    /** Returns a new snapshot; on failure falls back to local OfflineBoards when available, or keeps previous data. */
+    suspend fun fetch(config: WidgetConfig, previous: WidgetSnapshot, now: Instant, flippedRouteId: String? = null): WidgetSnapshot = try {
         when (config.kind) {
             WidgetKind.STOP -> stop(config, now)
             WidgetKind.ROUTE -> route(config, previous, now)
+            WidgetKind.SMART_ROUTE -> smartRoute(previous, now, flippedRouteId)
             WidgetKind.ACTIVE -> active(previous, now)
         }
     } catch (error: CancellationException) {
         throw error
     } catch (error: Exception) {
-        previous.copy(failure = classify(error), failedAt = now)
+        val failure = classify(error)
+        offlineFallback(config, now, failure, flippedRouteId) ?: previous.copy(failure = failure, failedAt = now)
+    }
+
+    /** Explicit offline board fallback callable even when [isOnline] is already known to be false. */
+    fun offlineFallback(config: WidgetConfig, now: Instant, failure: FetchFailure = FetchFailure.OFFLINE, flippedRouteId: String? = null): WidgetSnapshot? {
+        return when (config.kind) {
+            WidgetKind.STOP -> {
+                val board = app.offlineBoards.getById(config.targetId, now.atZone(java.time.ZoneId.of("Europe/Berlin")).toLocalDate()) ?: return null
+                val deps = board.asDepartures(Stop(config.targetId, config.targetName), now).take(12)
+                if (deps.isEmpty()) null else WidgetSnapshot(
+                    fetchedAt = board.savedAt, departures = deps, failure = failure, failedAt = now, offlineFallback = true
+                )
+            }
+            WidgetKind.ROUTE -> {
+                val plan = route(config.targetId) ?: return null
+                offlineForPlan(plan, now, failure)
+            }
+            WidgetKind.SMART_ROUTE -> {
+                val plan = selectSmartRoute(now, flippedRouteId) ?: return WidgetSnapshot(
+                    fetchedAt = now, smartEmptyReason = "Heute keine geplante Fahrt"
+                )
+                offlineForPlan(plan, now, failure)
+            }
+            WidgetKind.ACTIVE -> null
+        }
+    }
+
+    private fun offlineForPlan(plan: RoutePlan, now: Instant, failure: FetchFailure): WidgetSnapshot? {
+        val board = app.offlineBoards.getById(plan.origin.id, now.atZone(java.time.ZoneId.of("Europe/Berlin")).toLocalDate()) ?: return null
+        val allowed = (plan.allowedLines + plan.line).map { it.trim() }.filter { it.isNotBlank() }
+        val deps = board.asDepartures(plan.origin, now).filter { dep ->
+            plan.match == RouteMatch.STOP || allowed.isEmpty() || allowed.any { it.equals(dep.line, true) }
+        }.take(12)
+        if (deps.isEmpty()) return null
+        return WidgetSnapshot(
+            fetchedAt = board.savedAt,
+            departures = deps,
+            failure = failure,
+            failedAt = now,
+            offlineFallback = true,
+            resolvedRouteId = plan.id,
+            resolvedRouteName = plan.name,
+            resolvedWalkMinutes = plan.walkingMinutes,
+            resolvedBufferMinutes = plan.bufferMinutes
+        )
     }
 
     private suspend fun stop(config: WidgetConfig, now: Instant): WidgetSnapshot {
@@ -66,12 +140,39 @@ internal class WidgetRepository(private val context: Context) {
 
     private suspend fun route(config: WidgetConfig, previous: WidgetSnapshot, now: Instant): WidgetSnapshot {
         val plan = route(config.targetId) ?: return WidgetSnapshot(targetMissing = true)
+        return fetchPlan(plan, previous, now)
+    }
+
+    private suspend fun smartRoute(previous: WidgetSnapshot, now: Instant, flippedRouteId: String?): WidgetSnapshot {
+        val plan = selectSmartRoute(now, flippedRouteId) ?: return WidgetSnapshot(
+            fetchedAt = now,
+            departures = emptyList(),
+            smartEmptyReason = "Heute keine geplante Fahrt"
+        )
+        return fetchPlan(plan, previous, now)
+    }
+
+    private suspend fun fetchPlan(plan: RoutePlan, previous: WidgetSnapshot, now: Instant): WidgetSnapshot {
         // Reuses the app's checked route logic: only trips that really reach the destination.
         val result = loader.load(listOf(plan), now)
         val departures = result.departures[plan.id].orEmpty()
-        if (result.failed > 0 && departures.isEmpty())
-            return previous.copy(failure = FetchFailure.SOURCE, failedAt = now, targetMissing = false)
-        return WidgetSnapshot(fetchedAt = now, departures = departures, partial = result.failed > 0)
+        if (result.failed > 0 && departures.isEmpty()) {
+            return offlineForPlan(plan, now, FetchFailure.SOURCE)
+                ?: previous.copy(
+                    failure = FetchFailure.SOURCE, failedAt = now, targetMissing = false,
+                    resolvedRouteId = plan.id, resolvedRouteName = plan.name,
+                    resolvedWalkMinutes = plan.walkingMinutes, resolvedBufferMinutes = plan.bufferMinutes
+                )
+        }
+        return WidgetSnapshot(
+            fetchedAt = now,
+            departures = departures,
+            partial = result.failed > 0,
+            resolvedRouteId = plan.id,
+            resolvedRouteName = plan.name,
+            resolvedWalkMinutes = plan.walkingMinutes,
+            resolvedBufferMinutes = plan.bufferMinutes
+        )
     }
 
     private suspend fun active(previous: WidgetSnapshot, now: Instant): WidgetSnapshot {

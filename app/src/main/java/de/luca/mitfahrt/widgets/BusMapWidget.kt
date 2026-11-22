@@ -171,12 +171,36 @@ internal class OsmCachedTileReader(
  * (strictly capped, cached on disk, proper User-Agent) so the map never has blank gaps.
  */
 internal object WidgetTilePrefetcher {
-    private const val MAX_TILES_PER_BATCH = 12
-    private const val MAX_CACHE_FILES = 96
+    private const val MAX_TILES_PER_BATCH = 16
+    private const val MAX_CACHE_FILES = 220
     private const val RETRY_COOLDOWN_MS = 30_000L
     private val recentAttempts = ConcurrentHashMap<TileCoord, Long>()
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mitfahrt-widget-tiles").apply { isDaemon = true }
+    }
+
+    /** Computes distinct OSM tile coordinates along a verified route corridor (capped at 16 tiles). */
+    fun corridorTiles(points: List<GeoPoint>, zoom: Int = 15): List<TileCoord> {
+        if (points.isEmpty()) return emptyList()
+        val z = zoom.coerceIn(13, 16)
+        val n = 1 shl z
+        return points.asSequence()
+            .filter(Geo::valid)
+            .map { pt ->
+                val x = floor(((pt.lon + 180.0) / 360.0) * n).toInt().coerceIn(0, n - 1)
+                val latRad = Math.toRadians(pt.lat.coerceIn(-85.05112878, 85.05112878))
+                val y = floor((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
+                TileCoord(z, x, y)
+            }
+            .distinct()
+            .take(MAX_TILES_PER_BATCH)
+            .toList()
+    }
+
+    /** One-time background corridor tile prefetch when a verified RouteShape arrives. */
+    fun prefetchCorridor(context: Context, points: List<GeoPoint>, zoom: Int = 15, onLoaded: () -> Unit = {}) {
+        val tiles = corridorTiles(points, zoom)
+        if (tiles.isNotEmpty()) prefetch(context, tiles, onLoaded)
     }
 
     fun prefetch(context: Context, missing: List<TileCoord>, onLoaded: () -> Unit) {

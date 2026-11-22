@@ -179,4 +179,106 @@ object JourneyReportText {
         blocks += ReportBlock.Small("Bericht ${report.id.take(8)} · Stand ${JourneyReport.day(generatedAt)} ${JourneyReport.clockSeconds(generatedAt)}")
         return blocks
     }
+
+    /** Compact 3-4 line plain text for quick copy/share (e.g. WhatsApp/Messenger to school or employer). */
+    fun shortMessage(report: JourneyReport): String = buildString {
+        val transit = report.transit
+        val first = transit.firstOrNull()
+        val lineStr = if (transit.isNotEmpty()) transit.joinToString(", ") { "Linie ${it.line}" } else "ÖPNV"
+        appendLine("${JourneyReport.day(report.serviceDay)} · $lineStr (${shortName(report.originName)} -> ${shortName(report.destinationName)})")
+        val firstOrigin = first?.origin
+        val planned = clock(firstOrigin?.plannedDeparture)
+        val forecast = clock(firstOrigin?.forecastDeparture ?: firstOrigin?.forecastArrival)
+        val cancelled = report.events(ReportEventType.CANCELLED).isNotEmpty() || transit.any { it.cancelled }
+        when {
+            cancelled -> appendLine("Status: Ausfall gemeldet (laut VRR-Live-Daten).")
+            planned != null && forecast != null -> {
+                val diff = delta(firstOrigin?.plannedDeparture, firstOrigin?.forecastDeparture ?: firstOrigin?.forecastArrival)
+                appendLine("Einstieg: Plan $planned Uhr, VRR-Prognose $forecast Uhr ($diff).")
+            }
+            else -> appendLine("Status: ${headline(report)}.")
+        }
+        val own = report.events(ReportEventType.OBSERVATION)
+        if (own.isNotEmpty()) {
+            appendLine("Eigene Angabe: ${own.joinToString("; ") { it.text }}")
+        }
+        append("Quelle: VRR-Echtzeitdaten, dokumentiert mit Mitfahrt.")
+    }
+
+    /** Local punctuality stats over saved journey reports (purely on-device, never transmitted). */
+    fun punctuality(reports: List<JourneyReport>, windowDays: Int = 30, now: Instant = Instant.now()): PunctualitySummary {
+        val cutoff = now.minusSeconds(windowDays.coerceIn(1, 365) * 86_400L)
+        val recent = reports.filter { it.updatedAt >= cutoff || it.serviceDay >= cutoff }
+        var delayed3 = 0
+        var delayed5 = 0
+        var cancelled = 0
+        val delays = mutableListOf<Int>()
+        recent.forEach { report ->
+            val isCancelled = report.events.any { it.type == ReportEventType.CANCELLED } || report.transit.any { it.cancelled }
+            if (isCancelled) {
+                cancelled++
+                return@forEach
+            }
+            val worstSec = report.transit.flatMap { leg ->
+                leg.stops.mapNotNull { stop ->
+                    val p = stop.plannedArrival ?: stop.plannedDeparture
+                    val f = stop.forecastArrival ?: stop.forecastDeparture
+                    if (p == null || f == null) null else f.epochSecond - p.epochSecond
+                }
+            }.maxOrNull()
+            if (worstSec != null) {
+                val mins = (worstSec / 60).toInt()
+                delays += mins.coerceAtLeast(0)
+                if (mins >= 3) delayed3++
+                if (mins >= 5) delayed5++
+            }
+        }
+        val sorted = delays.sorted()
+        val median = if (sorted.isEmpty()) null else sorted[sorted.size / 2]
+        return PunctualitySummary(
+            totalReports = recent.size,
+            delayed3Plus = delayed3,
+            delayed5Plus = delayed5,
+            cancelled = cancelled,
+            medianDelayMinutes = median
+        )
+    }
+
+    /** Builds a combined PDF summary across multiple reports (e.g. last 30 days for school or employer). */
+    fun summaryPdfBlocks(reports: List<JourneyReport>, title: String, generatedAt: Instant): List<ReportBlock> {
+        val blocks = mutableListOf<ReportBlock>()
+        val stats = punctuality(reports, windowDays = 365, now = generatedAt)
+        blocks += ReportBlock.Title("Sammelbericht", title)
+        blocks += ReportBlock.Heading("Übersicht")
+        blocks += ReportBlock.Field("Erfasste Fahrten", "${stats.totalReports}")
+        blocks += ReportBlock.Field("Verspätungen ab 3 Min", "${stats.delayed3Plus}")
+        blocks += ReportBlock.Field("Verspätungen ab 5 Min", "${stats.delayed5Plus}")
+        blocks += ReportBlock.Field("Ausfälle gemeldet", "${stats.cancelled}")
+        stats.medianDelayMinutes?.let { blocks += ReportBlock.Field("Typische Abweichung (Median)", "+$it Min") }
+        blocks += ReportBlock.Heading("Einzelfahrten")
+        reports.sortedByDescending { it.serviceDay }.forEach { report ->
+            blocks += ReportBlock.LegHeader(
+                "${JourneyReport.day(report.serviceDay)} · ${report.title}",
+                listOfNotNull(
+                    report.lines.takeIf { it.isNotBlank() }?.let { "Linie $it" },
+                    headline(report)
+                ).joinToString(" · ")
+            )
+            val own = report.events(ReportEventType.OBSERVATION)
+            if (own.isNotEmpty()) {
+                blocks += ReportBlock.Small("Eigene Angabe: ${own.joinToString("; ") { it.text }}")
+            }
+        }
+        blocks += ReportBlock.Small("Privat mit der App Mitfahrt erstellt (lokale VRR-Auswertung, keine offizielle Bescheinigung).")
+        blocks += ReportBlock.Small("Stand ${JourneyReport.day(generatedAt)} ${JourneyReport.clockSeconds(generatedAt)}")
+        return blocks
+    }
 }
+
+data class PunctualitySummary(
+    val totalReports: Int,
+    val delayed3Plus: Int,
+    val delayed5Plus: Int,
+    val cancelled: Int,
+    val medianDelayMinutes: Int?
+)

@@ -187,6 +187,25 @@ class JourneyReportStore(private val directory: File, private val options: () ->
 
     fun exportFile(id: String, export: ReportExport): File? = File(exportFolder(id), export.fileName).takeIf { it.isFile }
 
+    /** Exports a combined Sammel-PDF across multiple saved reports. */
+    @Synchronized fun exportBatch(reports: List<JourneyReport>, title: String): File {
+        require(reports.isNotEmpty()) { "Keine Berichte vorhanden." }
+        val now = clock()
+        val folder = File(directory, "batch").apply { check(isDirectory || mkdirs()) { "Sammelbericht konnte nicht gespeichert werden." } }
+        val stamp = JourneyReport.day(now).replace('.', '-') + "-" + now.epochSecond
+        val target = File(folder, "Sammelbericht-$stamp.pdf")
+        val temporary = File(folder, "${target.name}.tmp")
+        try {
+            writer(JourneyReportText.summaryPdfBlocks(reports, title, now), temporary)
+            check(temporary.renameTo(target)) { "Sammelbericht konnte nicht gespeichert werden." }
+        } catch (e: Exception) {
+            temporary.delete()
+            errorState.value = "Der Sammelbericht konnte nicht erstellt werden."
+            throw e
+        }
+        return target
+    }
+
     @Synchronized fun delete(id: String): Boolean {
         val json = file(id)
         val folder = exportFolder(id)

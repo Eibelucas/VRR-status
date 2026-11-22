@@ -65,31 +65,57 @@ class RideNotifications(private val context: Context) {
         if (!lockscreenDetails) builder.setPublicVersion(Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_bus).setContentTitle("Mitfahrt").setContentText("Aktive Fahrt")
             .setVisibility(Notification.VISIBILITY_PUBLIC).build())
+        val app = context.applicationContext as? de.luca.mitfahrt.MitfahrtApplication
+        val handoff = state.transferHandoff
+        if (ride == null && handoff != null) {
+            val nextLegIntent = PendingIntent.getService(context, 7, Intent(context, RideService::class.java)
+                .setAction(RideService.START_NEXT_LEG), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val platform = PlatformHubHelper.formatPlatform(handoff.nextPlatform)
+            val dep = handoff.nextDepartureAt?.let { "um ${clockTime(it)}" }
+            val info = listOfNotNull("ab ${handoff.nextStopName}", dep, platform).joinToString(" · ")
+            builder.addAction(Notification.Action.Builder(null, handoff.label, nextLegIntent).build())
+            builder.addAction(Notification.Action.Builder(null, "Beenden", stop).build())
+            return builder.setContentTitle("Umstieg: ${handoff.nextLine} -> ${handoff.nextDestination}")
+                .setContentText(info)
+                .setStyle(Notification.BigTextStyle().bigText("$info\nTippe auf „${handoff.label}“, um den nächsten Abschnitt direkt zu begleiten."))
+                .build() to emptyList()
+        }
         var stopAdded = false
-        settings.string("notification_actions", "board,arrival,stop").split(',').map(String::trim)
-            .distinct().filter { it in setOf("board", "arrival", "map", "stop") }.take(3).forEach { action ->
-                when (action) {
-                    "board" -> if (ride != null && !ride.boarded && !ride.departure.cancelled) {
-                        val pending = PendingIntent.getService(context, 2, Intent(context, RideService::class.java)
-                            .setAction(RideService.BOARD), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                        builder.addAction(Notification.Action.Builder(null, "Bin im Bus", pending).build())
-                    }
-                    "arrival" -> if (ride != null && !ride.demo) {
-                        val pending = PendingIntent.getService(context, 3, Intent(context, RideService::class.java)
-                            .setAction(RideService.MARK_ARRIVAL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                        builder.addAction(Notification.Action.Builder(null, "Ankunft merken", pending).build())
-                    }
-                    "map" -> if (ride != null && !ride.demo) {
-                        val pending = PendingIntent.getActivity(context, 4, Intent(context, MainActivity::class.java)
-                            .putExtra("open_live_map", true), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                        builder.addAction(Notification.Action.Builder(null, "Karte", pending).build())
-                    }
-                    "stop" -> {
-                        stopAdded = true
-                        builder.addAction(Notification.Action.Builder(null, "Beenden", stop).build())
+        if (ride != null && !ride.boarded && !ride.demo && !ride.departure.cancelled && state.missedBusPrompt) {
+            val passed = PendingIntent.getService(context, 8, Intent(context, RideService::class.java)
+                .setAction(RideService.MISSED_PASSED), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val full = PendingIntent.getService(context, 9, Intent(context, RideService::class.java)
+                .setAction(RideService.MISSED_FULL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(Notification.Action.Builder(null, "Durchgefahren", passed).build())
+            builder.addAction(Notification.Action.Builder(null, "Zu voll", full).build())
+            builder.addAction(Notification.Action.Builder(null, "Beenden", stop).build())
+            stopAdded = true
+        } else {
+            settings.string("notification_actions", "board,arrival,stop").split(',').map(String::trim)
+                .distinct().filter { it in setOf("board", "arrival", "map", "stop") }.take(3).forEach { action ->
+                    when (action) {
+                        "board" -> if (ride != null && !ride.boarded && !ride.departure.cancelled) {
+                            val pending = PendingIntent.getService(context, 2, Intent(context, RideService::class.java)
+                                .setAction(RideService.BOARD), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                            builder.addAction(Notification.Action.Builder(null, "Bin im Bus", pending).build())
+                        }
+                        "arrival" -> if (ride != null && !ride.demo) {
+                            val pending = PendingIntent.getService(context, 3, Intent(context, RideService::class.java)
+                                .setAction(RideService.MARK_ARRIVAL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                            builder.addAction(Notification.Action.Builder(null, "Ankunft merken", pending).build())
+                        }
+                        "map" -> if (ride != null && !ride.demo) {
+                            val pending = PendingIntent.getActivity(context, 4, Intent(context, MainActivity::class.java)
+                                .putExtra("open_live_map", true), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                            builder.addAction(Notification.Action.Builder(null, "Karte", pending).build())
+                        }
+                        "stop" -> {
+                            stopAdded = true
+                            builder.addAction(Notification.Action.Builder(null, "Beenden", stop).build())
+                        }
                     }
                 }
-            }
+        }
         if (ride == null && !stopAdded) builder.addAction(Notification.Action.Builder(null, "Beenden", stop).build())
         if (ride == null) {
             val title = when (state.wifi) {
@@ -111,6 +137,19 @@ class RideNotifications(private val context: Context) {
         val remaining = if (waiting) waitingTime?.let { minutesUntil(it.at, now) }
             else if (!ride.isStale(now) && !state.lastRefreshFailed && state.running)
                 ride.displayTarget().estimated?.let { minutesUntil(it, now) } else null
+        val matchingPlan = if (waiting) app?.routePlans?.current()?.routes?.let { LeaveCountdown.matchingRoute(ride, it) } else null
+        val freshLocation = state.location?.takeIf { state.locationAt?.let { at -> now.epochSecond - at.epochSecond in -30..90 } == true }
+        val leaveGuidance = if (waiting && waitingTime != null && !ride.departure.cancelled) {
+            LeaveCountdown.compute(
+                boardingAt = waitingTime.at,
+                cancelled = ride.departure.cancelled,
+                now = now,
+                plannedWalkMinutes = matchingPlan?.walkingMinutes ?: settings.int("routes_default_walk_minutes", 5),
+                bufferMinutes = matchingPlan?.bufferMinutes ?: settings.int("routes_default_buffer_minutes", 2),
+                liveLocation = freshLocation,
+                stopPoint = ride.stops.getOrNull(ride.boardingIndex)?.point
+            )?.takeIf { it.state != ReachabilityState.DEPARTED }
+        } else null
         val delay = DelayEvidence.timingFor(ride, ride.nextIndex(now).coerceAtMost(ride.stops.lastIndex))
             ?: DelayEvidence.timingFor(ride, ride.boardingIndex)
         val stale = ride.isStale(now) || state.lastRefreshFailed || !state.running
@@ -123,28 +162,58 @@ class RideNotifications(private val context: Context) {
             else -> "Fahrplan"
         }
         val headline = if (waiting) {
-            when {
+            val base = when {
                 ride.departure.cancelled -> "Bus fällt aus"
                 waitingTime == null -> "Keine Live-Zeit · Fahrplan ${clockTime(ride.stops.getOrNull(ride.boardingIndex)?.planned ?: ride.departure.planned)}"
                 !waitingTime.at.isAfter(now) -> "Bus wird erwartet"
                 else -> "${if (waitingTime.isArrival) "Bus kommt" else "Abfahrt"} in ${countdownUntil(waitingTime.at, now)}"
             }
+            val leaveChip = leaveGuidance?.chipLabel()?.takeIf { it.isNotBlank() }
+            if (leaveChip != null && waitingTime != null && waitingTime.at.isAfter(now)) "$leaveChip · $base" else base
         } else when {
             nextInfo?.source == NextStopSource.UNCERTAIN -> "Nächster Halt nicht sicher erkannt"
             next == null -> "Ziel laut Fahrtverlauf erreicht"
             nextInfo?.source == NextStopSource.GPS -> "Nächster Halt: ${shortName(next.name)} · per GPS"
             else -> "Nächster Halt: ${shortName(next.name)}"
         }
-        val fullTitle = "${if (ride.demo) "Demo · " else ""}${ride.departure.line} → ${shortName(ride.displayTarget().name)}"
+        val hubPlatform = if (waiting && PlatformHubHelper.isMultiPlatformHub(ride.departure.stopId, ride.departure.stopName)) {
+            PlatformHubHelper.formatPlatform(ride.departure.platform)
+        } else null
+        val fullTitle = listOfNotNull(
+            if (ride.demo) "Demo" else null,
+            hubPlatform,
+            "${ride.departure.line} -> ${shortName(ride.displayTarget().name)}"
+        ).joinToString(" · ")
         val mode = settings.string("nowbar_content", "full")
         val builtInTitle = when (mode) {
             "time" -> remaining?.let { "$it Min · Linie ${ride.departure.line}" } ?: "Linie ${ride.departure.line} · Keine Live-Zeit"
             "next" -> if (waiting) fullTitle else "${ride.departure.line} · ${shortName(next?.name.orEmpty())}"
             else -> fullTitle
         }
-        // Leg of an accompanied journey: the planned next vehicle, clearly marked as plan time.
-        val transfer = (context.applicationContext as? de.luca.mitfahrt.MitfahrtApplication)?.companion?.state?.value
-            ?.takeIf { it.trackedKey == ride.departure.key }?.let(JourneyCompanions::transferHint)?.let { "$it (Plan)" }
+        // Leg of an accompanied journey: prefer fresh live forecast, fall back to clearly labelled plan time.
+        val companion = app?.companion?.state?.value?.takeIf { it.trackedKey == ride.departure.key }
+        val transfer = companion?.let { comp ->
+            val nextLeg = comp.nextLeg
+            val freshNext = app.companionNext.value?.takeIf { next ->
+                nextLeg != null && next.departure.key == nextLeg.asDeparture(comp.journey.fetchedAt)?.key &&
+                    now.epochSecond - next.fetchedAt.epochSecond in -30..180
+            }
+            if (freshNext != null && nextLeg != null) {
+                val eval = JourneyCompanions.transfer(comp, ride, freshNext, now)
+                val depTime = freshNext.stops.getOrNull(freshNext.boardingIndex)?.estimatedDeparture ?: freshNext.departure.effective
+                val plat = PlatformHubHelper.formatPlatform(freshNext.departure.platform.ifBlank { nextLeg.origin.platform })
+                val line = nextLeg.line.ifBlank { nextLeg.lineName }
+                val riskTag = when {
+                    freshNext.departure.cancelled || eval?.outgoingCancelled == true -> "fällt aus"
+                    eval?.risk == TransferRisk.MISSED -> "verpasst (Live)"
+                    eval?.risk == TransferRisk.TIGHT -> "knapp (${(eval.slackSeconds / 60).coerceAtLeast(0)} Min)"
+                    else -> "um ${clockTime(depTime)} (Live)"
+                }
+                listOfNotNull("Umstieg: $line $riskTag", plat).joinToString(", ")
+            } else {
+                JourneyCompanions.transferHint(comp)?.let { "$it (Plan)" }
+            }
+        }
         val fullText = listOfNotNull(headline,
             delay?.let { "${it.shortDelay}${if (it.fromMonitor) " bei Einstieg" else ""}" }, transfer).joinToString(" · ")
         val builtInText = when (mode) {
@@ -155,7 +224,7 @@ class RideNotifications(private val context: Context) {
         }
         // Own texts from placeholders replace the built-in wording where the user wrote one.
         // The wording already worked out above stays the source for these four, so own texts match the built-in ones.
-        val values = TextTemplates.values(state, (context.applicationContext as? de.luca.mitfahrt.MitfahrtApplication)?.companion?.state?.value,
+        val values = TextTemplates.values(state, companion,
             now, settings.bool("gps_next_stop", true) && settings.string("location_mode") != "off", settings.bool("gps_travel_time", true)) + mapOf("status" to headline, "quelle" to timeSource,
             "minuten" to remaining?.toString().orEmpty(), "umstieg" to transfer.orEmpty())
         val customTitle = TextTemplates.custom(settings, if (waiting) "tpl_nowbar_title_wait" else "tpl_nowbar_title_ride", values)
@@ -186,15 +255,21 @@ class RideNotifications(private val context: Context) {
             }
         }
         if (Build.VERSION.SDK_INT >= 36 && promoted) {
+            val leavePill = leaveGuidance?.shortChip()?.takeIf { it.isNotBlank() }
+            val defaultChip = if (mode == "line") ride.departure.line
+                else if (waiting && leavePill != null) "${ride.departure.line} · $leavePill"
+                else "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}"
+            val criticalChip = customChip?.takeIf { it.isNotBlank() }
+                ?: if (mode == "line") ride.departure.line
+                else if (waiting && leavePill != null) leavePill
+                else remaining?.let { "$it Min" } ?: ride.departure.line
             builder.setStyle(Notification.ProgressStyle()
                 .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Color.rgb(180, 0, 85))))
                 .setProgress(if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt())
                 .setProgressTrackerIcon(Icon.createWithResource(context, R.drawable.ic_bus)))
             builder.addExtras(NowBarSupport.extras(context, title, if (mode == "line") "Mitfahrt · $displaySource" else "$text · $displaySource",
-                customChip ?: if (mode == "line") ride.departure.line else "${ride.departure.line} · ${remaining?.let { "$it Min" } ?: "Mitfahrt"}",
+                customChip ?: defaultChip,
                 if (waiting) 0 else (ride.progressToTarget(now) * 100).toInt()))
-            val criticalChip = customChip?.takeIf { it.isNotBlank() }
-                ?: if (mode == "line") ride.departure.line else remaining?.let { "$it Min" } ?: ride.departure.line
             builder.setShortCriticalText(criticalChip)
         } else {
             builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", false) })
@@ -345,6 +420,31 @@ class RideNotifications(private val context: Context) {
             .setVisibility(if (details) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_PRIVATE)
             .setColor(Color.rgb(180, 0, 85)).build()
         manager.notify(100 + (eventId.hashCode() and 0x7fff), notification)
+    }
+
+    fun hintAlternateBus(suggestion: AlternateBusSuggestion) {
+        val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val switchIntent = PendingIntent.getService(context, 10, Intent(context, RideService::class.java)
+            .setAction(RideService.SWITCH_ALTERNATE), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val dismissIntent = PendingIntent.getService(context, 11, Intent(context, RideService::class.java)
+            .setAction(RideService.DISMISS_ALTERNATE), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val details = readSettings().bool("lockscreen_details", true)
+        val targetHint = suggestion.exitTargetName?.let { " · Ziel ${shortName(it)} bleibt" } ?: ""
+        val notification = Notification.Builder(context, HINT_CHANNEL).setSmallIcon(R.drawable.ic_bus)
+            .setContentTitle("Anderer Bus erkannt: Linie ${suggestion.departure.line}")
+            .setContentText("Richtung ${shortName(suggestion.departure.destination)}$targetHint")
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .setTimeoutAfter(120_000)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setVisibility(if (details) Notification.VISIBILITY_PUBLIC else Notification.VISIBILITY_PRIVATE)
+            .setColor(Color.rgb(180, 0, 85))
+            .addAction(Notification.Action.Builder(null, "Wechseln", switchIntent).build())
+            .addAction(Notification.Action.Builder(null, "Nein", dismissIntent).build())
+            .build()
+        manager.notify(100 + ("alt/${suggestion.vehicle.id}".hashCode() and 0x7fff), notification)
     }
 
     private fun readSettings(): AppSettings {

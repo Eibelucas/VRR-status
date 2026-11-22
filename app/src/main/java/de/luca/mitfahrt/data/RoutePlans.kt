@@ -87,7 +87,8 @@ data class RoutePlan(
     val excludedDates: Set<String> = emptySet(),
     val alternateRouteId: String? = null,
     val order: Int = 0,
-    val temporaryDestination: TemporaryDestination? = null
+    val temporaryDestination: TemporaryDestination? = null,
+    val morningCheck: Boolean = false
 ) {
     fun effectiveWindows(): List<RouteWindow> = windows.ifEmpty { listOf(window) }
     fun lineLabel(): String = (allowedLines.ifEmpty { setOf(line) }).filter { it.isNotBlank() }.joinToString(", ")
@@ -191,6 +192,7 @@ object RoutePlans {
                 put("color", plan.color); put("icon", plan.icon)
                 put("walkingMinutes", plan.walkingMinutes); put("bufferMinutes", plan.bufferMinutes)
                 put("schoolOnly", plan.schoolOnly); put("manualOnly", plan.manualOnly)
+                put("morningCheck", plan.morningCheck)
                 put("excludedDates", JSONArray(plan.excludedDates.sorted())); put("alternateRouteId", plan.alternateRouteId)
                 put("order", plan.order)
                 plan.temporaryDestination?.let { temp ->
@@ -279,7 +281,7 @@ object RoutePlans {
                     integer(item, "walkingMinutes", 5), integer(item, "bufferMinutes", 2),
                     item.optBoolean("schoolOnly", false), item.optBoolean("manualOnly", false), strings("excludedDates"),
                     item.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, integer(item, "order", 0),
-                    tempDest))
+                    tempDest, item.optBoolean("morningCheck", false)))
             }.getOrNull()
         }.distinctBy { it.id }.take(MAX_ROUTES)
         RoutePlansState(json.optBoolean("automaticLearning", true), routes)

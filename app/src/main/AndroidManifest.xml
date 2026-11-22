@@ -56,6 +56,12 @@
         <receiver android:name=".updates.UpdateCheckReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
         </receiver>
+        <receiver android:name=".tracking.MorningCheckReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="de.luca.mitfahrt.MORNING_CHECK" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <service android:name=".tracking.RideService" android:exported="false" android:foregroundServiceType="location|dataSync" />
         <service android:name=".watch.WatchRequestService" android:exported="true">
             <intent-filter>

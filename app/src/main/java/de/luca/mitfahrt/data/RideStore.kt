@@ -28,7 +28,13 @@ data class TrackingState(
     /** The battery saver currently stretches refreshes and GPS. */
     val powerSaving: Boolean = false,
     /** Detected alternate bus the user appears to have boarded instead of the tracked ride. */
-    val alternateBus: AlternateBusSuggestion? = null
+    val alternateBus: AlternateBusSuggestion? = null,
+    /** Discrepancy between VRR forecast and confirmed NEW vehicle delay. */
+    val forecastDivergence: ForecastDivergence? = null,
+    /** True when the waited-for bus appears to have passed or departed while waiting. */
+    val missedBusPrompt: Boolean = false,
+    /** Short post-exit handoff window offering 1-tap start of the next leg. */
+    val transferHandoff: TransferHandoff? = null
 )
 
 class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}) {
@@ -68,7 +74,10 @@ class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}
             routeShape = it.routeShape?.takeIf { shape -> shape.journeyKey == ride?.departure?.key },
             gpsProgress = it.gpsProgress?.takeIf { progress -> progress.journeyKey == ride?.departure?.key },
             boarding = it.boarding?.takeIf { boarding -> boarding.journeyKey == ride?.departure?.key },
-            alternateBus = it.alternateBus?.takeIf { suggestion -> suggestion.journeyKey == ride?.departure?.key }) }
+            alternateBus = it.alternateBus?.takeIf { suggestion -> suggestion.journeyKey == ride?.departure?.key },
+            forecastDivergence = it.forecastDivergence?.takeIf { div -> div.journeyKey == ride?.departure?.key },
+            missedBusPrompt = if (it.ride?.departure?.key == ride?.departure?.key && ride?.boarded != true) it.missedBusPrompt else false,
+            transferHandoff = if (ride != null) null else it.transferHandoff) }
         val savedRide = ride?.takeUnless { it.demo }
         val encoded = savedRide?.let(RideCodec::encode)
         val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys || !settings.current().bool("history_enabled", true) }

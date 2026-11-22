@@ -26,6 +26,7 @@ import java.time.Instant
 object MitfahrtWidgets {
     const val ACTION_REFRESH = "de.luca.mitfahrt.widgets.action.REFRESH"
     const val ACTION_RENDER = "de.luca.mitfahrt.widgets.action.RENDER"
+    const val ACTION_FLIP_SMART_ROUTE = "de.luca.mitfahrt.widgets.action.FLIP_SMART_ROUTE"
 
     private const val BATCH_TIMEOUT_MS = 20_000L
     private const val PERIODIC_MIN_AGE_SECONDS = 60L
@@ -41,6 +42,24 @@ object MitfahrtWidgets {
 
     fun ids(context: Context): IntArray = AppWidgetManager.getInstance(context)
         .getAppWidgetIds(ComponentName(context, MitfahrtWidgetProvider::class.java))
+
+    /** Flips a SMART_ROUTE widget for 30 minutes to its alternate or next enabled route. */
+    fun flipSmartRoute(context: Context, widgetId: Int, pending: BroadcastReceiver.PendingResult?) {
+        val app = context.applicationContext
+        val store = WidgetStore(app)
+        val config = store.config(widgetId)
+        if (config?.kind != WidgetKind.SMART_ROUTE) {
+            pending?.finish()
+            return
+        }
+        val now = Instant.now()
+        val repo = WidgetRepository(app)
+        val next = repo.nextSmartFlipRoute(now, store.smartFlip(widgetId, now))
+        if (next != null) {
+            store.setSmartFlip(widgetId, next.id, now.plusSeconds(1800))
+        }
+        refreshAsync(app, intArrayOf(widgetId), userInitiated = true, pending = pending)
+    }
 
     /** Renders from stored data only; safe to call often and from any thread. */
     @Synchronized
@@ -95,6 +114,7 @@ object MitfahrtWidgets {
             if (store.config(id) != config || store.revision(id) != request.revision) return@forEach
             val previous = store.snapshot(id)
             val now = Instant.now()
+            val flipped = if (config.kind == WidgetKind.SMART_ROUTE) store.smartFlip(id, now) else null
             val age = previous.fetchedAt?.let { now.epochSecond - it.epochSecond }
             val recent = age != null && age in 0 until
                 (if (userInitiated) MANUAL_MIN_GAP_SECONDS else PERIODIC_MIN_AGE_SECONDS)
@@ -103,9 +123,11 @@ object MitfahrtWidgets {
                 store.saveSnapshotIfCurrent(id, config, request.revision, WidgetSnapshot(targetMissing = true)); return@forEach
             }
             if (!online && config.kind != WidgetKind.ACTIVE) {
-                store.saveSnapshotIfCurrent(id, config, request.revision, previous.copy(failure = FetchFailure.OFFLINE, failedAt = now)); return@forEach
+                val offlineSnap = repository.offlineFallback(config, now, FetchFailure.OFFLINE, flipped)
+                    ?: previous.copy(failure = FetchFailure.OFFLINE, failedAt = now)
+                store.saveSnapshotIfCurrent(id, config, request.revision, offlineSnap); return@forEach
             }
-            store.saveSnapshotIfCurrent(id, config, request.revision, repository.fetch(config, previous, now))
+            store.saveSnapshotIfCurrent(id, config, request.revision, repository.fetch(config, previous, now, flipped))
         }
     }
 

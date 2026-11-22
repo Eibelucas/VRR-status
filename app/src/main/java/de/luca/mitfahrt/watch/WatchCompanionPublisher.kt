@@ -26,14 +26,63 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
     private var tileKey = ""
     private var tileAttempt = Instant.EPOCH
     private var tile: WatchTile? = null
+    private var quickRouteAttempt = Instant.EPOCH
+    private var lastLibraryKey: String? = null
+    private var lastLibrarySentAt: Instant = Instant.EPOCH
 
-    suspend fun publish() {
+    suspend fun publish(forceUrgent: Boolean = false) {
         val config = settings.current()
         val tracking = app.store.state.value
         val ride = tracking.ride
-        val entries = app.routePlans.current().routes.filter { it.enabled }.map {
+        val now = Instant.now()
+        val allRoutes = app.routePlans.current().routes
+        val enabledRoutes = allRoutes.filter { it.enabled }
+        val entries = enabledRoutes.map {
             WatchEntry("route", it.id, it.name, "${shortName(it.origin.name)} → ${shortName(it.effectiveDestination().name)}")
         } + app.savedStops.state.value.favorites.map { WatchEntry("stop", it.id, shortName(it.name), "Haltestelle") }
+
+        // Preload active route departures for 1-tap quick start when idle on the watch.
+        val quickRoute = if (ride == null) {
+            enabledRoutes.firstOrNull { plan ->
+                CustomizationPolicy.active(plan, now, emptyList(), config, app.dayOverrides.current(), app.schoolCalendar.state.value)
+            } ?: enabledRoutes.firstOrNull()
+        } else null
+        if (ride == null && quickRoute != null && (selected.isBlank() || selected == "route/${quickRoute.id}")) {
+            if (now.epochSecond - quickRouteAttempt.epochSecond !in 0..59) {
+                quickRouteAttempt = now
+                runCatching {
+                    val loaded = planner.load(listOf(quickRoute), now).departures[quickRoute.id].orEmpty()
+                        .filter { !it.cancelled && it.effective.isAfter(now.minusSeconds(30)) }.take(4)
+                    if (loaded.isNotEmpty()) {
+                        selected = "route/${quickRoute.id}"
+                        choices = loaded
+                        choicesAt = Instant.now()
+                    }
+                }
+            }
+        }
+
+        val leaveLabel = if (ride != null && !ride.boarded && !ride.departure.cancelled) {
+            val matchedRoute = LeaveCountdown.matchingRoute(ride, allRoutes)
+            val stopPoint = ride.stops.getOrNull(ride.boardingIndex)?.point
+            val boardingAt = ride.liveBoardingTime(now)?.at ?: ride.boardingTime().at
+            LeaveCountdown.compute(
+                boardingAt = boardingAt,
+                cancelled = ride.departure.cancelled,
+                now = now,
+                plannedWalkMinutes = matchedRoute?.walkingMinutes ?: config.int("routes_default_walk_minutes", 5),
+                bufferMinutes = matchedRoute?.bufferMinutes ?: config.int("routes_default_buffer_minutes", 2),
+                liveLocation = tracking.location?.takeIf { tracking.locationAt?.let { at -> now.epochSecond - at.epochSecond in -30..120 } == true },
+                stopPoint = stopPoint,
+                walkSpeedCmPerSec = config.int("walk_speed_cm", 120)
+            )?.chipLabel().orEmpty()
+        } else ""
+        val hubPlatform = if (ride != null && !ride.boarded && PlatformHubHelper.isMultiPlatformHub(ride.departure.stopId, ride.departure.stopName)) {
+            PlatformHubHelper.formatPlatform(ride.departure.platform).orEmpty()
+        } else ""
+        val handoff = tracking.transferHandoff?.takeIf { it.expiresAt.isAfter(now) }
+        val altBus = tracking.alternateBus
+
         val preferenceKeys = listOf("watch_start", "watch_detail", "watch_show_connection", "watch_actions", "watch_tile", "watch_tile_id",
             "alert_target", "quiet_enabled", "quiet_start", "quiet_end", "quiet_critical", "vibration_arrival", "vibration_exit",
             "vibration_walking", "vibration_delay", "vibration_cancelled", "watch_avoid_duplicates")
@@ -41,22 +90,42 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
             mapOf(
                 "journey_key" to (ride?.departure?.key ?: ""),
                 "stops_revision" to (ride?.let(::stopsRevision) ?: ""),
-                "watch_map_mode" to WatchFaceMapPublisher.modeName(app)
+                "watch_map_mode" to WatchFaceMapPublisher.modeName(app),
+                "leave_label" to leaveLabel,
+                "hub_platform" to hubPlatform,
+                "missed_prompt" to if (tracking.missedBusPrompt) "true" else "",
+                "handoff_line" to (handoff?.nextLine ?: ""),
+                "handoff_dest" to (handoff?.nextDestination ?: ""),
+                "handoff_stop" to (handoff?.nextStopName ?: ""),
+                "handoff_platform" to (handoff?.nextPlatform?.let(PlatformHubHelper::formatPlatform) ?: ""),
+                "alt_bus_line" to (altBus?.departure?.line ?: ""),
+                "alt_bus_dest" to (altBus?.departure?.destination?.let(::shortName) ?: ""),
+                "alt_bus_target" to (altBus?.exitTargetName?.let(::shortName) ?: ""),
+                "quick_route_id" to (quickRoute?.id ?: ""),
+                "quick_route_name" to (quickRoute?.name ?: "")
             ) +
             // Identity of the tracked departure, so the watch can ask VRR itself while the phone is away.
             (ride?.takeUnless { it.demo }?.let { active -> mapOf("ride_stop_id" to active.departure.stopId,
                 "ride_line_id" to active.departure.lineId, "ride_trip_code" to active.departure.tripCode,
                 "ride_planned" to active.departure.planned.toString()) } ?: emptyMap())
-        val now = Instant.now()
         refreshTile(config, now)
+        val snapshot = tracking.watchSnapshot(now)
         val library = WatchLibrary(now, entries, selected,
             choices.map { departure -> WatchDeparture(departure.key, departure.line, shortName(departure.destination),
                 departure.liveEstimate(now) ?: departure.planned, departure.liveEstimate(now) != null, departure.cancelled) },
             ride?.let { active -> active.stops.mapIndexedNotNull { index, stop ->
                 if (index > active.boardingIndex && !stop.cancelled) WatchTarget(index, shortName(stop.name)) else null
-            } }.orEmpty(), preferences, message, tile, tracking.watchSnapshot(now))
-        Wearable.getDataClient(app).putDataItem(PutDataRequest.create(WatchCompanion.LIBRARY)
-            .setData(WatchCompanion.encode(library)).setUrgent()).await()
+            } }.orEmpty(), preferences, message, tile, snapshot)
+        val normalizedKey = library.copy(sentAt = Instant.EPOCH, ride = snapshot.copy(sentAt = Instant.EPOCH)).toString()
+        val changed = normalizedKey != lastLibraryKey
+        val heartbeatDue = now.epochSecond - lastLibrarySentAt.epochSecond >= 55
+        if (changed || heartbeatDue || forceUrgent) {
+            val request = PutDataRequest.create(WatchCompanion.LIBRARY).setData(WatchCompanion.encode(library))
+            if (forceUrgent || changed) request.setUrgent()
+            Wearable.getDataClient(app).putDataItem(request).await()
+            lastLibraryKey = normalizedKey
+            lastLibrarySentAt = now
+        }
     }
 
     suspend fun command(command: WatchCommand): String = lock.withLock {
@@ -67,6 +136,26 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
                 "map_mode" -> {
                     val next = WatchFaceMapPublisher.toggleMode(app)
                     if (next == de.luca.mitfahrt.widgets.MapWidgetMode.BUS_FOCUS) "Bus-Fokus" else "Gesamtstrecke"
+                }
+                "next_leg" -> {
+                    RideService.correct(app, RideService.START_NEXT_LEG)
+                    "Starte nächsten Abschnitt"
+                }
+                "missed_passed" -> withRide(command) {
+                    RideService.correct(app, RideService.MISSED_PASSED)
+                    "Durchgefahren gemeldet"
+                }
+                "missed_full" -> withRide(command) {
+                    RideService.correct(app, RideService.MISSED_FULL)
+                    "Zu voll gemeldet"
+                }
+                "switch_alternate" -> withRide(command) {
+                    RideService.correct(app, RideService.SWITCH_ALTERNATE)
+                    "Wechsle Bus"
+                }
+                "dismiss_alternate" -> withRide(command) {
+                    RideService.correct(app, RideService.DISMISS_ALTERNATE)
+                    "Bleibe im aktuellen Bus"
                 }
                 "board" -> withRide(command) { ride -> app.store.setRide(ride.board("manual", java.time.Instant.now()), preserveStatus = true); "Einstieg bestätigt" }
                 "arrival" -> withRide(command) { ride ->

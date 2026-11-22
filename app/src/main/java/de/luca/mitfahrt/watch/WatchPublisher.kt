@@ -8,7 +8,7 @@ import de.luca.mitfahrt.shared.WatchProtocol
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.tasks.await
 import java.time.Instant
 import de.luca.mitfahrt.MitfahrtApplication
@@ -25,6 +25,8 @@ class WatchPublisher(context: Context, private val store: RideStore) {
     private val settings by lazy { AppSettingsStore(contextRef) }
     @Volatile private var connectedAt = Instant.EPOCH
     @Volatile private var connected = false
+    private var lastRideKey: String? = null
+    private var lastRideSentAt: Instant = Instant.EPOCH
 
     fun hasConnectedWatch(): Boolean = connected && Instant.now().epochSecond - connectedAt.epochSecond in 0..60
 
@@ -33,23 +35,34 @@ class WatchPublisher(context: Context, private val store: RideStore) {
         scope.launch {
             val message = companion.command(command)
             runCatching { Wearable.getMessageClient(contextRef).sendMessage(nodeId, WatchCompanion.RESULT, message.toByteArray()).await() }
-            publish(forceMap = command.action == "map_mode")
+            publish(forceMap = command.action == "map_mode", urgent = true)
         }
     }
 
     fun start() {
-        scope.launch { settings.state.collect { publish() } }
-        scope.launch { (contextRef as MitfahrtApplication).routePlans.state.collect { publish() } }
-        scope.launch { (contextRef as MitfahrtApplication).savedStops.state.collect { publish() } }
+        scope.launch { settings.state.collect { publish(urgent = true) } }
+        scope.launch { (contextRef as MitfahrtApplication).routePlans.state.collect { publish(urgent = true) } }
+        scope.launch { (contextRef as MitfahrtApplication).savedStops.state.collect { publish(urgent = true) } }
         scope.launch {
-            store.state.map { it.watchSnapshot() }.distinctUntilChangedBy { it.copy(sentAt = Instant.EPOCH) }.collectLatest { state ->
-                publish()
-                while (state.running && state.active) { delay(15_000); publish() }
+            store.state.map { state ->
+                listOf(
+                    state.watchSnapshot().copy(sentAt = Instant.EPOCH),
+                    state.transferHandoff,
+                    state.missedBusPrompt,
+                    state.alternateBus?.vehicle?.id
+                )
+            }.distinctUntilChanged().collectLatest {
+                val active = store.state.value.watchSnapshot()
+                publish(urgent = true)
+                while (active.running && active.active) {
+                    delay(60_000)
+                    publish(urgent = false)
+                }
             }
         }
     }
 
-    fun requestPublish(forceMap: Boolean = false) { scope.launch { publish(forceMap = forceMap) } }
+    fun requestPublish(forceMap: Boolean = false) { scope.launch { publish(forceMap = forceMap, urgent = true) } }
 
     fun arrivalAlert(id: String, boardingAt: Instant) {
         val bytes = de.luca.mitfahrt.shared.ArrivalAlert.encode(id, Instant.now(), boardingAt)
@@ -63,7 +76,7 @@ class WatchPublisher(context: Context, private val store: RideStore) {
                     id.startsWith("cancelled/") -> "cancelled"
                     id.startsWith("delay/") -> "delay"
                     id.startsWith("walking/") -> "walking"
-                    id.startsWith("exit/") -> "exit"
+                    id.startsWith("exit/") || id.startsWith("exit_countdown/") -> "exit"
                     else -> "arrival"
                 }
                 if (!options.watch(connected) || !options.allowed(kind, Instant.now())) return@launch
@@ -76,17 +89,27 @@ class WatchPublisher(context: Context, private val store: RideStore) {
         }
     }
 
-    private suspend fun publish(forceMap: Boolean = false) {
+    private suspend fun publish(forceMap: Boolean = false, urgent: Boolean = true) {
         try {
-            if (Instant.now().epochSecond - connectedAt.epochSecond >= 30) {
-                connected = Wearable.getNodeClient(contextRef).connectedNodes.await().isNotEmpty(); connectedAt = Instant.now()
+            val now = Instant.now()
+            if (now.epochSecond - connectedAt.epochSecond >= 30) {
+                connected = Wearable.getNodeClient(contextRef).connectedNodes.await().isNotEmpty(); connectedAt = now
             }
             val tracking = store.state.value
-            client.putDataItem(PutDataRequest.create(WatchProtocol.PATH)
-                .setData(WatchProtocol.encode(tracking.watchSnapshot())).setUrgent()).await()
+            val snapshot = tracking.watchSnapshot(now)
+            val normalizedKey = snapshot.copy(sentAt = Instant.EPOCH).toString()
+            val rideChanged = normalizedKey != lastRideKey
+            val heartbeatDue = now.epochSecond - lastRideSentAt.epochSecond >= 55
+            if (rideChanged || heartbeatDue || forceMap) {
+                val request = PutDataRequest.create(WatchProtocol.PATH).setData(WatchProtocol.encode(snapshot))
+                if (urgent && rideChanged) request.setUrgent()
+                client.putDataItem(request).await()
+                lastRideKey = normalizedKey
+                lastRideSentAt = now
+            }
             val gpsEnabled = settings.current().bool("gps_next_stop", true) && settings.current().string("location_mode") != "off"
             watchFaceMap.publish(tracking, gpsEnabled = gpsEnabled, force = forceMap)
-            companion.publish()
+            companion.publish(forceUrgent = urgent && (rideChanged || forceMap))
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (_: Exception) { /* Optional companion must never interrupt the phone journey. */ }
     }

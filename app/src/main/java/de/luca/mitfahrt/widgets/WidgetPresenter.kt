@@ -1,6 +1,9 @@
 package de.luca.mitfahrt.widgets
 
 import de.luca.mitfahrt.data.Departure
+import de.luca.mitfahrt.data.LeaveCountdown
+import de.luca.mitfahrt.data.PlatformHubHelper
+import de.luca.mitfahrt.data.ReachabilityState
 import de.luca.mitfahrt.data.Ride
 import de.luca.mitfahrt.data.RideStop
 import de.luca.mitfahrt.data.boardingTime
@@ -46,45 +49,68 @@ object WidgetPresenter {
         else board(config, snapshot, now, loading)
     }
 
-    // --- Stop and route boards -------------------------------------------------------------
+    // --- Stop, route, and smart-route boards -----------------------------------------------
 
     private fun board(config: WidgetConfig, snapshot: WidgetSnapshot, now: Instant, loading: Boolean): WidgetModel {
-        val open = WidgetAction.Open(config.kind, config.targetId, config.action)
+        val open = if (config.kind == WidgetKind.SMART_ROUTE && !snapshot.resolvedRouteId.isNullOrBlank()) {
+            WidgetAction.Open(WidgetKind.ROUTE, snapshot.resolvedRouteId, config.action)
+        } else {
+            WidgetAction.Open(config.kind, config.targetId, config.action)
+        }
         val rowAction = open
-        val rows = snapshot.departures.mapNotNull { departureRow(it, now, config.info, rowAction) }
+        val walkMinutes = snapshot.resolvedWalkMinutes
+        val bufferMinutes = snapshot.resolvedBufferMinutes ?: 2
+        val rows = snapshot.departures.mapNotNull { departureRow(it, now, config.info, rowAction, walkMinutes, bufferMinutes) }
             .map { it.copy(sourceAt = it.sourceAt ?: snapshot.fetchedAt) }
         val fetchedAt = snapshot.fetchedAt
         val stale = fetchedAt == null || age(fetchedAt, now) !in -30..WidgetTiming.PROGNOSIS_SECONDS
         val status = when {
             loading -> WidgetStatus.LOADING
+            snapshot.offlineFallback && rows.isNotEmpty() -> WidgetStatus.OFFLINE
             snapshot.failure == FetchFailure.OFFLINE -> WidgetStatus.OFFLINE
             snapshot.failure == FetchFailure.SOURCE -> WidgetStatus.ERROR
+            config.kind == WidgetKind.SMART_ROUTE && snapshot.smartEmptyReason != null && rows.isEmpty() -> WidgetStatus.EMPTY
             stale -> WidgetStatus.STALE
             rows.isEmpty() -> WidgetStatus.EMPTY
             else -> WidgetStatus.READY
         }
-        val label = when (status) {
-            WidgetStatus.LOADING -> "Aktualisiere …"
-            WidgetStatus.OFFLINE -> "Keine Verbindung"
-            WidgetStatus.ERROR -> "VRR nicht erreichbar"
-            WidgetStatus.STALE -> if (fetchedAt == null) "Noch keine Daten" else "Veraltet"
-            else -> if (snapshot.partial) "Teilweise geprüft" else null
+        val label = when {
+            status == WidgetStatus.LOADING -> "Aktualisiere …"
+            snapshot.offlineFallback && rows.isNotEmpty() -> "Fahrplan (offline)"
+            status == WidgetStatus.OFFLINE -> "Keine Verbindung"
+            status == WidgetStatus.ERROR -> "VRR nicht erreichbar"
+            status == WidgetStatus.STALE -> if (fetchedAt == null) "Noch keine Daten" else "Veraltet"
+            snapshot.partial -> "Teilweise geprüft"
+            else -> null
         }
-        val message = if (rows.isNotEmpty()) null else when (status) {
-            WidgetStatus.LOADING -> "Abfahrten werden geladen"
-            WidgetStatus.OFFLINE -> "Offline – später aktualisieren"
-            WidgetStatus.ERROR -> "Daten gerade nicht verfügbar"
-            WidgetStatus.STALE -> "Zum Laden aktualisieren"
-            else -> if (config.kind == WidgetKind.ROUTE) "Keine passende Abfahrt in der nächsten Stunde"
-                else "Gerade keine Abfahrten"
+        val message = if (rows.isNotEmpty()) null else when {
+            status == WidgetStatus.LOADING -> "Abfahrten werden geladen"
+            status == WidgetStatus.OFFLINE -> "Offline – später aktualisieren"
+            status == WidgetStatus.ERROR -> "Daten gerade nicht verfügbar"
+            config.kind == WidgetKind.SMART_ROUTE && snapshot.smartEmptyReason != null -> snapshot.smartEmptyReason
+            status == WidgetStatus.STALE -> "Zum Laden aktualisieren"
+            config.kind == WidgetKind.ROUTE || config.kind == WidgetKind.SMART_ROUTE -> "Keine passende Abfahrt in der nächsten Stunde"
+            else -> "Gerade keine Abfahrten"
+        }
+        val title = if (config.kind == WidgetKind.SMART_ROUTE) {
+            snapshot.resolvedRouteName?.takeIf { it.isNotBlank() }?.let(::shortName) ?: "Nächste Route"
+        } else {
+            shortName(config.targetName)
         }
         return WidgetModel(
-            title = shortName(config.targetName), status = status,
+            title = title, status = status,
             statusLine = joinStatus(label, fetchedAt, now), rows = rows, message = message,
             open = open, nextRenderAt = nextBoardRender(snapshot, now))
     }
 
-    internal fun departureRow(departure: Departure, now: Instant, info: InfoLevel, action: WidgetAction): WidgetRow? {
+    internal fun departureRow(
+        departure: Departure,
+        now: Instant,
+        info: InfoLevel,
+        action: WidgetAction,
+        walkMinutes: Int? = null,
+        bufferMinutes: Int = 2
+    ): WidgetRow? {
         val sourceAge = departure.observedAt?.let { age(it, now) }
         val trustedEstimate = departure.estimated?.takeIf {
             !departure.cancelled && sourceAge != null && sourceAge in -30..WidgetTiming.PROGNOSIS_SECONDS
@@ -103,9 +129,18 @@ object WidgetPresenter {
             trustedEstimate != null -> { time = clockTime(trustedEstimate); label = "Ältere Prognose$delayText"; kind = TimeKind.PROGNOSIS }
             else -> { time = clockTime(departure.planned); label = "Plan"; kind = TimeKind.SCHEDULE }
         }
-        val destination = shortName(departure.destination).ifBlank { "Ziel unbekannt" }
+        val baseDestination = shortName(departure.destination).ifBlank { "Ziel unbekannt" }
+        val formattedPlatform = PlatformHubHelper.formatPlatform(departure.platform)
+        val hubProminent = formattedPlatform != null && PlatformHubHelper.isMultiPlatformHub(departure.stopId, departure.stopName)
+        val title = if (hubProminent && info != InfoLevel.DETAILED) "$formattedPlatform · $baseDestination" else baseDestination
+        val leaveChip = if (walkMinutes != null && !departure.cancelled) {
+            LeaveCountdown.compute(reference, false, now, walkMinutes, bufferMinutes)
+                ?.takeIf { it.state != ReachabilityState.DEPARTED }
+                ?.shortChip()?.takeIf { it.isNotBlank() }
+        } else null
         val detail = if (info != InfoLevel.DETAILED) null else listOfNotNull(
-            departure.platform.takeIf { it.isNotBlank() }?.let { "Steig $it" },
+            formattedPlatform,
+            leaveChip,
             if (kind == TimeKind.LIVE || kind == TimeKind.PROGNOSIS) "Plan ${clockTime(departure.planned)}" else null,
             departure.notices.firstOrNull()?.trim()?.takeIf { it.isNotBlank() }
         ).joinToString(" · ").ifBlank { null }
@@ -115,8 +150,8 @@ object WidgetPresenter {
             TimeKind.PROGNOSIS -> "Prognose ${clockTime(trustedEstimate)}"
             TimeKind.SCHEDULE -> "laut Fahrplan ${clockTime(departure.planned)}"
         }
-        return WidgetRow(departure.line.ifBlank { "?" }, destination, time, label, kind, detail,
-            "Linie ${departure.line} nach $destination, $spoken", action, departure.observedAt)
+        return WidgetRow(departure.line.ifBlank { "?" }, title, time, label, kind, detail,
+            "Linie ${departure.line} nach $baseDestination, $spoken", action, departure.observedAt)
     }
 
     private fun nextBoardRender(snapshot: WidgetSnapshot, now: Instant): Instant? {

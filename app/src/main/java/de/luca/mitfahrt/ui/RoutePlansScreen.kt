@@ -430,6 +430,7 @@ private fun RoutePlanEditor(draft: RouteDraft, editing: Boolean, savedStops: Sav
                         RoutePanel {
                             RouteSwitch("Nur manuell öffnen", "Nicht automatisch auf der Startseite vorschlagen.", draft.manualOnly) { change(draft.copy(manualOnly = it)) }
                             RouteSwitch("Schulroute", "Im Ferienmodus und an deinen freien Tagen ausblenden.", draft.schoolOnly) { change(draft.copy(schoolOnly = it)) }
+                            RouteSwitch("Morgen-Check", "Vor dem Zeitfenster still prüfen und melden, wann du los musst oder ob der Bus ausfällt.", draft.morningCheck) { change(draft.copy(morningCheck = it)) }
                             OutlinedTextField(value = draft.excludedDates, onValueChange = { change(draft.copy(excludedDates = it.take(4400))) },
                                 label = { Text("Zusätzliche freie Tage") }, placeholder = { Text("2026-11-16, 2026-11-17") },
                                 supportingText = { Text("Datum als JJJJ-MM-TT, mehrere mit Komma trennen.") }, modifier = Modifier.fillMaxWidth())
@@ -833,7 +834,7 @@ private data class RouteDraft(
     val additionalWindows: List<RouteWindow> = emptyList(), val color: String = "new", val icon: String = "bus",
     val walkingMinutes: Int = 5, val bufferMinutes: Int = 2, val schoolOnly: Boolean = false, val manualOnly: Boolean = false,
     val excludedDates: String = "", val alternateRouteId: String? = null, val order: Int = 0,
-    val temporaryDestination: TemporaryDestination? = null
+    val temporaryDestination: TemporaryDestination? = null, val morningCheck: Boolean = false
 ) {
     private fun lines(): Set<String> = line.split(Regex("[,;/\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     private fun dates(): Set<String> = excludedDates.split(Regex("[,;\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -857,7 +858,7 @@ private data class RouteDraft(
         allowedLines = lines().takeIf { it.size > 1 }.orEmpty(), color = color, icon = icon,
         walkingMinutes = walkingMinutes, bufferMinutes = bufferMinutes, schoolOnly = schoolOnly, manualOnly = manualOnly,
         excludedDates = dates(), alternateRouteId = alternateRouteId, order = order,
-        temporaryDestination = temporaryDestination)
+        temporaryDestination = temporaryDestination, morningCheck = morningCheck)
     fun encode(): String = JSONObject().apply {
         put("id", id); put("name", name); put("origin", origin?.toDraftJson()); put("destination", destination?.toDraftJson())
         put("match", match.name); put("line", line); put("days", JSONArray(days.sorted()))
@@ -867,7 +868,7 @@ private data class RouteDraft(
         } }))
         put("color", color); put("icon", icon); put("walkingMinutes", walkingMinutes); put("bufferMinutes", bufferMinutes)
         put("schoolOnly", schoolOnly); put("manualOnly", manualOnly); put("excludedDates", excludedDates)
-        put("alternateRouteId", alternateRouteId); put("order", order)
+        put("alternateRouteId", alternateRouteId); put("order", order); put("morningCheck", morningCheck)
         temporaryDestination?.let { temp ->
             put("temporaryDestination", JSONObject().apply {
                 put("stop", temp.stop.toDraftJson())
@@ -885,7 +886,7 @@ private data class RouteDraft(
                 first.startMinute == first.endMinute, plan.enabled, plan.nearbyOnly,
                 plan.effectiveWindows().drop(1), plan.color, plan.icon, plan.walkingMinutes, plan.bufferMinutes, plan.schoolOnly,
                 plan.manualOnly, plan.excludedDates.sorted().joinToString(", "), plan.alternateRouteId, plan.order,
-                plan.temporaryDestination)
+                plan.temporaryDestination, plan.morningCheck)
         }
         fun decode(value: String): RouteDraft = runCatching {
             val obj = JSONObject(value)
@@ -911,7 +912,7 @@ private data class RouteDraft(
                 } }.orEmpty(), obj.optString("color", "new"), obj.optString("icon", "bus"),
                 obj.optInt("walkingMinutes", 5), obj.optInt("bufferMinutes", 2), obj.optBoolean("schoolOnly"), obj.optBoolean("manualOnly"),
                 obj.optString("excludedDates"), obj.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, obj.optInt("order", 0),
-                temp)
+                temp, obj.optBoolean("morningCheck"))
         }.getOrElse { RouteDraft() }
     }
 }

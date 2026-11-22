@@ -41,7 +41,8 @@ class WidgetPresenterTest {
         assertEquals("Prognose +4", row.timeLabel)
         assertEquals(now.minusSeconds(10), row.sourceAt)
         assertEquals("017", row.badge)
-        assertEquals("Rheydt Hbf", row.title)
+        // Mönchengladbach Hbf is a multi-platform hub, so the platform leads the title.
+        assertEquals("Steig 2 · Rheydt Hbf", row.title)
     }
 
     @Test fun `older prediction is shown as clock time and never as countdown`() {

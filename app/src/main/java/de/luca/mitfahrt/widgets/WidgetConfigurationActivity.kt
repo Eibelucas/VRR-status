@@ -123,6 +123,7 @@ private fun WidgetSetup(
     val ownConfig = when (kind) {
         WidgetKind.STOP -> stop?.let { WidgetConfig(kind, it.id, it.name, info, theme, accent, opacity) }
         WidgetKind.ROUTE -> route?.let { WidgetConfig(kind, it.id, it.name, info, theme, accent, opacity) }
+        WidgetKind.SMART_ROUTE -> WidgetConfig(kind, info = info, theme = theme, accent = accent, opacity = opacity)
         WidgetKind.ACTIVE -> WidgetConfig(kind, info = info, theme = theme, accent = accent, opacity = opacity)
     }?.copy(action = action, rowCount = count, useAppDefaults = false)
     val config = (if (useDefaults) defaults else ownConfig)?.let(WidgetConfigs::clean)
@@ -147,6 +148,7 @@ private fun WidgetSetup(
                 when (kind) {
                     WidgetKind.STOP -> StopPicker(stop, knownStops, search) { stop = it }
                     WidgetKind.ROUTE -> RoutePicker(routes, routeId) { routeId = it }
+                    WidgetKind.SMART_ROUTE -> Hint("Wählt automatisch deine aktive Route nach Zeitfenster und Schulkalender. Tippen auf den Titel wechselt 30 Min zur Gegenroute.")
                     WidgetKind.ACTIVE -> Hint("Zeigt die Fahrt, die du gerade in der App verfolgst.")
                 }
             }

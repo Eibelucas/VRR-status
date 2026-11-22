@@ -189,7 +189,7 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                     modifier = Modifier.heightIn(min = 48.dp)
                 ) {
-                    Icon(Icons.Outlined.Fullscreen, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.Fullscreen, "Karte im Vollbild öffnen", modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Vollbild", fontSize = 14.sp)
                 }

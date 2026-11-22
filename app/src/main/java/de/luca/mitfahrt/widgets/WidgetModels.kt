@@ -4,10 +4,11 @@ import de.luca.mitfahrt.data.Departure
 import de.luca.mitfahrt.data.Ride
 import java.time.Instant
 
-/** The three widget contents. [key] is the value MainActivity receives as `widget_kind`. */
+/** The widget contents. [key] is the value MainActivity receives as `widget_kind`. */
 enum class WidgetKind(val key: String, val label: String) {
     STOP("stop", "Haltestelle"),
     ROUTE("route", "Route"),
+    SMART_ROUTE("smart_route", "Nächste Route"),
     ACTIVE("active", "Aktuelle Fahrt");
 
     companion object {
@@ -51,7 +52,7 @@ enum class WidgetAccent(val key: String, val label: String, val light: Int, val 
 
 data class WidgetConfig(
     val kind: WidgetKind,
-    /** Saved stop or route id; never shown to the user and empty for [WidgetKind.ACTIVE]. */
+    /** Saved stop or route id; never shown to the user and empty for [WidgetKind.ACTIVE] and [WidgetKind.SMART_ROUTE]. */
     val targetId: String = "",
     /** Readable name captured at configuration time, used as title. */
     val targetName: String = "",
@@ -64,7 +65,7 @@ data class WidgetConfig(
     val action: String = "departures",
     val rowCount: Int = 3
 ) {
-    val needsTarget: Boolean get() = kind != WidgetKind.ACTIVE
+    val needsTarget: Boolean get() = kind != WidgetKind.ACTIVE && kind != WidgetKind.SMART_ROUTE
     fun isComplete(): Boolean = !needsTarget || (targetId.isNotBlank() && targetName.isNotBlank())
 }
 
@@ -116,7 +117,15 @@ data class WidgetSnapshot(
     val failedAt: Instant? = null,
     /** A route lookup could not verify every candidate trip. */
     val partial: Boolean = false,
-    val targetMissing: Boolean = false
+    val targetMissing: Boolean = false,
+    /** Departures were loaded from local offline timetable boards because VRR was unreachable. */
+    val offlineFallback: Boolean = false,
+    /** Resolved route metadata for [WidgetKind.SMART_ROUTE] or route reachability hints. */
+    val resolvedRouteId: String? = null,
+    val resolvedRouteName: String? = null,
+    val resolvedWalkMinutes: Int? = null,
+    val resolvedBufferMinutes: Int? = null,
+    val smartEmptyReason: String? = null
 )
 
 enum class WidgetStatus { READY, NOT_CONFIGURED, TARGET_MISSING, LOADING, OFFLINE, STALE, ERROR, EMPTY }

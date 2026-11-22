@@ -1,6 +1,10 @@
 package de.luca.mitfahrt.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,7 +16,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
@@ -20,9 +26,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,7 +41,13 @@ import de.luca.mitfahrt.reports.*
 import java.time.Instant
 
 /** Own statements offered as one tap; anything else can be typed. */
-private val observationPresets = listOf("Bus ist nicht gekommen", "Bus ist durchgefahren", "Bus war zu voll")
+private val observationPresets = listOf(
+    "Bus ist nicht gekommen",
+    "Bus ist durchgefahren",
+    "Bus war zu voll",
+    "Stau / Umleitung",
+    "Fahrzeugstörung"
+)
 
 /**
  * The whole connection as one report: summary first, then the course of events, then the stops.
@@ -47,10 +62,15 @@ internal fun JourneyReportScreen(
     onSelectLayout: (String?) -> Unit = {}, onEditLayouts: (() -> Unit)? = null
 ) {
     BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    @Suppress("DEPRECATION")
+    val clipboard = LocalClipboardManager.current
     var note by rememberSaveable { mutableStateOf("") }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     val running = report.state == ReportState.RUNNING
     val blocks = remember(report, options, running) { JourneyReportText.build(report, options, if (running) now else report.updatedAt) }
+    val guarantee = remember(report) { MobilityGuarantee.check(report) }
+    val shortText = remember(report) { JourneyReportText.shortMessage(report) }
     Surface(Modifier.fillMaxSize(), color = Ink) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -69,6 +89,78 @@ internal fun JourneyReportScreen(
                         layouts.forEach { layout -> FilterChip(selected = layout.id == selectedLayout, onClick = { onSelectLayout(layout.id) },
                             label = { Text(layout.name) }, modifier = Modifier.heightIn(min = 48.dp)) }
                         TextButton(onClick = onEditLayouts, modifier = Modifier.heightIn(min = 48.dp)) { Text("Layouts") }
+                    }
+                }
+                item(key = "quick_text") {
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(shortText))
+                                Toast.makeText(context, "Kurztext kopiert", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                            shape = ControlShape
+                        ) {
+                            Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Kurztext kopieren", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, shortText)
+                                }
+                                runCatching { context.startActivity(Intent.createChooser(send, "Kurztext teilen")) }
+                            },
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                            shape = ControlShape
+                        ) {
+                            Icon(Icons.Outlined.Share, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Kurztext teilen", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                if (guarantee != null) item(key = "mobility_guarantee") {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Amber.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, Amber.copy(alpha = 0.45f))
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(guarantee.headline, fontWeight = FontWeight.SemiBold, color = Amber, fontSize = 15.sp)
+                            Text(
+                                "Basis: ${guarantee.line} ab ${guarantee.stopName} (Plan ${guarantee.plannedTime} Uhr · ${guarantee.forecastOrStatus}). Anspruch bitte anhand der offiziellen Bedingungen prüfen.",
+                                color = Paper, fontSize = 13.sp, lineHeight = 18.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(guarantee.summaryBlock))
+                                        Toast.makeText(context, "Datenblock kopiert", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.weight(1f).heightIn(min = 42.dp),
+                                    shape = ControlShape
+                                ) {
+                                    Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Daten kopieren", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(guarantee.officialUrl))) }
+                                    },
+                                    modifier = Modifier.weight(1f).heightIn(min = 42.dp),
+                                    shape = ControlShape
+                                ) {
+                                    Icon(Icons.Outlined.OpenInNew, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("mobil.nrw", maxLines = 1)
+                                }
+                            }
+                        }
                     }
                 }
                 blocks.forEachIndexed { index, block -> item(key = index) { ReportBlockView(block) } }

@@ -115,6 +115,8 @@ fun WatchScreen(
                 mapMode = mapMode,
                 refreshing = refreshing,
                 commandBusy = commandBusy,
+                canBoard = activeRide?.active == true && activeRide.boarded == false && "board" in allowedActions,
+                onBoard = { onCommand(WatchCommand("board", journey = journey)) },
                 onToggleMapMode = { onCommand(WatchCommand("map_mode", journey = journey)) },
                 onRefresh = onRefresh,
                 onBackToRide = { view = WatchActivity.VIEW_ACTIVE }
@@ -126,8 +128,21 @@ fun WatchScreen(
                 TransformingLazyColumn(state = state, modifier = Modifier.fillMaxSize(), contentPadding = padding,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val current = activeRide
-                    // With a running ride the glance starts with the ride itself; switching views comes after it.
-                    val rideFirst = view == "active" && current?.active == true
+                    val leaveLabel = library.settings["leave_label"].orEmpty()
+                    val hubPlatform = library.settings["hub_platform"].orEmpty()
+                    val missedPrompt = library.settings["missed_prompt"] == "true"
+                    val handoffLine = library.settings["handoff_line"].orEmpty()
+                    val handoffDest = library.settings["handoff_dest"].orEmpty()
+                    val handoffStop = library.settings["handoff_stop"].orEmpty()
+                    val handoffPlatform = library.settings["handoff_platform"].orEmpty()
+                    val altBusLine = library.settings["alt_bus_line"].orEmpty()
+                    val altBusDest = library.settings["alt_bus_dest"].orEmpty()
+                    val altBusTarget = library.settings["alt_bus_target"].orEmpty()
+                    val quickRouteId = library.settings["quick_route_id"].orEmpty()
+                    val quickRouteName = library.settings["quick_route_name"].orEmpty()
+
+                    // With a running ride or transfer handoff the glance starts with the ride itself; switching views comes after it.
+                    val rideFirst = view == "active" && (current?.active == true || handoffLine.isNotBlank())
                     val navigation: androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope.() -> Unit = {
                         if (view != "active") item { FilledTonalButton(onClick = { view = "active" }, modifier = Modifier.fillMaxWidth()) { Text("Zur Fahrt") } }
                         if (view != "routes") item { FilledTonalButton(onClick = { view = "routes" }, modifier = Modifier.fillMaxWidth()) { Text("Routen") } }
@@ -156,7 +171,7 @@ fun WatchScreen(
                         } }
                         if (library.selected.startsWith("$kind/")) {
                             item { StatusText("Abfahrten", Lime) }
-                            val old = now.epochSecond - library.sentAt.epochSecond !in -30..120
+                            val old = now.epochSecond - library.sentAt.epochSecond !in -30..180
                             if (old) item { StatusText("Stand veraltet · aktualisieren", Amber) }
                             library.departures.forEach { departure -> item {
                                 FilledTonalButton(onClick = { confirmation = departure; confirmationContext = library.selected; confirmationJourney = journey }, enabled = !commandBusy && !old && !departure.cancelled,
@@ -171,11 +186,74 @@ fun WatchScreen(
                             if (library.departures.isEmpty()) item { StatusText(library.message.ifEmpty { "Keine Abfahrten" }, Soft) }
                         }
                     } else if (current?.active != true) {
-                        item {
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Keine Fahrt", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, color = Lime)
-                                Spacer(Modifier.height(12.dp))
-                                Text("Am Handy eine Fahrt wählen.", textAlign = TextAlign.Center, color = Soft, style = MaterialTheme.typography.bodySmall)
+                        if (handoffLine.isNotBlank()) {
+                            item {
+                                WatchPanel {
+                                    Text("Umstieg bereit", color = Lime, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("$handoffLine → $handoffDest", style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                                    val detail = listOfNotNull(handoffStop.takeIf { it.isNotBlank() }?.let { "ab $it" }, handoffPlatform.takeIf { it.isNotBlank() }).joinToString(" · ")
+                                    if (detail.isNotBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(detail, color = Soft, fontSize = 12.sp, maxLines = 2)
+                                    }
+                                }
+                            }
+                            item {
+                                Button(
+                                    onClick = { onCommand(WatchCommand("next_leg", journey = journey)) },
+                                    enabled = !commandBusy,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Weiter mit $handoffLine", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            }
+                        } else if (quickRouteId.isNotBlank() && quickRouteName.isNotBlank()) {
+                            val quickDeps = if (library.selected == "route/$quickRouteId") library.departures.filter { !it.cancelled }.take(2) else emptyList()
+                            val quickFresh = now.epochSecond - library.sentAt.epochSecond in -30..180
+                            item {
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(quickRouteName, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, color = Lime, maxLines = 2)
+                                    if (quickDeps.isEmpty()) {
+                                        Spacer(Modifier.height(6.dp))
+                                        Text("Schnellstart", textAlign = TextAlign.Center, color = Soft, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                            if (quickDeps.isNotEmpty()) {
+                                quickDeps.forEachIndexed { idx, dep ->
+                                    item {
+                                        val timeLabel = dep.at?.atZone(ZoneId.of("Europe/Berlin"))?.format(DateTimeFormatter.ofPattern("HH:mm")).orEmpty()
+                                        val onStart = {
+                                            store.commandFeedback.value = null
+                                            pendingStart = journey
+                                            onCommand(WatchCommand("start", dep.id, journey, "route/$quickRouteId"))
+                                        }
+                                        if (idx == 0) {
+                                            Button(onClick = onStart, enabled = !commandBusy && pendingStart == null && quickFresh, modifier = Modifier.fillMaxWidth()) {
+                                                Text("${dep.line} um $timeLabel starten", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        } else {
+                                            FilledTonalButton(onClick = onStart, enabled = !commandBusy && pendingStart == null && quickFresh, modifier = Modifier.fillMaxWidth()) {
+                                                Text("${dep.line} · $timeLabel", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                item {
+                                    Button(
+                                        onClick = { onCommand(WatchCommand("browse", "route/$quickRouteId")); view = "routes" },
+                                        enabled = !commandBusy,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text("Abfahrten laden") }
+                                }
+                            }
+                        } else {
+                            item {
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("Keine Fahrt", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, color = Lime)
+                                    Spacer(Modifier.height(12.dp))
+                                    Text("Am Handy eine Fahrt wählen.", textAlign = TextAlign.Center, color = Soft, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                         }
                     } else {
@@ -185,7 +263,62 @@ fun WatchScreen(
                             StatusText(if (!current.running && dataState == WatchDataState.OFFLINE) "Fahrt pausiert · Stand ${WatchFreshness.clock(current.fetchedAt ?: current.sentAt)}"
                                 else WatchFreshness.label(current, now), Amber)
                         }
-                        if (dataState != WatchDataState.EXPIRED) item { RideHero(current, now, library.settings["watch_detail"] != "detail") }
+                        if (dataState != WatchDataState.EXPIRED) item {
+                            RideHero(
+                                ride = current,
+                                now = now,
+                                large = library.settings["watch_detail"] != "detail",
+                                leaveLabel = leaveLabel.takeIf { !current.boarded },
+                                hubPlatform = hubPlatform.takeIf { !current.boarded }
+                            )
+                        }
+                        // Alternate bus suggestion right on the wrist.
+                        if (altBusLine.isNotBlank()) {
+                            item {
+                                WatchPanel {
+                                    Text("Im Bus $altBusLine?", color = Amber, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    if (altBusDest.isNotBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text("Richtung $altBusDest", color = Color.White, fontSize = 12.sp, maxLines = 2)
+                                    }
+                                    if (altBusTarget.isNotBlank()) {
+                                        Text("Ziel $altBusTarget bleibt", color = Soft, fontSize = 11.sp, maxLines = 1)
+                                    }
+                                }
+                            }
+                            item {
+                                Button(onClick = { onCommand(WatchCommand("switch_alternate", journey = journey)) }, enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Zu $altBusLine wechseln")
+                                }
+                            }
+                            item {
+                                FilledTonalButton(onClick = { onCommand(WatchCommand("dismiss_alternate", journey = journey)) }, enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Nein, aktueller Bus")
+                                }
+                            }
+                        }
+                        // Phase-aware primary one-button action directly below the hero.
+                        if (!current.boarded && missedPrompt && !current.demo) {
+                            item {
+                                Button(onClick = { onCommand(WatchCommand("missed_passed", journey = journey)) }, enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Durchgefahren · Nächster", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            item {
+                                FilledTonalButton(onClick = { onCommand(WatchCommand("missed_full", journey = journey)) }, enabled = !commandBusy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Zu voll · Nächster", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        } else if (!current.boarded && "board" in allowedActions) {
+                            item {
+                                Button(onClick = { onCommand(WatchCommand("board", journey = journey)) }, enabled = !commandBusy,
+                                    modifier = Modifier.fillMaxWidth()) { Text("Bin im Bus") }
+                            }
+                        } else if (current.boarded && current.nextStop.isBlank() && "target" in allowedActions) {
+                            item {
+                                Button(onClick = { view = "targets" }, modifier = Modifier.fillMaxWidth()) { Text("Ziel wählen") }
+                            }
+                        }
                         item {
                             FilledTonalButton(
                                 onClick = { view = WatchActivity.VIEW_MAP },
@@ -224,7 +357,7 @@ fun WatchScreen(
                                 Text(current.nextStop, style = MaterialTheme.typography.titleMedium)
                             }
                         }
-                        if (!current.boarded && "board" in allowedActions) item {
+                        if (!current.boarded && missedPrompt && "board" in allowedActions) item {
                             FilledTonalButton(onClick = { onCommand(WatchCommand("board", journey = journey)) }, enabled = !commandBusy,
                                 modifier = Modifier.fillMaxWidth()) { Text("Bin im Bus") }
                         }
@@ -279,6 +412,8 @@ private fun WatchLiveMapView(
     mapMode: String,
     refreshing: Boolean,
     commandBusy: Boolean,
+    canBoard: Boolean = false,
+    onBoard: () -> Unit = {},
     onToggleMapMode: () -> Unit,
     onRefresh: () -> Unit,
     onBackToRide: () -> Unit
@@ -365,23 +500,33 @@ private fun WatchLiveMapView(
         }
 
         if (showHud) {
-            Row(
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp, start = 18.dp, end = 18.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(bottom = 10.dp, start = 16.dp, end = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                CompactButton(onClick = onBackToRide) {
-                    Text("Fahrt", fontSize = 11.sp)
-                }
-                if (active) {
-                    CompactButton(onClick = onToggleMapMode, enabled = !commandBusy) {
-                        Text(if (isFocusMode) "Strecke" else "Bus", fontSize = 11.sp)
+                if (canBoard) {
+                    CompactButton(onClick = onBoard, enabled = !commandBusy) {
+                        Text("Bin im Bus", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                CompactButton(onClick = onRefresh, enabled = !refreshing) {
-                    Text(if (refreshing) "…" else "Neu", fontSize = 11.sp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CompactButton(onClick = onBackToRide) {
+                        Text("Fahrt", fontSize = 11.sp)
+                    }
+                    if (active) {
+                        CompactButton(onClick = onToggleMapMode, enabled = !commandBusy) {
+                            Text(if (isFocusMode) "Strecke" else "Bus", fontSize = 11.sp)
+                        }
+                    }
+                    CompactButton(onClick = onRefresh, enabled = !refreshing) {
+                        Text(if (refreshing) "…" else "Neu", fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -389,17 +534,33 @@ private fun WatchLiveMapView(
 }
 
 @Composable
-private fun RideHero(ride: WatchRide, now: Instant, large: Boolean = true) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFFB40055)).padding(horizontal = 14.dp, vertical = 16.dp),
+private fun RideHero(
+    ride: WatchRide,
+    now: Instant,
+    large: Boolean = true,
+    leaveLabel: String? = null,
+    hubPlatform: String? = null
+) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFFB40055)).padding(horizontal = 14.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("${ride.line} → ${ride.destination}", color = Color.White, style = MaterialTheme.typography.labelMedium,
+        val header = listOfNotNull(
+            hubPlatform?.takeIf { it.isNotBlank() },
+            "${ride.line} → ${ride.destination}"
+        ).joinToString(" · ")
+        Text(header, color = Color.White, style = MaterialTheme.typography.labelMedium,
             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         val display = rideTimeDisplay(ride, now)
-        Text(display.value, color = Color.White, fontSize = if (!large || display.value.length > 7) 26.sp else 36.sp, fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center, maxLines = 1)
+        val primaryValue = leaveLabel?.takeIf { it.isNotBlank() } ?: display.value
+        val secondaryDetail = if (!leaveLabel.isNullOrBlank()) {
+            "Abfahrt ${display.value} · ${display.detail}"
+        } else {
+            display.detail
+        }
+        Text(primaryValue, color = Color.White, fontSize = if (!large || primaryValue.length > 7) 24.sp else 36.sp, fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(4.dp))
-        Text(display.detail, color = Color.White, fontSize = 13.sp, textAlign = TextAlign.Center)
+        Text(secondaryDetail, color = Color.White, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 

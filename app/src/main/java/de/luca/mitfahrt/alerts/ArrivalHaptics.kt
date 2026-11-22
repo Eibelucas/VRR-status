@@ -29,11 +29,33 @@ object ArrivalHaptics {
         trigger(context)
     }.getOrDefault(false)
 
+    /** Distinct 3-2-1 tactile pulse before exit (3 short pulses = 3 stops, 2 short pulses = 2 stops). */
+    fun pulseCountdown(context: Context, id: String, stopsRemaining: Int) {
+        val pattern = when (stopsRemaining) {
+            3 -> "countdown_3"
+            2 -> "countdown_2"
+            else -> return
+        }
+        val store = AppSettingsStore(context)
+        val settings = store.current()
+        store.close()
+        if (!settings.bool("exit_countdown_haptics", true)) return
+        if (!RuntimeAlertOptions.from(settings).allowed("exit", Instant.now())) return
+        val waveform = waveform(pattern) ?: return
+        val prefs = context.getSharedPreferences("arrival_haptics", Context.MODE_PRIVATE)
+        val seen = prefs.getStringSet("seen", emptySet()).orEmpty()
+        if (id in seen) return
+        prefs.edit().putStringSet("seen", (seen.toList().takeLast(99) + id).toSet()).apply()
+        trigger(context, waveform)
+    }
+
     internal fun waveform(name: String): LongArray? = when (name) {
         "off" -> null
         "short" -> longArrayOf(0, 160)
         "long" -> longArrayOf(0, 650)
         "triple" -> longArrayOf(0, 180, 100, 180, 100, 180)
+        "countdown_3" -> longArrayOf(0, 90, 90, 90, 90, 90)
+        "countdown_2" -> longArrayOf(0, 90, 90, 90)
         else -> longArrayOf(0, 250, 120, 250)
     }
 

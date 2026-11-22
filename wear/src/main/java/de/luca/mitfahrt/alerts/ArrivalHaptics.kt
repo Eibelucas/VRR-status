@@ -27,6 +27,16 @@ object ArrivalHaptics {
             val critical = (id.startsWith("cancelled/") || id.startsWith("delay/")) && config.getString("quiet_critical", "false") == "true"
             if (quiet && !critical) return
         }
+        if (id.startsWith("exit_countdown/")) {
+            val remaining = id.substringAfterLast('/').toIntOrNull()
+            val wavePattern = when (remaining) {
+                3 -> "countdown_3"
+                2 -> "countdown_2"
+                else -> return
+            }
+            trigger(context, wavePattern)
+            return
+        }
         val kind = when {
             id.startsWith("exit/") -> "exit"
             id.startsWith("walking/") -> "walking"
@@ -49,6 +59,8 @@ object ArrivalHaptics {
             val wave = when (pattern) {
                 "short" -> longArrayOf(0, 180)
                 "long" -> longArrayOf(0, 600)
+                "countdown_3" -> longArrayOf(0, 90, 90, 90, 90, 90)
+                "countdown_2" -> longArrayOf(0, 90, 90, 90)
                 else -> longArrayOf(0, 250, 120, 250)
             }
             vibrator.vibrate(VibrationEffect.createWaveform(wave, -1),

@@ -18,6 +18,12 @@ class MitfahrtWidgetProvider : AppWidgetProvider() {
                 // A tap on the widget's refresh button and the first load after setup are user requests.
                 MitfahrtWidgets.refreshAsync(context, ids, userInitiated = true, pending = goAsync())
             }
+            MitfahrtWidgets.ACTION_FLIP_SMART_ROUTE -> {
+                val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+                if (widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    MitfahrtWidgets.flipSmartRoute(context, widgetId, goAsync())
+                }
+            }
             MitfahrtWidgets.ACTION_RENDER -> MitfahrtWidgets.render(context)
             else -> super.onReceive(context, intent)
         }

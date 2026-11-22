@@ -404,6 +404,25 @@ fun MitfahrtApp(
                                 }
                             }
                         }
+                        // Bus passed or departed while still waiting: one tap logs it and switches to the next bus.
+                        if (tracking.missedBusPrompt && !ride.boarded && !ride.demo && !ride.departure.cancelled) item {
+                            AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Bus verpasst?", fontWeight = FontWeight.SemiBold)
+                                    Text("Ein Tipp hält es im Fahrtbericht fest und wechselt auf den nächsten Bus zu deinem Ziel.",
+                                        color = Soft, fontSize = 14.sp, lineHeight = 19.sp)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(onClick = { de.luca.mitfahrt.tracking.RideService.correct(context, de.luca.mitfahrt.tracking.RideService.MISSED_PASSED) },
+                                            modifier = Modifier.heightIn(min = 48.dp)) { Text("Durchgefahren") }
+                                        OutlinedButton(onClick = { de.luca.mitfahrt.tracking.RideService.correct(context, de.luca.mitfahrt.tracking.RideService.MISSED_FULL) },
+                                            modifier = Modifier.heightIn(min = 48.dp)) { Text("Zu voll") }
+                                    }
+                                }
+                            }
+                        }
+                        tracking.forecastDivergence?.takeIf { it.journeyKey == ride.departure.key }?.let { divergence ->
+                            item { Text(divergence.label, color = Amber, fontSize = 13.sp, lineHeight = 18.sp) }
+                        }
                         if (!ride.departure.cancelled && !ride.demo) item {
                             BoardingControls(ride, tracking.boarding, settings.bool("boarding_auto", true) && tracking.location != null,
                                 onBoard = vm::boardBus, onNotOnBoard = vm::notOnBoard, onStillOnBoard = vm::stillOnBoard, onEnd = { confirmStop = true })

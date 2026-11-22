@@ -54,6 +54,14 @@ class MitfahrtApplication : Application() {
         super.onCreate()
         runCatching { watch.start() }
         runCatching { de.luca.mitfahrt.updates.UpdateScheduler.schedule(this) }
+        runCatching { de.luca.mitfahrt.tracking.MorningCheckScheduler.scheduleNext(this) }
+        widgetScope.launch(Dispatchers.IO) {
+            runCatching {
+                de.luca.mitfahrt.data.OfflinePrefetcher.prefetchIfDue(
+                    this@MitfahrtApplication, settings.current(), routePlans.current().routes, offlineBoards, vrr
+                )
+            }
+        }
         widgetScope.launch { store.state.collect { runCatching { MitfahrtWidgets.trackingChanged(this@MitfahrtApplication) } } }
         widgetScope.launch { store.state.collect { runCatching { de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication) } } }
         // A leg counts as started only once its ride is really tracked, never by timetable time.
@@ -65,7 +73,7 @@ class MitfahrtApplication : Application() {
         }
         widgetScope.launch { runCatching { journeyReports.prune() } }
         widgetScope.launch { settings.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
-        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
+        widgetScope.launch { routePlans.state.drop(1).collect { runCatching { de.luca.mitfahrt.tracking.MorningCheckScheduler.scheduleNext(this@MitfahrtApplication); MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
         widgetScope.launch { savedStops.state.drop(1).collect { runCatching { MitfahrtWidgets.settingsChanged(this@MitfahrtApplication); de.luca.mitfahrt.widgets.BusMapWidget.update(this@MitfahrtApplication, force = true) } } }
         widgetScope.launch {
             kotlinx.coroutines.flow.combine(savedStops.state, settings.state) { _, _ -> Unit }.collect {

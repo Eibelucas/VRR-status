@@ -116,6 +116,26 @@ class WidgetStore(context: Context) {
 
     fun removeAll() = synchronized(guard) { activeSnapshots.clear(); prefs.edit().clear().apply() }
 
+    fun smartFlip(widgetId: Int, now: Instant = Instant.now()): String? = synchronized(guard) {
+        val until = prefs.getLong("$widgetId.flip_until", 0L)
+        if (until <= now.epochSecond) return@synchronized null
+        prefs.getString("$widgetId.flip_route", null)?.takeIf { it.isNotBlank() }
+    }
+
+    fun setSmartFlip(widgetId: Int, routeId: String?, expiresAt: Instant?) = synchronized(guard) {
+        prefs.edit().apply {
+            if (routeId.isNullOrBlank() || expiresAt == null) {
+                remove("$widgetId.flip_route")
+                remove("$widgetId.flip_until")
+            } else {
+                putString("$widgetId.flip_route", routeId)
+                putLong("$widgetId.flip_until", expiresAt.epochSecond)
+            }
+            remove("$widgetId.snapshot")
+            remove("$widgetId.snapshot_content")
+        }.apply()
+    }
+
     private companion object {
         const val PREFS = "mitfahrt_widgets"
         val guard = Any()
@@ -126,6 +146,7 @@ class WidgetStore(context: Context) {
         val application = app as? MitfahrtApplication
         val detail = when (config.kind) {
             WidgetKind.ROUTE -> application?.routePlans?.current()?.routes?.firstOrNull { it.id == config.targetId }?.toString() ?: "missing"
+            WidgetKind.SMART_ROUTE -> application?.routePlans?.current()?.routes?.joinToString("|") { "${it.id}:${it.enabled}:${it.name}" }.orEmpty()
             WidgetKind.ACTIVE -> application?.store?.state?.value?.ride?.departure?.key.orEmpty()
             WidgetKind.STOP -> ""
         }
@@ -144,6 +165,12 @@ object WidgetSnapshotCodec {
         snapshot.failedAt?.let { put("failedAt", it.toString()) }
         put("partial", snapshot.partial)
         put("targetMissing", snapshot.targetMissing)
+        put("offlineFallback", snapshot.offlineFallback)
+        snapshot.resolvedRouteId?.let { put("resolvedRouteId", it) }
+        snapshot.resolvedRouteName?.let { put("resolvedRouteName", it) }
+        snapshot.resolvedWalkMinutes?.let { put("resolvedWalkMinutes", it) }
+        snapshot.resolvedBufferMinutes?.let { put("resolvedBufferMinutes", it) }
+        snapshot.smartEmptyReason?.let { put("smartEmptyReason", it) }
         put("departures", JSONArray(snapshot.departures.take(MAX_DEPARTURES).map(::departure)))
         // A tracked ride is personal. The optional display-only refresh stays in memory.
     }.toString()
@@ -162,7 +189,13 @@ object WidgetSnapshotCodec {
             failure = obj.optString("failure", "").let { name -> FetchFailure.entries.firstOrNull { it.name == name } },
             failedAt = obj.instant("failedAt"),
             partial = obj.optBoolean("partial", false),
-            targetMissing = obj.optBoolean("targetMissing", false)
+            targetMissing = obj.optBoolean("targetMissing", false),
+            offlineFallback = obj.optBoolean("offlineFallback", false),
+            resolvedRouteId = obj.optString("resolvedRouteId", "").ifBlank { null },
+            resolvedRouteName = obj.optString("resolvedRouteName", "").ifBlank { null },
+            resolvedWalkMinutes = if (obj.has("resolvedWalkMinutes") && !obj.isNull("resolvedWalkMinutes")) obj.optInt("resolvedWalkMinutes") else null,
+            resolvedBufferMinutes = if (obj.has("resolvedBufferMinutes") && !obj.isNull("resolvedBufferMinutes")) obj.optInt("resolvedBufferMinutes") else null,
+            smartEmptyReason = obj.optString("smartEmptyReason", "").ifBlank { null }
         )
     }.getOrDefault(WidgetSnapshot())
 

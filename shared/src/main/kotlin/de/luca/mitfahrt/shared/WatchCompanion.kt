@@ -24,7 +24,10 @@ object WatchCompanion {
     const val COMMAND = "/mitfahrt/command/v1"
     const val RESULT = "/mitfahrt/command-result/v1"
     const val MAX_BYTES = 65_536
-    private val actions = setOf("browse", "start", "board", "arrival", "stop", "target", "refresh")
+    private val actions = setOf(
+        "browse", "start", "board", "arrival", "stop", "target", "refresh",
+        "map_mode", "next_leg", "missed_passed", "missed_full", "switch_alternate", "dismiss_alternate"
+    )
 
     fun encode(value: WatchLibrary): ByteArray = write { out ->
         out.writeLong(value.sentAt.toEpochMilli())

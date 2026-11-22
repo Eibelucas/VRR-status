@@ -52,6 +52,17 @@ internal object WidgetRenderer {
 
         views.setTextViewText(R.id.mitfahrt_widget_title, model.title)
         paint.color(views, R.id.mitfahrt_widget_title, "setTextColor") { it.text }
+        if (kind == WidgetKind.SMART_ROUTE) {
+            val flipIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode(widgetId, SLOT_MAP),
+                Intent(context, MitfahrtWidgetProvider::class.java)
+                    .setAction(MitfahrtWidgets.ACTION_FLIP_SMART_ROUTE)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.mitfahrt_widget_title, flipIntent)
+        }
 
         views.setViewVisibility(R.id.mitfahrt_widget_header, if (spec.showHeader) View.VISIBLE else View.GONE)
         val status = model.statusLine?.takeIf { spec.showStatusLine }
