@@ -1,0 +1,9 @@
+{
+  "applicationId": "de.luca.mitfahrt",
+  "versionCode": 20261102,
+  "versionName": "26.11.2",
+  "minSdk": 30,
+  "apkAssetName": "Mitfahrt-Wear-26.11.2.apk",
+  "size": 3362250,
+  "sha256": "9e6f4b73cd99e0553582adb5e40349a7285e623bff2b5cd76363a6f4b5af013c"
+}
