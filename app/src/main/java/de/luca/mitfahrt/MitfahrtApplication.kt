@@ -16,7 +16,8 @@ import de.luca.mitfahrt.data.RouteHistoryStore
 
 class MitfahrtApplication : Application() {
     private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val settings by lazy { de.luca.mitfahrt.data.AppSettingsStore(this) }
+    val settingsStore by lazy { de.luca.mitfahrt.data.AppSettingsStore(this) }
+    private val settings get() = settingsStore
     val archive by lazy { de.luca.mitfahrt.data.JourneyArchiveStore(this).apply {
         setEnabled(settings.current().bool("history_enabled", true))
         setRetentionDays(settings.current().int("history_days", 0))

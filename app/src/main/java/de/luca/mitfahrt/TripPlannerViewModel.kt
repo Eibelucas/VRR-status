@@ -55,6 +55,7 @@ class TripPlannerViewModel(application: Application) : AndroidViewModel(applicat
     val waitingForPosition = waitingState.asStateFlow()
 
     private var position: GeoPoint? = null
+    val currentPosition: GeoPoint? get() = position
     private var placeJob: Job? = null
 
     /**
@@ -168,9 +169,9 @@ class TripPlannerViewModel(application: Application) : AndroidViewModel(applicat
             results = if (text.isBlank()) emptyList() else placeState.value.results, searched = false)
         if (text.trim().length < 2) return
         placeJob = viewModelScope.launch {
-            delay(350)
+            delay(220)
             try {
-                val found = app.vrr.places(text)
+                val found = app.vrr.places(text, position)
                 if (placeState.value.field == field && placeState.value.text == text)
                     placeState.value = placeState.value.copy(results = found, loading = false, searched = true)
             } catch (e: CancellationException) { throw e
@@ -200,7 +201,7 @@ class TripPlannerViewModel(application: Application) : AndroidViewModel(applicat
 
     /** Opens the planner for a saved route (stop to stop); creates nothing. */
     fun planRoute(plan: RoutePlan) {
-        formState.value = PlannerForm(TripPlace.stop(plan.origin), TripPlace.stop(plan.destination))
+        formState.value = PlannerForm(TripPlace.stop(plan.origin), TripPlace.stop(plan.effectiveDestination()))
         changed()
     }
 

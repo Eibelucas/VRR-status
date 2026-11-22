@@ -74,6 +74,7 @@ object TripPlaces {
     private fun placeJson(place: TripPlace) = JSONObject().apply {
         put("kind", place.kind.name); put("id", place.id); put("name", place.name)
         if (place.locality.isNotBlank()) put("locality", place.locality)
+        if (place.category.isNotBlank()) put("category", place.category)
         // Only public coordinates of a chosen stop/address; never the user's own position.
         if (!place.isMyLocation) place.point?.let { put("lat", it.lat); put("lon", it.lon) }
     }
@@ -82,7 +83,7 @@ object TripPlaces {
         val kind = PlaceKind.valueOf(obj.getString("kind"))
         if (kind == PlaceKind.MY_LOCATION) return@runCatching TripPlace.MY_LOCATION
         val point = if (obj.has("lat") && obj.has("lon")) GeoPoint(obj.optDouble("lat", Double.NaN), obj.optDouble("lon", Double.NaN)) else null
-        clean(TripPlace(kind, obj.optString("id"), obj.getString("name"), obj.optString("locality"), point))
+        clean(TripPlace(kind, obj.optString("id"), obj.getString("name"), obj.optString("locality"), point, obj.optString("category")))
     }.getOrNull()
 
     fun encode(state: TripPlacesState): String = JSONObject().apply {

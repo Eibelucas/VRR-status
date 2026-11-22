@@ -1,0 +1,12 @@
+<resources>
+    <!-- Dark window before Compose draws, so the app does not flash white when opened at night. -->
+    <style name="Theme.Mitfahrt" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#18131D</item>
+        <item name="android:navigationBarColor">#18131D</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#18131D</item>
+        <item name="android:colorAccent">#FF9BC7</item>
+    </style>
+</resources>

@@ -67,7 +67,9 @@ data class ScoredVehicle(
     /** Not enough independent measurements for an automatic decision. */
     val insufficient: Boolean = false,
     /** Along-route position, if the vehicle could be placed on the line. */
-    val offset: Double? = null
+    val offset: Double? = null,
+    /** Strong direct NEW+VRR API match (schedule path or matching station ID + live time + direction). */
+    val directApiMatch: Boolean = false
 )
 
 enum class MatchMode { WAITING, RIDING }
@@ -76,7 +78,8 @@ enum class MatchMode { WAITING, RIDING }
  * Point rules. Thresholds were chosen from the geometry of real MG bus operation:
  * consecutive stops are mostly 250–600 m apart, buses of one line run 10–20 min apart,
  * consumer GPS is typically 5–30 m accurate in streets and NEW positions are a few seconds old.
- * Tests cover the situations listed in the task; real-world tuning still needs field data.
+ * Direct API signals (NEW stationid, geomatching.LIDNAME, FAHRTWEG, VRR live stop times) work
+ * without phone GPS in both waiting and riding modes; phone GPS co-movement corroborates when available.
  */
 object VehicleScoring {
     /** Within this many metres of the boarding stop a vehicle counts as "at the stop". */
@@ -92,11 +95,16 @@ object VehicleScoring {
                 now: Instant, scheduleConfirmed: Boolean): ScoredVehicle {
         val reasons = mutableListOf<MatchReason>()
         if (scheduleConfirmed) reasons += MatchReason("NEW-Fahrplanweg passt zu dieser Fahrt", 100)
-        directionReason(ride, vehicle)?.let(reasons::add)
+        val dir = directionReason(ride, vehicle)
+        dir?.let(reasons::add)
+        val directionMatches = (dir?.points ?: 0) > 0
         val boardingOffset = reference?.offsetOf(ride.boardingIndex)
         if (reference == null || boardingOffset == null) {
+            val stopSignal = currentStopReason(ride, null, null, vehicle, now, MatchMode.WAITING)
+            stopSignal.reason?.let(reasons::add)
+            val direct = scheduleConfirmed || (stopSignal.strongMatch && directionMatches)
             return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons + MatchReason("Keine Haltestellenlage bekannt", 0),
-                insufficient = !scheduleConfirmed)
+                insufficient = !direct, directApiMatch = direct)
         }
         val window = boardingOffset + PASSED * 2
         val projection = reference.line.project(vehicle.point, 0.0, window)
@@ -127,16 +135,215 @@ object VehicleScoring {
                 }
             }
         }
+        val stopSignal = currentStopReason(ride, reference, projection.offset, vehicle, now, MatchMode.WAITING)
+        stopSignal.reason?.let(reasons::add)
         nextStopReason(ride, reference, projection.offset, vehicle)?.let(reasons::add)
 
-        val expectedDelay = ride.liveBoardingTime(now)?.let { live ->
+        val expectedDelay = expectedRideDelay(ride, now)
+        val liveTimeMatched = addTimeReasons(ride, reference, projection.offset, vehicle, now, expectedDelay, reasons)
+        val direct = scheduleConfirmed || (stopSignal.strongMatch && (directionMatches || liveTimeMatched))
+        return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons,
+            insufficient = measurements < 2 && !direct, offset = projection.offset, directApiMatch = direct)
+    }
+
+    /**
+     * Identifies the bus while riding. Uses direct NEW+VRR API signals (schedule path, NEW station ID,
+     * geomatching.LIDNAME direction, route position, and VRR live stop times) so it works without phone GPS.
+     * When fresh phone GPS fixes are present, co-movement scoring corroborates or vetoes (e.g. walking).
+     */
+    fun riding(ride: Ride, reference: RouteReference?, vehicle: NewVehicle, history: List<VehicleObservation>,
+               phone: List<PhoneFix>, now: Instant, scheduleConfirmed: Boolean): ScoredVehicle {
+        val reasons = mutableListOf<MatchReason>()
+        val dir = directionReason(ride, vehicle)
+        dir?.let(reasons::add)
+        val directionMatches = (dir?.points ?: 0) > 0
+
+        val observations = (history + VehicleObservation(vehicle.point, vehicle.observedAt)).distinctBy { it.at }
+            .filter { Duration.between(it.at, now).seconds in -15..WINDOW_SECONDS }.sortedBy { it.at }
+        val fixes = phone.filter { it.accuracy <= 60f && Duration.between(it.at, now).seconds in -5..WINDOW_SECONDS }.sortedBy { it.at }
+        val hasFreshPhone = fixes.isNotEmpty() && Duration.between(fixes.last().at, now).seconds <= 45
+
+        data class Pair(val observation: VehicleObservation, val fix: PhoneFix, val residual: Double)
+        val pairs = if (!hasFreshPhone) emptyList() else observations.mapIndexedNotNull { index, observation ->
+            val fix = fixes.minByOrNull { abs(Duration.between(it.at, observation.at).seconds) } ?: return@mapIndexedNotNull null
+            val gap = abs(Duration.between(fix.at, observation.at).toMillis()) / 1000.0
+            if (gap > PAIR_SECONDS) return@mapIndexedNotNull null
+            val neighbour = observations.getOrNull(index - 1) ?: observations.getOrNull(index + 1)
+            val speed = neighbour?.let { other ->
+                val seconds = abs(Duration.between(other.at, observation.at).toMillis()) / 1000.0
+                if (seconds >= 1.0) other.point.distanceTo(observation.point) / seconds else null
+            }?.coerceAtMost(25.0) ?: 10.0
+            val allowance = fix.accuracy + VEHICLE_GPS_METRES + speed * gap
+            Pair(observation, fix, observation.point.distanceTo(fix.point) - allowance)
+        }
+
+        // Direct API telemetry path: works when schedule is confirmed, when NEW reports a matching stop ID,
+        // or when no phone GPS is used at all.
+        val projection = reference?.let { ref ->
+            val from = (ref.offsetOf(ride.boardingIndex) ?: 0.0) - PASSED
+            ref.line.project(vehicle.point, from.coerceAtLeast(0.0), ref.line.length)
+                ?: ref.line.project(vehicle.point)
+        }
+        val onRoute = reference != null && projection != null && projection.distance <= reference.lateralTolerance()
+        val stopSignal = currentStopReason(ride, reference, projection?.offset, vehicle, now, MatchMode.RIDING)
+
+        if (pairs.size >= 2) {
+            if (scheduleConfirmed) reasons += MatchReason("NEW-Fahrplanweg passt zu dieser Fahrt", 30)
+            val close = pairs.count { it.residual <= 0.0 }
+            reasons += MatchReason("$close von ${pairs.size} Messungen nah beieinander", (40.0 * close / pairs.size).toInt())
+            if (pairs.any { it.residual > 150.0 }) reasons += MatchReason("zeitweise deutlich entfernt", -40)
+
+            val first = pairs.first()
+            val last = pairs.last()
+            val vehicleDistance = first.observation.point.distanceTo(last.observation.point)
+            val phoneDistance = first.fix.point.distanceTo(last.fix.point)
+            val seconds = Duration.between(first.observation.at, last.observation.at).seconds.coerceAtLeast(1)
+            when {
+                vehicleDistance >= 300.0 -> reasons += MatchReason("gemeinsam ${vehicleDistance.toInt()} m zurückgelegt", 25)
+                vehicleDistance >= 150.0 -> reasons += MatchReason("gemeinsam ${vehicleDistance.toInt()} m zurückgelegt", 10)
+            }
+            if (vehicleDistance >= 100.0) {
+                val ratio = phoneDistance / vehicleDistance
+                reasons += if (ratio in 0.6..1.6) MatchReason("ähnliche Strecke", 10) else MatchReason("unterschiedliche Strecke", -20)
+            }
+            var oppositeHeading = false
+            if (vehicleDistance >= 80.0 && phoneDistance >= 80.0) {
+                val angle = Geo.angle(Geo.bearing(first.observation.point, last.observation.point), Geo.bearing(first.fix.point, last.fix.point))
+                reasons += when {
+                    angle <= 35.0 -> MatchReason("gleiche Bewegungsrichtung", 15)
+                    angle > 90.0 -> { oppositeHeading = true; MatchReason("andere Bewegungsrichtung", -40) }
+                    else -> MatchReason("ähnliche Richtung", 0)
+                }
+            }
+            val phoneSpeed = phoneDistance / seconds
+            val vehicleSpeed = vehicleDistance / seconds
+            val walking = seconds >= 45 && vehicleSpeed > 4.0 && phoneSpeed < 2.2
+            if (walking) reasons += MatchReason("Handy bewegt sich wie zu Fuß", -50)
+
+            reference?.let { ref ->
+                if (onRoute) {
+                    if (ref.exact) reasons += MatchReason("auf dem Linienverlauf", 10)
+                } else if (ref.exact) reasons += MatchReason("abseits des Linienverlaufs", -15)
+            }
+            if (!walking && !oppositeHeading) {
+                stopSignal.reason?.let(reasons::add)
+            }
+            val moving = vehicleDistance >= 100.0
+            val direct = scheduleConfirmed || (!walking && !oppositeHeading && stopSignal.strongMatch && directionMatches)
+            return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons,
+                insufficient = !moving && !direct, offset = projection?.offset, directApiMatch = direct)
+        }
+
+        // No usable phone GPS pairs: identify directly from NEW+VRR live feeds when possible.
+        val canUseApiOnly = scheduleConfirmed || stopSignal.matched || phone.isEmpty()
+        if (!canUseApiOnly) {
+            val missing = if (!hasFreshPhone) "keine aktuelle Handyposition" else "zu wenige gleichzeitige Messungen"
+            return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons + MatchReason(missing, 0), insufficient = true)
+        }
+
+        if (scheduleConfirmed) reasons += MatchReason("NEW-Fahrplanweg passt zu dieser Fahrt", 100)
+        stopSignal.reason?.let(reasons::add)
+        var measurements = 1
+        if (reference != null && projection != null) {
+            if (onRoute) {
+                if (reference.exact) reasons += MatchReason("auf dem Linienverlauf", if (projection.distance <= 40.0) 15 else 5)
+            } else if (reference.exact) {
+                return ScoredVehicle(vehicle, 0, reasons, excluded = "abseits des Linienverlaufs")
+            }
+            val earlier = history.filter { Duration.between(it.at, vehicle.observedAt).seconds in 15..WINDOW_SECONDS }
+                .minByOrNull { it.at }
+            if (earlier != null) {
+                val old = reference.line.project(earlier.point)
+                if (old != null && old.distance <= reference.lateralTolerance()) {
+                    measurements++
+                    val moved = projection.offset - old.offset
+                    when {
+                        moved >= MIN_PROGRESS -> reasons += MatchReason("fährt entlang der Strecke", 20)
+                        moved <= -MIN_PROGRESS -> reasons += MatchReason("bewegt sich gegen die Fahrtrichtung", -45)
+                        else -> reasons += MatchReason("steht", 0)
+                    }
+                }
+            }
+            val nextStop = vehicle.nextStopName?.let(::normalizeName)?.takeIf { it.isNotEmpty() }
+            if (nextStop != null && ride.stops.indices.any { it >= ride.boardingIndex && normalizeName(ride.stops[it].name) == nextStop }) {
+                reasons += MatchReason("NEW meldet passenden nächsten Halt", 10)
+            }
+            val expectedDelay = expectedRideDelay(ride, now)
+            val liveTimeMatched = addTimeReasons(ride, reference, projection.offset, vehicle, now, expectedDelay, reasons)
+            val direct = scheduleConfirmed || (stopSignal.strongMatch && (directionMatches || liveTimeMatched || onRoute))
+            return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons,
+                insufficient = measurements < 2 && !direct, offset = projection.offset, directApiMatch = direct)
+        }
+        val direct = scheduleConfirmed || (stopSignal.strongMatch && directionMatches)
+        return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons,
+            insufficient = !direct, offset = projection?.offset, directApiMatch = direct)
+    }
+
+    private data class StopSignal(val matched: Boolean, val strongMatch: Boolean, val reason: MatchReason?)
+
+    private fun currentStopReason(ride: Ride, reference: RouteReference?, offset: Double?, vehicle: NewVehicle,
+                                  now: Instant, mode: MatchMode): StopSignal {
+        val byId = vehicle.currentStopId?.let { id ->
+            ride.stops.indices.filter { NewVehicleMatcher.matchesStopId(ride.stops[it].id, id) }
+        }.orEmpty()
+        val byName = if (byId.isNotEmpty()) emptyList() else vehicle.currentStopName?.let(::normalizeName)
+            ?.takeIf { it.length >= 3 }?.let { name ->
+                ride.stops.indices.filter { normalizeName(ride.stops[it].name) == name }
+            }.orEmpty()
+        val indices = byId.ifEmpty { byName }
+        if (indices.isEmpty()) return StopSignal(matched = false, strongMatch = false, reason = null)
+        val idx = indices.minByOrNull { index ->
+            val stopOffset = reference?.offsetOf(index)
+            if (offset != null && stopOffset != null) abs(stopOffset - offset)
+            else ride.stops[index].point?.distanceTo(vehicle.point) ?: Double.MAX_VALUE
+        } ?: return StopSignal(matched = false, strongMatch = false, reason = null)
+        val stop = ride.stops[idx]
+        if (mode == MatchMode.WAITING && idx > ride.boardingIndex) {
+            return StopSignal(matched = true, strongMatch = false,
+                reason = MatchReason("NEW meldet Halt nach deinem Einstieg", -25))
+        }
+        val stopTime = stop.effective(ride.offsetSeconds)
+        val hasLive = stop.estimated != null || ride.departure.estimated != null
+        val diff = stopTime?.let { abs(now.epochSecond - it.epochSecond) }
+        val byExactId = byId.isNotEmpty()
+        return when {
+            diff != null && diff <= 120 -> StopSignal(
+                matched = true,
+                strongMatch = byExactId || hasLive,
+                reason = MatchReason(if (byExactId) "NEW-Haltestelle passt zur Live-Zeit" else "NEW-Halt passt zur Live-Zeit", 35)
+            )
+            diff != null && diff <= 240 -> StopSignal(
+                matched = true,
+                strongMatch = byExactId && hasLive,
+                reason = MatchReason("NEW-Haltestelle passt zum Verlauf", 20)
+            )
+            diff != null && diff > 480 -> StopSignal(
+                matched = true,
+                strongMatch = false,
+                reason = MatchReason("NEW-Haltestelle passt zeitlich nicht", -30)
+            )
+            else -> StopSignal(
+                matched = true,
+                strongMatch = false,
+                reason = MatchReason("NEW meldet Haltestelle dieser Fahrt", 10)
+            )
+        }
+    }
+
+    private fun expectedRideDelay(ride: Ride, now: Instant): Long? =
+        ride.liveBoardingTime(now)?.let { live ->
             val planned = ride.stops.getOrNull(ride.boardingIndex)?.let { it.departure ?: it.arrival } ?: ride.departure.planned
             live.at.epochSecond - planned.epochSecond
-        }
-        reference.plannedTimeAt(ride, projection.offset)?.let { scheduled ->
+        } ?: ride.offsetSeconds.takeIf { ride.departure.estimated != null || ride.stops.any { s -> s.estimated != null } }
+
+    private fun addTimeReasons(ride: Ride, reference: RouteReference, offset: Double, vehicle: NewVehicle,
+                               now: Instant, expectedDelay: Long?, reasons: MutableList<MatchReason>): Boolean {
+        var liveAligned = false
+        reference.plannedTimeAt(ride, offset)?.let { scheduled ->
             val lateness = now.epochSecond - scheduled.epochSecond
             if (expectedDelay != null) {
                 val difference = abs(lateness - expectedDelay)
+                if (difference <= 180) liveAligned = true
                 reasons += when {
                     difference <= 90 -> MatchReason("Position passt zur Live-Zeit", 30)
                     difference <= 180 -> MatchReason("Position passt ungefähr zur Live-Zeit", 15)
@@ -157,83 +364,13 @@ object VehicleScoring {
             if (difference <= 120) reasons += MatchReason("NEW-Verspätung passt zur VRR-Zeit", 15)
             else if (difference > 300) reasons += MatchReason("NEW-Verspätung passt nicht zur VRR-Zeit", -25)
         }
-        return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons,
-            insufficient = measurements < 2 && !scheduleConfirmed, offset = projection.offset)
-    }
-
-    /**
-     * Compares movement of phone and vehicle over a sliding window. Every vehicle observation is
-     * paired with the phone fix closest in time; the allowance grows with both accuracies and
-     * with the time offset between the two measurements.
-     */
-    fun riding(ride: Ride, reference: RouteReference?, vehicle: NewVehicle, history: List<VehicleObservation>,
-               phone: List<PhoneFix>, now: Instant, scheduleConfirmed: Boolean): ScoredVehicle {
-        val reasons = mutableListOf<MatchReason>()
-        if (scheduleConfirmed) reasons += MatchReason("NEW-Fahrplanweg passt zu dieser Fahrt", 30)
-        directionReason(ride, vehicle)?.let(reasons::add)
-        val observations = (history + VehicleObservation(vehicle.point, vehicle.observedAt)).distinctBy { it.at }
-            .filter { Duration.between(it.at, now).seconds in -15..WINDOW_SECONDS }.sortedBy { it.at }
-        val fixes = phone.filter { it.accuracy <= 60f && Duration.between(it.at, now).seconds in -5..WINDOW_SECONDS }.sortedBy { it.at }
-        if (fixes.isEmpty() || Duration.between(fixes.last().at, now).seconds > 45) {
-            return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons + MatchReason("keine aktuelle Handyposition", 0), insufficient = true)
-        }
-        data class Pair(val observation: VehicleObservation, val fix: PhoneFix, val residual: Double)
-        val pairs = observations.mapIndexedNotNull { index, observation ->
-            val fix = fixes.minByOrNull { abs(Duration.between(it.at, observation.at).seconds) } ?: return@mapIndexedNotNull null
-            val gap = abs(Duration.between(fix.at, observation.at).toMillis()) / 1000.0
-            if (gap > PAIR_SECONDS) return@mapIndexedNotNull null
-            val neighbour = observations.getOrNull(index - 1) ?: observations.getOrNull(index + 1)
-            val speed = neighbour?.let { other ->
-                val seconds = abs(Duration.between(other.at, observation.at).toMillis()) / 1000.0
-                if (seconds >= 1.0) other.point.distanceTo(observation.point) / seconds else null
-            }?.coerceAtMost(25.0) ?: 10.0
-            val allowance = fix.accuracy + VEHICLE_GPS_METRES + speed * gap
-            Pair(observation, fix, observation.point.distanceTo(fix.point) - allowance)
-        }
-        if (pairs.size < 2) {
-            return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons + MatchReason("zu wenige gleichzeitige Messungen", 0), insufficient = true)
-        }
-        val close = pairs.count { it.residual <= 0.0 }
-        reasons += MatchReason("$close von ${pairs.size} Messungen nah beieinander", (40.0 * close / pairs.size).toInt())
-        if (pairs.any { it.residual > 150.0 }) reasons += MatchReason("zeitweise deutlich entfernt", -40)
-
-        val first = pairs.first()
-        val last = pairs.last()
-        val vehicleDistance = first.observation.point.distanceTo(last.observation.point)
-        val phoneDistance = first.fix.point.distanceTo(last.fix.point)
-        val seconds = Duration.between(first.observation.at, last.observation.at).seconds.coerceAtLeast(1)
-        when {
-            vehicleDistance >= 300.0 -> reasons += MatchReason("gemeinsam ${vehicleDistance.toInt()} m zurückgelegt", 25)
-            vehicleDistance >= 150.0 -> reasons += MatchReason("gemeinsam ${vehicleDistance.toInt()} m zurückgelegt", 10)
-        }
-        if (vehicleDistance >= 100.0) {
-            val ratio = phoneDistance / vehicleDistance
-            reasons += if (ratio in 0.6..1.6) MatchReason("ähnliche Strecke", 10) else MatchReason("unterschiedliche Strecke", -20)
-        }
-        if (vehicleDistance >= 80.0 && phoneDistance >= 80.0) {
-            val angle = Geo.angle(Geo.bearing(first.observation.point, last.observation.point), Geo.bearing(first.fix.point, last.fix.point))
-            reasons += when {
-                angle <= 35.0 -> MatchReason("gleiche Bewegungsrichtung", 15)
-                angle > 90.0 -> MatchReason("andere Bewegungsrichtung", -40)
-                else -> MatchReason("ähnliche Richtung", 0)
-            }
-        }
-        val phoneSpeed = phoneDistance / seconds
-        val vehicleSpeed = vehicleDistance / seconds
-        if (seconds >= 45 && vehicleSpeed > 4.0 && phoneSpeed < 2.2) reasons += MatchReason("Handy bewegt sich wie zu Fuß", -50)
-
-        reference?.let { ref ->
-            val projection = ref.line.project(vehicle.point)
-            if (projection != null && projection.distance <= ref.lateralTolerance()) {
-                if (ref.exact) reasons += MatchReason("auf dem Linienverlauf", 10)
-            } else if (ref.exact) reasons += MatchReason("abseits des Linienverlaufs", -15)
-        }
-        val moving = vehicleDistance >= 100.0
-        return ScoredVehicle(vehicle, reasons.sumOf { it.points }, reasons, insufficient = !moving && !scheduleConfirmed)
+        return liveAligned
     }
 
     private fun directionReason(ride: Ride, vehicle: NewVehicle): MatchReason? = when {
         NewVehicleMatcher.sameDirection(ride, vehicle) -> MatchReason("Richtung passt", 15)
+        NewVehicleMatcher.routeLabelDirection(ride, vehicle) > 0 -> MatchReason("NEW-Zielanzeige passt", 15)
+        NewVehicleMatcher.routeLabelDirection(ride, vehicle) < 0 -> MatchReason("NEW meldet Gegenrichtung", -45)
         !vehicle.directionReliable || vehicle.destination.isBlank() -> MatchReason("Richtung nicht eindeutig gemeldet", 0)
         else -> null
     }
@@ -257,7 +394,7 @@ object VehicleScoring {
 }
 
 enum class AutoMatchStatus { OFF, MANUAL, NO_DATA, SEARCHING, AMBIGUOUS, SUGGESTED, ASSIGNED, RECHECKING }
-enum class AutoMatchBasis { APPROACH, CO_MOVEMENT, SCHEDULE }
+enum class AutoMatchBasis { APPROACH, CO_MOVEMENT, SCHEDULE, TELEMETRY }
 
 data class AutoMatchOptions(val enabled: Boolean = false, val askFirst: Boolean = false) {
     companion object { val OFF = AutoMatchOptions() }
@@ -319,7 +456,7 @@ object AutoMatchEngine {
             val held = usable.firstOrNull { it.vehicle.id == heldId }
             if (held != null && held.score >= keep) {
                 return base.copy(status = AutoMatchStatus.ASSIGNED, lastSupport = now, misses = 0,
-                    basis = if (held.score >= 100 && mode == MatchMode.WAITING) AutoMatchBasis.SCHEDULE else previous.basis)
+                    basis = resolveBasis(held, mode, previous.basis ?: basis))
             }
             val misses = previous.misses + 1
             val sinceSupport = previous.lastSupport?.let { Duration.between(it, now).seconds } ?: Long.MAX_VALUE
@@ -331,6 +468,13 @@ object AutoMatchEngine {
                 note = "Bisherige Zuordnung nicht mehr bestätigt"), usable, assign, mode, basis, now, options)
         }
         return pick(base.copy(vehicleId = null, basis = null, misses = 0), usable, assign, mode, basis, now, options)
+    }
+
+    private fun resolveBasis(candidate: ScoredVehicle, mode: MatchMode, defaultBasis: AutoMatchBasis): AutoMatchBasis = when {
+        candidate.score >= 100 && candidate.reasons.any { it.text.contains("Fahrplanweg") } -> AutoMatchBasis.SCHEDULE
+        candidate.directApiMatch -> AutoMatchBasis.TELEMETRY
+        mode == MatchMode.RIDING && candidate.reasons.none { it.text.contains("Messungen nah") } -> AutoMatchBasis.TELEMETRY
+        else -> defaultBasis
     }
 
     private fun pick(state: AutoMatchState, usable: List<ScoredVehicle>, assign: Int, mode: MatchMode,
@@ -345,18 +489,18 @@ object AutoMatchEngine {
             val newMeasurement = !same || state.pendingObservedAt == null || best.vehicle.observedAt.isAfter(state.pendingObservedAt)
             val count = if (same) state.pendingCount + if (newMeasurement) 1 else 0 else 1
             val since = if (same) state.pendingSince ?: now else now
-            val stable = count >= CONFIRMATIONS && Duration.between(since, now).seconds >= MIN_CONFIRM_SECONDS
+            val stable = best.directApiMatch || (count >= CONFIRMATIONS && Duration.between(since, now).seconds >= MIN_CONFIRM_SECONDS)
             val pending = state.copy(pendingId = best.vehicle.id, pendingCount = count, pendingSince = since,
                 pendingObservedAt = best.vehicle.observedAt)
             if (!stable) return pending.copy(status = AutoMatchStatus.SEARCHING, note = state.note ?: "Fahrzeug wird bestätigt")
-            val chosenBasis = if (best.score >= 100 && mode == MatchMode.WAITING) AutoMatchBasis.SCHEDULE else basis
+            val chosenBasis = resolveBasis(best, mode, basis)
             return if (options.askFirst) pending.copy(status = AutoMatchStatus.SUGGESTED, vehicleId = best.vehicle.id, basis = chosenBasis)
             else pending.copy(status = AutoMatchStatus.ASSIGNED, vehicleId = best.vehicle.id, basis = chosenBasis,
                 lastSupport = now, misses = 0)
         }
         val reset = state.copy(pendingId = null, pendingCount = 0, pendingSince = null, pendingObservedAt = null)
         if (mode == MatchMode.RIDING && best.score >= RIDING_ASK && (second == null || best.score - second.score >= MARGIN / 2) && !best.insufficient) {
-            return reset.copy(status = AutoMatchStatus.SUGGESTED, vehicleId = best.vehicle.id, basis = basis)
+            return reset.copy(status = AutoMatchStatus.SUGGESTED, vehicleId = best.vehicle.id, basis = resolveBasis(best, mode, basis))
         }
         val plausible = usable.filter { it.score >= PLAUSIBLE }
         if (plausible.size >= 2) return reset.copy(status = AutoMatchStatus.AMBIGUOUS,

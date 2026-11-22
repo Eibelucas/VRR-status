@@ -28,8 +28,7 @@ fun HomeOverview(home: HomeState, routes: List<FrequentRoute>, now: Instant, cho
     onAllStops: () -> Unit, onRoute: (FrequentRoute) -> Unit, onDeparture: (Departure) -> Unit, onClearHistory: () -> Unit,
     onRemoveRoute: (FrequentRoute) -> Unit, showNearby: Boolean = true, showRoutes: Boolean = true,
     showSearch: Boolean = true) {
-    val context = LocalContext.current
-    val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
+    val settings by rememberAppSettingsStore().state.collectAsState()
     var allRoutes by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val speed = TripSettings.walkingSpeed(settings)

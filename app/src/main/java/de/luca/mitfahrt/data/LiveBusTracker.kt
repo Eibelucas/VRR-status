@@ -123,6 +123,14 @@ class LiveBusTracker(
         return observed
     }
 
+    /** Returns the already-cached fresh NEW fleet and per-vehicle tracks without making a network call. */
+    suspend fun fleetSnapshot(now: Instant = clock()): Pair<List<NewVehicle>, Map<String, List<VehicleObservation>>> = mutex.withLock {
+        val vehicles = fleet?.takeIf { now.toEpochMilli() - it.fetchedAt.toEpochMilli() in 0L..120_000L }
+            ?.vehicles?.filter { it.isFresh(now) }.orEmpty()
+        val tracks = vehicles.associate { it.id to history.track(it.id) }
+        vehicles to tracks
+    }
+
     private fun replace(vehicles: List<NewVehicle>, id: String, observed: NewVehicle?): List<NewVehicle> =
         vehicles.filterNot { it.id == id } + listOfNotNull(observed)
 

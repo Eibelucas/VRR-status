@@ -32,13 +32,17 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
         val tracking = app.store.state.value
         val ride = tracking.ride
         val entries = app.routePlans.current().routes.filter { it.enabled }.map {
-            WatchEntry("route", it.id, it.name, "${shortName(it.origin.name)} → ${shortName(it.destination.name)}")
+            WatchEntry("route", it.id, it.name, "${shortName(it.origin.name)} → ${shortName(it.effectiveDestination().name)}")
         } + app.savedStops.state.value.favorites.map { WatchEntry("stop", it.id, shortName(it.name), "Haltestelle") }
         val preferenceKeys = listOf("watch_start", "watch_detail", "watch_show_connection", "watch_actions", "watch_tile", "watch_tile_id",
             "alert_target", "quiet_enabled", "quiet_start", "quiet_end", "quiet_critical", "vibration_arrival", "vibration_exit",
             "vibration_walking", "vibration_delay", "vibration_cancelled", "watch_avoid_duplicates")
         val preferences = preferenceKeys.associateWith { config.string(it) } +
-            mapOf("journey_key" to (ride?.departure?.key ?: ""), "stops_revision" to (ride?.let(::stopsRevision) ?: "")) +
+            mapOf(
+                "journey_key" to (ride?.departure?.key ?: ""),
+                "stops_revision" to (ride?.let(::stopsRevision) ?: ""),
+                "watch_map_mode" to WatchFaceMapPublisher.modeName(app)
+            ) +
             // Identity of the tracked departure, so the watch can ask VRR itself while the phone is away.
             (ride?.takeUnless { it.demo }?.let { active -> mapOf("ride_stop_id" to active.departure.stopId,
                 "ride_line_id" to active.departure.lineId, "ride_trip_code" to active.departure.tripCode,
@@ -60,6 +64,10 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
             when (command.action) {
                 "browse" -> browse(command.id)
                 "start" -> start(command)
+                "map_mode" -> {
+                    val next = WatchFaceMapPublisher.toggleMode(app)
+                    if (next == de.luca.mitfahrt.widgets.MapWidgetMode.BUS_FOCUS) "Bus-Fokus" else "Gesamtstrecke"
+                }
                 "board" -> withRide(command) { ride -> app.store.setRide(ride.board("manual", java.time.Instant.now()), preserveStatus = true); "Einstieg bestätigt" }
                 "arrival" -> withRide(command) { ride ->
                     require(settings.current().bool("arrival_store", true)) { "Speichern eigener Ankünfte ist ausgeschaltet" }
@@ -98,8 +106,8 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
     }
 
     private suspend fun start(command: WatchCommand): String {
-        require(app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
-            android.os.Build.VERSION.SDK_INT < 33) { "Mitfahrt am Handy einrichten" }
+        require(android.os.Build.VERSION.SDK_INT < 33 ||
+            app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) { "Mitfahrt am Handy einrichten" }
         val previous = app.store.state.value.ride?.departure?.key.orEmpty()
         require(previous == command.journey) { "Aktuelle Fahrt hat sich geändert" }
         require(WatchCommandPolicy.startAllowed(command, previous, selected, choicesAt, Instant.now(),
@@ -110,7 +118,7 @@ internal class WatchCompanionPublisher(private val app: MitfahrtApplication) {
         require(!ride.departure.cancelled) { "Fahrt fällt aus" }
         val route = app.routePlans.current().routes.firstOrNull { "route/${it.id}" == selected }
         if (route != null) {
-            val index = SchoolTrips.targetIndex(ride, route.destination.id) ?: error("Ziel wird nicht bedient")
+            val index = SchoolTrips.targetIndex(ride, route.effectiveDestination().id) ?: error("Ziel wird nicht bedient")
             ride = ride.withExitTarget(index)
         }
         require(app.store.state.value.ride?.departure?.key.orEmpty() == previous) { "Aktuelle Fahrt hat sich geändert" }

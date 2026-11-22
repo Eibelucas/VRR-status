@@ -4,7 +4,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 
 import kotlinx.coroutines.launch
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -12,6 +15,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,6 +31,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.*
+import de.luca.mitfahrt.shared.WatchFaceMapSnapshot
 import de.luca.mitfahrt.shared.WatchRide
 import de.luca.mitfahrt.shared.WatchCommand
 import de.luca.mitfahrt.shared.WatchDeparture
@@ -39,14 +47,21 @@ private val Soft = Color(0xFFCAC0D0)
 private val Amber = Color(0xFFFFCB83)
 
 @Composable
-fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchCommand) -> Unit = {}) {
+fun WatchScreen(
+    store: WatchStore,
+    onRefresh: () -> Unit,
+    onCommand: (WatchCommand) -> Unit = {},
+    requestedView: String? = null,
+    requestedViewToken: Int = 0
+) {
     val ride by store.ride.collectAsStateWithLifecycle()
+    val watchFaceMap by store.watchFaceMap.collectAsStateWithLifecycle()
     val syncMessage by store.syncMessage.collectAsStateWithLifecycle()
     val refreshing by store.refreshing.collectAsStateWithLifecycle()
     val library by store.library.collectAsStateWithLifecycle()
     val commandBusy by store.commandBusy.collectAsStateWithLifecycle()
     val commandFeedback by store.commandFeedback.collectAsStateWithLifecycle()
-    var view by remember { mutableStateOf("active") }
+    var view by remember { mutableStateOf(requestedView ?: WatchActivity.VIEW_ACTIVE) }
     var confirmation by remember { mutableStateOf<WatchDeparture?>(null) }
     var confirmStop by remember { mutableStateOf(false) }
     var confirmationContext by remember { mutableStateOf("") }
@@ -58,6 +73,11 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
     var directBusy by remember { mutableStateOf(false) }
     var directMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(requestedViewToken) {
+        if (requestedViewToken > 0 && !requestedView.isNullOrBlank()) {
+            view = requestedView
+        }
+    }
     LaunchedEffect(journey, commandFeedback, commandBusy) {
         val sent = pendingStart ?: return@LaunchedEffect
         when (WatchStartFlow.resolve(sent, journey, commandFeedback != null && !commandBusy)) {
@@ -67,7 +87,9 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
         }
     }
     LaunchedEffect(journey) { direct = null; directMessage = null }
-    LaunchedEffect(library.settings["watch_start"]) { view = library.settings["watch_start"] ?: "active" }
+    LaunchedEffect(library.settings["watch_start"]) {
+        if (requestedViewToken == 0) view = library.settings["watch_start"] ?: "active"
+    }
     LaunchedEffect(journey, library.selected) { confirmation = null; confirmStop = false }
     val allowedActions = library.settings["watch_actions"].orEmpty().ifEmpty { "board,arrival,stop" }.split(',').toSet()
 
@@ -79,15 +101,31 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
         }
     }
     val state = rememberTransformingLazyColumnState()
+    // The optional library snapshot and its command key arrive atomically.
+    val activeRide = if (library.sentAt != Instant.EPOCH) library.ride else ride
     MaterialTheme(colorScheme = ColorScheme(primary = Lime, onPrimary = Ink, primaryContainer = Panel,
         onPrimaryContainer = Color.White, background = Color.Black, onBackground = Color.White,
         surfaceContainer = Panel, onSurface = Color.White, onSurfaceVariant = Soft)) {
+        if (view == WatchActivity.VIEW_MAP) {
+            val mapMode = library.settings["watch_map_mode"] ?: "focus"
+            WatchLiveMapView(
+                map = watchFaceMap,
+                ride = activeRide,
+                now = now,
+                mapMode = mapMode,
+                refreshing = refreshing,
+                commandBusy = commandBusy,
+                onToggleMapMode = { onCommand(WatchCommand("map_mode", journey = journey)) },
+                onRefresh = onRefresh,
+                onBackToRide = { view = WatchActivity.VIEW_ACTIVE }
+            )
+            return@MaterialTheme
+        }
         AppScaffold {
             ScreenScaffold(scrollState = state) { padding ->
                 TransformingLazyColumn(state = state, modifier = Modifier.fillMaxSize(), contentPadding = padding,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // The optional library snapshot and its command key arrive atomically.
-                    val current = if (library.sentAt != Instant.EPOCH) library.ride else ride
+                    val current = activeRide
                     // With a running ride the glance starts with the ride itself; switching views comes after it.
                     val rideFirst = view == "active" && current?.active == true
                     val navigation: androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope.() -> Unit = {
@@ -148,6 +186,12 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                                 else WatchFreshness.label(current, now), Amber)
                         }
                         if (dataState != WatchDataState.EXPIRED) item { RideHero(current, now, library.settings["watch_detail"] != "detail") }
+                        item {
+                            FilledTonalButton(
+                                onClick = { view = WatchActivity.VIEW_MAP },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Vollbild-Karte") }
+                        }
                         // Without the phone, the watch may ask VRR itself, but only on request and only for this exact departure.
                         val identity = DepartureIdentity.from(library.settings)
                         if (dataState != WatchDataState.LIVE && !current.boarded && identity != null) {
@@ -221,6 +265,123 @@ fun WatchScreen(store: WatchStore, onRefresh: () -> Unit, onCommand: (WatchComma
                             Text(if (refreshing) "Verbinden …" else "Aktualisieren")
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WatchLiveMapView(
+    map: WatchFaceMapSnapshot?,
+    ride: WatchRide?,
+    now: Instant,
+    mapMode: String,
+    refreshing: Boolean,
+    commandBusy: Boolean,
+    onToggleMapMode: () -> Unit,
+    onRefresh: () -> Unit,
+    onBackToRide: () -> Unit
+) {
+    val active = (map?.active == true) || (ride?.active == true)
+    val copy = WatchFaceTransitFormat.format(map, ride, now)
+    val bitmap = remember(map?.sentAt, map?.mapPng?.size, ride?.sentAt, ride?.nextStop, ride?.boarded) {
+        WatchFaceFallbackMapRenderer.rideImage(map, ride)
+    }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    var showHud by remember { mutableStateOf(true) }
+    val isFocusMode = mapMode != "overview"
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { showHud = !showHud },
+                    onDoubleTap = {
+                        if (scale > 1.2f) {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            scale = 2.2f
+                        }
+                    }
+                )
+            }
+            .pointerInput(scale) {
+                if (scale > 1.05f) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        val maxShift = (size.width * (scale - 1f) / 2f).coerceAtLeast(0f)
+                        offsetX = (offsetX + dragAmount.x).coerceIn(-maxShift, maxShift)
+                        offsetY = (offsetY + dragAmount.y).coerceIn(-maxShift, maxShift)
+                    }
+                }
+            }
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Live-Buskarte im Vollbild",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offsetX,
+                        translationY = offsetY
+                    )
+            )
+        } else {
+            Column(
+                modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Keine aktive Fahrt", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(6.dp))
+                Text("Am Handy eine Fahrt starten, um die Vollbild-Karte zu sehen.", color = Soft, fontSize = 12.sp, textAlign = TextAlign.Center)
+            }
+        }
+
+        // Minimal edge-to-edge HUD; single tap hides/shows overlays so the street map fills 100% of the dial.
+        if (showHud && active) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 14.dp, start = 28.dp, end = 28.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xCC14171D))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(copy.primaryText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(copy.secondaryTitle, color = Color(0xFFD0D5DF), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+
+        if (showHud) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp, start = 18.dp, end = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CompactButton(onClick = onBackToRide) {
+                    Text("Fahrt", fontSize = 11.sp)
+                }
+                if (active) {
+                    CompactButton(onClick = onToggleMapMode, enabled = !commandBusy) {
+                        Text(if (isFocusMode) "Strecke" else "Bus", fontSize = 11.sp)
+                    }
+                }
+                CompactButton(onClick = onRefresh, enabled = !refreshing) {
+                    Text(if (refreshing) "…" else "Neu", fontSize = 11.sp)
                 }
             }
         }

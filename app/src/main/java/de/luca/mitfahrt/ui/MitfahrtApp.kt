@@ -93,6 +93,7 @@ fun MitfahrtApp(
     val home by vm.home.collectAsStateWithLifecycle()
     val routes by vm.routes.collectAsStateWithLifecycle()
     val routePlans by vm.routePlans.collectAsStateWithLifecycle()
+    val dynamicSuggestions by vm.dynamicRouteSuggestions.collectAsStateWithLifecycle()
     val planDepartures by vm.planDepartures.collectAsStateWithLifecycle()
     val schoolTrips by vm.schoolTrips.collectAsStateWithLifecycle()
     val savedStops by vm.savedStops.collectAsStateWithLifecycle()
@@ -326,26 +327,30 @@ fun MitfahrtApp(
                     tracking.ride?.takeIf { page != RIDE_PAGE }?.let { ride ->
                         ActiveRideBar(ride, tracking, now, companion?.takeIf { companionPhase == CompanionPhase.TRACKING }) { page = RIDE_PAGE }
                     }
+                // Three places for three questions: what now, what leaves here, what happened. Settings sit behind the gear.
+                HorizontalDivider(color = Hairline)
                 NavigationBar(containerColor = Ink, tonalElevation = 0.dp) {
-                    val tabs = mapOf("home" to Triple(0, "Start", Icons.Outlined.Home), "nearby" to Triple(1, "In der Nähe", Icons.Outlined.NearMe),
-                        "reports" to Triple(2, "Berichte", Icons.Outlined.Description), "settings" to Triple(3, "Einstellungen", Icons.Outlined.Tune))
+                    val tabs = mapOf("home" to Triple(0, "Start", Icons.Outlined.Home), "nearby" to Triple(1, "Abfahrten", Icons.Outlined.DepartureBoard),
+                        "reports" to Triple(2, "Fahrten", Icons.Outlined.History))
                     (settings.csv("nav_order") + tabs.keys).distinct().mapNotNull(tabs::get).forEach { (index, title, icon) ->
                         NavigationBarItem(selected = page == index, onClick = {
                             if (index == 1 && page == 1 && search.selectedStop != null) vm.backToStops()
                             page = index
                         },
                             icon = { Icon(icon, contentDescription = null) }, label = { Text(title) },
-                            colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onPrimary, indicatorColor = Lime,
+                            colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
                                 selectedTextColor = Paper, unselectedTextColor = Soft, unselectedIconColor = Soft))
                     }
                 }
                 }
             }
         ) { insets ->
+            CompositionLocalProvider(LocalOpenSettings provides if (page == 3) null else ({ page = 3 })) {
             when (page) {
                 RIDE_PAGE -> LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
                     item {
-                        if (tracking.ride != null) Header(if (tracking.ride.boarded) "Unterwegs" else "Deine Fahrt", "", Icons.Outlined.Close) { confirmStop = true }
+                        if (tracking.ride != null) Header(if (tracking.ride.boarded) "Unterwegs" else "Deine Fahrt", "", Icons.Outlined.Close, onAction = { confirmStop = true })
                         else Header("Mitfahrt", "", Icons.Outlined.DirectionsBus)
                     }
                     val ride = tracking.ride
@@ -368,6 +373,15 @@ fun MitfahrtApp(
                             val alternative = routePlans.routes.firstOrNull { it.id == sourcePlan?.alternateRouteId && it.enabled }
                             if (alternative != null) OutlinedButton(shape = ControlShape, onClick = { vm.selectRoutePlan(alternative, recordVisit = false); page = 1 }, modifier = Modifier.fillMaxWidth()) {
                                 Text("Alternative: ${alternative.name}")
+                            }
+                        }
+                        tracking.alternateBus?.takeIf { it.journeyKey == ride.departure.key }?.let { alt ->
+                            item {
+                                AlternateBusCard(
+                                    suggestion = alt,
+                                    onSwitch = { de.luca.mitfahrt.tracking.RideService.correct(context, de.luca.mitfahrt.tracking.RideService.SWITCH_ALTERNATE) },
+                                    onDismiss = { de.luca.mitfahrt.tracking.RideService.correct(context, de.luca.mitfahrt.tracking.RideService.DISMISS_ALTERNATE) }
+                                )
                             }
                         }
                         item { RideHero(ride, now, tracking.running && !tracking.lastRefreshFailed,
@@ -426,17 +440,17 @@ fun MitfahrtApp(
                                 }
                                 OutlinedButton(onClick = { openReportId = vm.currentReportId() }, shape = ControlShape,
                                     modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
-                                    Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Bericht")
+                                    Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Fahrtbericht")
                                 }
                             }
                             ArrivalMark.forRide(arrivals, ride, now).lastOrNull()?.let { mark ->
                                 Text("Eigene Ankunft: ${shortName(mark.stopName)} · ${clockTime(mark.at)}", color = Lime, fontSize = 12.sp)
                             }
                         }
-                        if (!ride.demo && ride.departure.newOperated) item { TextButton(onClick = { showLiveMap = true }) { Icon(Icons.Outlined.Map, null); Spacer(Modifier.width(8.dp)); Text("NEW-Livekarte") } }
+                        if (!ride.demo && ride.departure.newOperated) item { TextButton(onClick = { showLiveMap = true }) { Icon(Icons.Outlined.Map, null); Spacer(Modifier.width(8.dp)); Text("Livekarte") } }
                         item {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Fahrtverlauf", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                Text("Halte", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).semantics { heading() })
                                 TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "Weniger" else "Alle Halte", color = Lime) }
                             }
                         }
@@ -462,10 +476,14 @@ fun MitfahrtApp(
                 0 -> LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(gap)) {
                     item {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.weight(1f)) { Header("Mitfahrt", "", Icons.Outlined.DirectionsBus) }
-                            IconButton(onClick = { editHomeLayout = true }) { Icon(Icons.Outlined.Tune, "Startseite anpassen") }
-                        }
+                        // The start page answers "what is next today", so it is named after the day, not the app.
+                        val today = now.atZone(ZoneId.of("Europe/Berlin"))
+                        Header("Heute", today.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d. MMMM", java.util.Locale.GERMAN)),
+                            Icons.Outlined.DirectionsBus, extra = {
+                                IconButton(onClick = { editHomeLayout = true }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Outlined.Tune, "Startseite anpassen", tint = Paper)
+                                }
+                            })
                     }
                     companion?.takeIf { companionPhase != null && companionPhase != CompanionPhase.TRACKING }?.let { current -> item {
                         CompanionCard(current, companionPhase!!, tracking.ride, companionNext, now, search.loading,
@@ -486,7 +504,11 @@ fun MitfahrtApp(
                             item { PlannedRoutesCard(visiblePlans, routePlans.routes.size, planDepartures.departures,
                                 planDepartures.loading, now, search.choosing, onManage = { newRoutePlan = false; showRoutePlans = true },
                                 onStart = vm::chooseRoutePlan, onPreview = vm::previewRoutePlan, onOpen = { vm.selectRoutePlan(it); page = 1 },
-                                onConnections = { planner.planRoute(it); showPlanner = true }) }
+                                onConnections = { planner.planRoute(it); showPlanner = true },
+                                suggestions = dynamicSuggestions,
+                                onApplyTemporary = vm::applyTemporaryDestination,
+                                onClearTemporary = vm::clearTemporaryDestination,
+                                onDismissSuggestion = vm::dismissDestinationSuggestion) }
                             planDepartures.error?.let { message -> item { Text(message, color = Amber, fontSize = 13.sp) } }
                         }
                         "school" -> item { SchoolTripCard(schoolTrips, home, now, search.loading, { vm.selectSchoolTrip(it); page = 1 }, vm::removeSchoolTrip, vm::chooseSchoolDeparture) }
@@ -504,7 +526,7 @@ fun MitfahrtApp(
                                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("Letzte Fahrt", style = MaterialTheme.typography.titleMedium)
                                     Text("${previous.departure.line} · ${shortName(previous.departure.destination)}")
-                                    Text("${clockTime(previous.departure.planned)} · Berichte öffnen", color = Soft, fontSize = 12.sp)
+                                    Text("${clockTime(previous.departure.planned)} · Fahrten öffnen", color = Soft, fontSize = 12.sp)
                                 }
                             }
                         } }
@@ -538,7 +560,9 @@ fun MitfahrtApp(
                     } })
                 else -> SettingsPage(Modifier.padding(insets), onDemo, updates, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onIntro, hapticTest, vm::testVibration, alertPreferences, vm::setArrivalAlert, vm::setExitAlert, vm::setAlertLead,
                     routePlans, vm::setAutomaticLearning, { newRoutePlan = false; showRoutePlans = true },
-                    onCustomize = { showCustomization = true }, onManageData = { showDataManagement = true }, onOpenModule = { personalModule = it })
+                    onCustomize = { showCustomization = true }, onManageData = { showDataManagement = true }, onOpenModule = { personalModule = it },
+                    onBack = { page = 0 })
+            }
             }
         }
         search.previewRide?.let { preview -> JourneyPreviewSheet(preview, now, vm::confirmPreview, vm::dismissPreview) }
@@ -621,14 +645,25 @@ private fun LiveMapCard(onClick: () -> Unit) {
 }
 
 @Composable
-internal fun Header(title: String, subtitle: String, icon: ImageVector, onAction: (() -> Unit)? = null) {
+internal fun Header(title: String, subtitle: String, icon: ImageVector, actionLabel: String = "Fahrt beenden",
+    extra: (@Composable RowScope.() -> Unit)? = null, onAction: (() -> Unit)? = null) {
+    val openSettings = LocalOpenSettings.current
     Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        // The page name alone; [subtitle] is kept for callers but no longer shown as a label above it.
-        Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Paper,
-            modifier = Modifier.weight(1f).semantics { heading() })
-        if (onAction != null) IconButton(onClick = onAction, modifier = Modifier.size(48.dp)) { Icon(icon, "Fahrt beenden", tint = Paper) }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineMedium, color = Paper, modifier = Modifier.semantics { heading() })
+            if (subtitle.isNotBlank()) Text(subtitle, color = Soft, fontSize = 14.sp)
+        }
+        extra?.invoke(this)
+        if (onAction != null) IconButton(onClick = onAction, modifier = Modifier.size(48.dp)) { Icon(icon, actionLabel, tint = Paper) }
+        // Settings left the tab bar; every page header carries the way there instead.
+        else if (openSettings != null) IconButton(onClick = openSettings, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Outlined.Settings, "Einstellungen", tint = Paper)
+        }
     }
 }
+
+/** Opens the settings page; null on the settings page itself. */
+internal val LocalOpenSettings = staticCompositionLocalOf<(() -> Unit)?> { null }
 
 @Composable
 private fun DetectionCard(state: TrackingState, onMonitor: () -> Unit, onStop: () -> Unit) {
@@ -685,12 +720,18 @@ internal fun RideHero(ride: Ride, now: Instant, liveAllowed: Boolean, estimate: 
             if (waiting) {
                 // Without a live time, the chosen bus' position gives a calculated time to the stop.
                 val calculated = positionEstimate?.takeIf { !countdownAvailable && !ride.departure.cancelled }
-                Text(if (calculated != null) "Dein Bus kommt in etwa" else if (!countdownAvailable) "Dein Bus" else if (boarding.isArrival) "Dein Bus kommt in" else "Abfahrt in", fontSize = 15.sp)
+                // Whole minutes like the display at the stop; seconds suggested a precision the data does not have.
+                val minutes = if (countdownAvailable && boarding.at.isAfter(now)) minutesLabel(boarding.at, now) else null
+                val soon = minutes == "jetzt"
+                Text(if (calculated != null) "Dein Bus kommt in etwa" else if (!countdownAvailable) "Dein Bus"
+                    else if (soon) (if (boarding.isArrival) "Dein Bus kommt" else "Abfahrt")
+                    else if (boarding.isArrival) "Dein Bus kommt in" else "Abfahrt in", fontSize = 15.sp)
                 Spacer(Modifier.height(8.dp))
                 Text(if (ride.departure.cancelled) "Fällt aus" else if (calculated != null) "${calculated.minutes} Min" else if (!countdownAvailable) "Keine Live-Zeit"
-                    else if (!boarding.at.isAfter(now)) "Wird erwartet" else countdownUntil(boarding.at, now),
-                    fontSize = if (calculated != null || countdownAvailable && boarding.at.isAfter(now) && !ride.departure.cancelled) 68.sp else 30.sp,
-                    fontWeight = FontWeight.Medium, letterSpacing = (-2).sp)
+                    else minutes ?: "Wird erwartet",
+                    style = MaterialTheme.typography.displayMedium.copy(
+                        fontSize = if (calculated != null || minutes != null && !ride.departure.cancelled) 68.sp else 30.sp,
+                        lineHeight = if (calculated != null || minutes != null && !ride.departure.cancelled) 72.sp else 36.sp))
                 Spacer(Modifier.height(12.dp))
                 Text(shortName(ride.departure.stopName), fontSize = 19.sp, fontWeight = FontWeight.Medium)
                 if (calculated != null) Text(calculated.label.replaceFirstChar { it.uppercase() } + ", keine VRR-Angabe", fontSize = 13.sp)
@@ -782,8 +823,10 @@ private fun NextStopCard(tracking: TrackingState, now: Instant, gpsEnabled: Bool
 private fun TimelineStop(stop: RideStop, ride: Ride, now: Instant, next: Boolean, passed: Boolean, last: Boolean, skipped: Boolean) {
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.Top) {
         Column(Modifier.width(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.padding(top = 6.dp).size(if (next) 12.dp else 8.dp).clip(CircleShape).background(if (next) Lime else Color(0xFFAAA3B5)))
-            if (!last) Box(Modifier.width(2.dp).height(32.dp).background(Color(0xFFD9D5DF)))
+            // Stop dots carry meaning, so they use the 3:1 outline; the connecting line is decoration.
+            Box(Modifier.padding(top = 6.dp).size(if (next) 12.dp else 8.dp).clip(CircleShape)
+                .background(if (next) Lime else MaterialTheme.colorScheme.outline))
+            if (!last) Box(Modifier.width(2.dp).height(32.dp).background(Hairline))
         }
         Column(Modifier.weight(1f).padding(start = 8.dp)) {
             if (skipped) Text("Weitere Halte", color = Soft, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
@@ -816,7 +859,7 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (search.selectedStop == null) {
-            item { Header("In der Nähe", "", Icons.Outlined.NearMe) }
+            item { Header("Abfahrten", "", Icons.Outlined.NearMe) }
             item {
                 OutlinedTextField(value = search.query, onValueChange = { waitingNearby = false; vm.query(it) },
                     modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(18.dp),
@@ -879,9 +922,13 @@ private fun StopSearch(search: SearchState, tracking: TrackingState, arrivals: L
                 if (home.approximate) Text("Ungefährer Standort · Gehzeit ist geschätzt", color = Soft, fontSize = 12.sp)
             }
             item { PersonalArrivalCard(stop, arrivals) { vm.markArrival(stop) } }
-            items(search.departures, key = { it.key }) { departure ->
-                DepartureRow(departure, now, search.choosing == departure.key, enabled = !search.loading) { keyboard?.hide(); vm.choose(departure) }
-                WalkingHint(stop, departure, now)
+            if (search.departures.isNotEmpty()) item(key = "board/${stop.id}") {
+                DepartureBoard(search.departures) { departure -> key(departure.key) {
+                    DepartureRow(departure, now, search.choosing == departure.key, enabled = !search.loading, onBoard = true) {
+                        keyboard?.hide(); vm.choose(departure)
+                    }
+                    Box(Modifier.padding(horizontal = 16.dp)) { WalkingHint(stop, departure, now) }
+                } }
             }
             if (search.departures.isEmpty() && !search.loading && search.error == null) item {
                 EmptyState("Gerade keine NEW-Abfahrten", "Aktualisieren oder eine andere Haltestelle wählen.")
@@ -914,43 +961,73 @@ internal fun StopRow(stop: Stop, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: Boolean, showStop: Boolean = false, distance: Int? = null, onClick: () -> Unit) {
+internal fun DepartureRow(d: Departure, now: Instant, loading: Boolean, enabled: Boolean, showStop: Boolean = false, distance: Int? = null,
+    onBoard: Boolean = false, onClick: () -> Unit) {
     val settings = LocalAppSettings.current
     val live = d.liveEstimate(now)
-    val rowPadding = when (settings.string("density")) { "compact" -> 12.dp; "comfortable" -> 22.dp; else -> 16.dp }
-    Row(Modifier.fillMaxWidth().clip(ControlShape).background(Panel)
-        .clickable(enabled = enabled && !d.cancelled, onClick = onClick).padding(horizontal = 14.dp, vertical = rowPadding - 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        LineBadge(d.line)
+    val stale = d.estimated != null && live == null
+    val rowPadding = when (settings.string("density")) { "compact" -> 10.dp; "comfortable" -> 18.dp; else -> 14.dp }
+    val surface = if (onBoard) Modifier else Modifier.clip(ControlShape).background(Panel)
+    Row(Modifier.fillMaxWidth().then(surface)
+        .clickable(enabled = enabled && !d.cancelled, onClickLabel = "Mitfahren", onClick = onClick)
+        .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = rowPadding), verticalAlignment = Alignment.CenterVertically) {
+        LineBadge(d.line, cancelled = d.cancelled)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(shortName(d.destination), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(2.dp))
-            Text(if (d.cancelled) "Fällt aus" else if (showStop) shortName(d.stopName) + (distance?.let { " · $it m" } ?: "") else
-                listOfNotNull(d.platform.takeIf { it.isNotBlank() }, if (d.estimated != null && d.observedAt?.let { now.epochSecond - it.epochSecond in -30..120 } != true) {
-                    "Stand ${clockTime(d.observedAt)}"
-                } else if (d.estimated != null) {
-                    if (settings.string("delay_display") == "times") "Plan ${clockTime(d.planned)} → ${clockTime(live)}"
-                    else if (d.delayMinutes > 0) "+${d.delayMinutes} Min" else "Live"
-                } else "Fahrplan", if (settings.string("data_detail") == "full") "VRR · Stand ${clockTime(d.observedAt)}" else null).joinToString(" · "),
-                color = if (d.cancelled || live != null && d.delayMinutes > 0) Amber else Soft, fontSize = 13.sp)
+            Text(shortName(d.destination), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                color = if (d.cancelled) Soft else Paper)
+            val detail = if (d.cancelled) "Fällt aus" else listOfNotNull(
+                if (showStop) shortName(d.stopName) + (distance?.let { " · $it m" } ?: "") else null,
+                d.platform.takeIf { it.isNotBlank() }?.let { "Steig $it" },
+                when {
+                    live == null -> null
+                    settings.string("delay_display") == "times" && d.delayMinutes != 0 -> "Plan ${clockTime(d.planned)}"
+                    d.delayMinutes > 0 -> "+${d.delayMinutes} Min"
+                    else -> null
+                },
+                if (settings.string("data_detail") == "full") "VRR · Stand ${clockTime(d.observedAt)}" else null).joinToString(" · ")
+            if (detail.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+                Text(detail, color = if (d.cancelled || live != null && d.delayMinutes > 0) Amber else Soft, fontSize = 13.sp, lineHeight = 18.sp)
+            }
         }
-        Spacer(Modifier.width(8.dp))
-        if (loading) AppCircularProgressIndicator(Modifier.size(22.dp), color = Lime, strokeWidth = 2.dp)
-        else Column(horizontalAlignment = Alignment.End) {
-            Text(if (d.cancelled) "–" else if (live == null) clockTime(d.planned)
-                else if (settings.string("time_display") == "clock") clockTime(live)
-                else if (!live.isAfter(now)) "Wird erwartet" else if (settings.string("time_display") == "minutes") "${minutesUntil(live, now)} Min" else countdownUntil(live, now),
-                color = if (d.cancelled) Soft else Paper, fontWeight = FontWeight.Bold, fontSize = 19.sp)
-            Text(if (live == null) "Fahrplan" else when (settings.string("time_display")) {
-                "clock" -> "live"; else -> "live · ${clockTime(live)}"
-            }, color = Soft, fontSize = 13.sp)
+        Spacer(Modifier.width(10.dp))
+        if (loading) AppCircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        // Time column of the board: whole minutes only with fresh live data, otherwise the clock time and its source.
+        else Column(horizontalAlignment = Alignment.End, modifier = Modifier.widthIn(min = 64.dp)) {
+            Text(when {
+                d.cancelled -> clockTime(d.planned)
+                live == null -> clockTime(d.planned)
+                settings.string("time_display") == "clock" -> clockTime(live)
+                else -> minutesLabel(live, now)
+            }, style = BoardTime, color = if (d.cancelled) Soft else Paper,
+                textDecoration = if (d.cancelled) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
+            if (!d.cancelled) when {
+                live != null -> SourceMark(TimeSource.LIVE)
+                stale -> Text("Stand ${clockTime(d.observedAt)}", color = Soft, fontSize = 12.sp, lineHeight = 16.sp)
+                else -> SourceMark(TimeSource.PLAN)
+            }
+        }
+    }
+}
+
+/**
+ * Tafel: departures of one stop on one surface, separated by hairlines, read like the display at the stop.
+ */
+@Composable
+internal fun <T> DepartureBoard(rows: List<T>, header: (@Composable () -> Unit)? = null, row: @Composable (T) -> Unit) {
+    AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+        header?.invoke()
+        rows.forEachIndexed { index, item ->
+            if (index > 0 || header != null) HorizontalDivider(color = Hairline, modifier = Modifier.padding(start = if (index > 0) 16.dp else 0.dp))
+            row(item)
         }
     }
 }
 
 @Composable
-private fun LineBadge(line: String, dark: Boolean = false) {
-    LineSign(line, onBrand = dark, large = true)
+private fun LineBadge(line: String, dark: Boolean = false, cancelled: Boolean = false) {
+    LineSign(line, onBrand = dark, large = true, cancelled = cancelled)
 }
 
 @Composable
@@ -958,9 +1035,9 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
     onCheckUpdate: () -> Unit, onDownloadUpdate: () -> Unit, onInstallUpdate: (File) -> Unit, onIntro: () -> Unit, hapticTest: de.luca.mitfahrt.alerts.HapticTestState, onHapticTest: () -> Unit,
     alertPreferences: AlertPreferences, onArrival: (Boolean) -> Unit, onExit: (Boolean) -> Unit, onLead: (Int) -> Unit,
     routePlans: RoutePlansState, onAutomaticLearning: (Boolean) -> Unit, onManageRoutes: () -> Unit,
-    onCustomize: () -> Unit, onManageData: () -> Unit, onOpenModule: (String) -> Unit) {
+    onCustomize: () -> Unit, onManageData: () -> Unit, onOpenModule: (String) -> Unit,
+    onBack: (() -> Unit)? = null) {
     val context = LocalContext.current
-    val manager = context.getSystemService(NotificationManager::class.java)
     var nowBarStatus by remember { mutableStateOf(NowBarSupport.status(context)) }
     var samsungCompat by remember { mutableStateOf(NowBarSupport.samsungEnabled(context)) }
     var ownTitle by remember { mutableStateOf(NowBarSupport.ownTitleEnabled(context)) }
@@ -971,42 +1048,119 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
     LaunchedEffect(Unit) {
         while (true) { nowBarStatus = NowBarSupport.status(context); delay(2000) }
     }
-    val quickStore = remember(context) { AppSettingsStore(context) }
+    val quickStore = rememberAppSettingsStore()
     val quick by quickStore.state.collectAsStateWithLifecycle()
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item { Header("Einstellungen", "", Icons.Outlined.Tune) }
-        // Everyday switches first; everything rarer sits one level deeper as plain rows.
+    val activeRoutes = routePlans.routes.count { it.enabled }
+    val updateBadge = when (updates.phase) {
+        UpdatePhase.AVAILABLE, UpdatePhase.READY -> "Update"
+        UpdatePhase.DOWNLOADING -> "${(updates.progress * 100).toInt()} %"
+        UpdatePhase.CURRENT -> "Aktuell"
+        else -> "v${BuildConfig.VERSION_NAME}"
+    }
+    val updateHighlight = updates.phase in setOf(UpdatePhase.AVAILABLE, UpdatePhase.READY)
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item {
-            SettingsGroup("Automatik") {
-                SettingsSwitch("Einstieg und Ausstieg erkennen", "Wechselt selbst von Warten zu Im Bus. Korrigieren geht immer.",
-                    quick.bool("boarding_auto", true)) { quickStore.set("boarding_auto", it.toString()) }
-                SettingsSwitch("Bus automatisch zuordnen", "Zeigt die passende Busposition, ohne dass du wählen musst.",
-                    quick.bool("vehicle_auto", true)) { quickStore.set("vehicle_auto", it.toString()) }
-                SettingsSwitch("Fahrtbericht vorbereiten", "Zu jeder begleiteten Verbindung. Geteilt wird nur auf deinen Wunsch.",
-                    quick.bool("report_auto", true)) { quickStore.set("report_auto", it.toString()) }
+            Row(Modifier.fillMaxWidth().padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück", tint = Paper)
+                    }
+                }
+                Text("Einstellungen", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).semantics { heading() })
+                Surface(shape = RoundedCornerShape(10.dp), color = Well) {
+                    Text("v${BuildConfig.VERSION_NAME}", color = Soft, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                }
             }
         }
-        item {
-            SettingsGroup("Routen") {
-                SettingsLink("Routen und Zeiten", "Namen, Richtung, Wochentage und Zeitfenster", onManageRoutes)
-                SettingsSwitch("Häufige Strecken vorschlagen", null, routePlans.automaticLearning, onAutomaticLearning)
-            }
-        }
-        item { AlertPreferencesCard(alertPreferences, onArrival, onExit, onLead) }
         item { AppearanceCard() }
         item {
-            SettingsGroup("Mehr") {
-                SettingsLink("Alle Einstellungen und Profile", "Karte, Hinweise, Berichte, Datenschutz", onCustomize)
-                SettingsLink("Gespeicherte Daten", "Ansehen, sichern und löschen", onManageData)
-                SettingsLink("Eigene Texte", "Now Bar, Benachrichtigung und Buskarten-Widget selbst formulieren") { onOpenModule("templates") }
-                SettingsExpander("Sperrbildschirm und Now Bar") {
+            SettingsGroup("Automatik während der Fahrt") {
+                SettingsSwitch(
+                    icon = Icons.Outlined.DirectionsBus,
+                    title = "Einstieg und Ausstieg erkennen",
+                    hint = "Wechselt selbst von Warten zu Im Bus. Korrigieren geht immer.",
+                    checked = quick.bool("boarding_auto", true)
+                ) { quickStore.set("boarding_auto", it.toString()) }
+                SettingsDivider()
+                SettingsSwitch(
+                    icon = Icons.Outlined.MyLocation,
+                    title = "Bus automatisch zuordnen",
+                    hint = "Ordnet deinen Bus über NEW-Haltestelle, Live-Zeit und optional GPS zu.",
+                    checked = quick.bool("vehicle_auto", true)
+                ) { quickStore.set("vehicle_auto", it.toString()) }
+                SettingsDivider()
+                SettingsSwitch(
+                    icon = Icons.Outlined.Description,
+                    title = "Fahrtbericht vorbereiten",
+                    hint = "Zu jeder begleiteten Verbindung. Geteilt wird nur auf deinen Wunsch.",
+                    checked = quick.bool("report_auto", true)
+                ) { quickStore.set("report_auto", it.toString()) }
+            }
+        }
+        item { AlertPreferencesCard(alertPreferences, onArrival, onExit, onLead, hapticTest, onHapticTest) }
+        item {
+            SettingsGroup("Routen & Schulalltag") {
+                SettingsLink(
+                    icon = Icons.Outlined.AltRoute,
+                    title = "Routen und Zeiten",
+                    hint = "Namen, Richtung, Wochentage und Zeitfenster",
+                    badge = if (activeRoutes > 0) "$activeRoutes aktiv" else null,
+                    onClick = onManageRoutes
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.CalendarMonth,
+                    title = "Schulkalender NRW",
+                    hint = "Ferien, Feiertage und freie Tage",
+                    onClick = { onOpenModule("calendar") }
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.EventBusy,
+                    title = "Routenausnahmen",
+                    hint = "Einzelne Tage später starten oder ausblenden",
+                    onClick = { onOpenModule("exceptions") }
+                )
+                SettingsDivider()
+                SettingsSwitch(
+                    icon = Icons.Outlined.AutoAwesome,
+                    title = "Häufige Strecken vorschlagen",
+                    hint = "Schlägt oft genutzte Verbindungen lokal vor",
+                    checked = routePlans.automaticLearning,
+                    onChange = onAutomaticLearning
+                )
+            }
+        }
+        item {
+            SettingsGroup("Geräte & Integrationen") {
+                SettingsExpander(
+                    icon = Icons.Outlined.Smartphone,
+                    title = "Sperrbildschirm und Now Bar",
+                    badge = if (Build.VERSION.SDK_INT >= 36) "Android 16+" else null
+                ) {
                     Text(if (Build.VERSION.SDK_INT >= 36) "Bus auswählen, Live-Benachrichtigungen erlauben und die App verlassen. Die Now Bar prüfst du anschließend auf dem Sperrbildschirm."
-                    else "Deine Fahrt erscheint als laufende Benachrichtigung. Für die Now Bar ist eine unterstützte Samsung-Version mit Android 16 nötig.", color = Soft, fontSize = 14.sp, lineHeight = 21.sp)
-                    Text(nowBarStatus, color = Paper, fontSize = 13.sp, lineHeight = 20.sp)
+                    else "Deine Fahrt erscheint als laufende Benachrichtigung. Für die Now Bar ist eine unterstützte Samsung-Version mit Android 16 nötig.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
+                    Surface(shape = ControlShape, color = Well, modifier = Modifier.fillMaxWidth()) {
+                        Text(nowBarStatus, color = Paper, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(12.dp))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Buskarte auf Sperrbildschirm & Now Bar", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text("Live-Karte in der erweiterten Now Bar und als große Karte auf dem Sperrbildschirm", color = Soft, fontSize = 12.sp)
+                        }
+                        Switch(
+                            checked = quick.bool("notification_map", true),
+                            onCheckedChange = { enabled ->
+                                quickStore.set("notification_map", enabled.toString())
+                                refreshNowBar()
+                            }
+                        )
+                    }
                     if (Build.MANUFACTURER.equals("samsung", true) && Build.VERSION.SDK_INT >= 36) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Samsung-Kompatibilität", fontSize = 14.sp)
+                                Text("Samsung-Kompatibilität", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 Text("Experimentelle Now-Bar-Anpassung", color = Soft, fontSize = 12.sp)
                             }
                             Switch(checked = samsungCompat, onCheckedChange = { enabled ->
@@ -1017,7 +1171,7 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
                         }
                         if (samsungCompat && Build.VERSION.SDK_INT >= 37) Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Eigenen Titel verwenden", fontSize = 14.sp)
+                                Text("Eigenen Titel verwenden", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 Text("Bei Darstellungsproblemen ausschalten", color = Soft, fontSize = 12.sp)
                             }
                             Switch(checked = ownTitle, onCheckedChange = { enabled ->
@@ -1027,25 +1181,95 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
                             })
                         }
                     }
-                    OutlinedButton(shape = ControlShape, onClick = { RideNotifications.openSettings(context) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Benachrichtigungen öffnen") }
+                    OutlinedButton(shape = ControlShape, onClick = { RideNotifications.openSettings(context) }, modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp)) { Text("Benachrichtigungen öffnen") }
                 }
-                SettingsExpander("Uhr") {
+                SettingsDivider()
+                SettingsExpander(
+                    icon = Icons.Outlined.Watch,
+                    title = "Wear OS Uhr",
+                    badge = "Kachel & Zifferblatt"
+                ) {
                     Text("Linie, nächster Halt und Restzeit auf Wear OS. Die Fahrt wählst du am Handy.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
+                    Text("Für die Kachel auf der Uhr: Kachel hinzufügen → Fahrtstatus.", color = Soft, fontSize = 13.sp, lineHeight = 19.sp)
                     TextButton(onClick = {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${UpdateInfo.REPOSITORY}/blob/main/WATCH.md")))
                     }) { Text("Watch-App & Installation") }
-                    Text("Für die Kachel auf der Uhr: Kachel hinzufügen → Fahrtstatus.", color = Soft, fontSize = 13.sp, lineHeight = 20.sp)
-                    OutlinedButton(shape = ControlShape, onClick = onHapticTest, enabled = !hapticTest.running, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (hapticTest.running) "Uhr wird geprüft …" else "Vibration auf Handy & Uhr testen")
-                    }
-                    hapticTest.message?.let { Text(it, color = Soft, fontSize = 13.sp) }
-                    Text("Nicht stören und Vibrationsstärke gelten auf beiden Geräten.", color = Soft, fontSize = 12.sp)
+                    WatchUpdateSettings()
+                    Text("Das Zifferblatt „Mitfahrt Live“ zeigt während einer Fahrt die Karte, den nächsten Halt und die Ankunft. Das untere Feld belegst du auf der Uhr selbst, etwa mit Musik: Zifferblatt lang drücken, dann „Anpassen“.", color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
                 }
-                SettingsExpander("Bus per WLAN finden") {
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.EditNote,
+                    title = "Eigene Texte",
+                    hint = "Now Bar, Benachrichtigung und Widget selbst formulieren",
+                    onClick = { onOpenModule("templates") }
+                )
+                SettingsDivider()
+                SettingsExpander(
+                    icon = Icons.Outlined.Wifi,
+                    title = "Bus per WLAN finden"
+                ) {
                     Text("Der NEW-Hotspot und dein Standort schlagen Fahrten vor. Welche es ist, bestätigst du selbst. Die Suche läuft nur, wenn du sie startest.", color = Soft, fontSize = 14.sp, lineHeight = 20.sp)
-                    TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }) { Text("Berechtigungen öffnen") }
+                    OutlinedButton(shape = ControlShape, onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp)) { Text("Berechtigungen öffnen") }
                 }
-                SettingsExpander("Update · Version ${BuildConfig.VERSION_NAME}", open = updates.phase in setOf(UpdatePhase.AVAILABLE, UpdatePhase.READY, UpdatePhase.DOWNLOADING, UpdatePhase.ERROR)) {
+            }
+        }
+        item {
+            SettingsGroup("Verlauf, Daten & Sicherung") {
+                SettingsLink(
+                    icon = Icons.Outlined.History,
+                    title = "Fahrtenarchiv",
+                    hint = "Vergangene Fahrten ansehen oder Berichte öffnen",
+                    onClick = { onOpenModule("archive") }
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.Flag,
+                    title = "Eigene Ankünfte",
+                    hint = "Selbst festgehaltene Ankunftszeiten",
+                    onClick = { onOpenModule("arrivals") }
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.Insights,
+                    title = "Pünktlichkeit",
+                    hint = "Auswertung deiner gespeicherten Fahrten",
+                    onClick = { onOpenModule("punctuality") }
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.CloudUpload,
+                    title = "Sicherung",
+                    hint = "Routen und Einstellungen sichern oder importieren",
+                    onClick = { onOpenModule("backup") }
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.Storage,
+                    title = "Gespeicherte Daten",
+                    hint = "Ansehen, sichern und löschen",
+                    onClick = onManageData
+                )
+            }
+        }
+        item {
+            SettingsGroup("App & Erweitert") {
+                SettingsLink(
+                    icon = Icons.Outlined.Tune,
+                    title = "Alle Einstellungen und Profile",
+                    hint = "Zeitpläne, Karte, Hinweise, Berichte, Datenschutz",
+                    badge = "Alle",
+                    onClick = onCustomize
+                )
+                SettingsDivider()
+                SettingsExpander(
+                    icon = Icons.Outlined.SystemUpdate,
+                    title = "App-Update",
+                    badge = updateBadge,
+                    highlightBadge = updateHighlight,
+                    open = updates.phase in setOf(UpdatePhase.AVAILABLE, UpdatePhase.READY, UpdatePhase.DOWNLOADING, UpdatePhase.ERROR)
+                ) {
                     Text("Installiert: ${BuildConfig.VERSION_NAME}", color = Soft, fontSize = 13.sp)
                     Text(when (updates.phase) {
                         UpdatePhase.IDLE -> "Updates über GitHub"
@@ -1070,44 +1294,141 @@ internal fun SettingsPage(modifier: Modifier, onDemo: () -> Unit, updates: Updat
                         TextButton(onClick = onDownloadUpdate) { Text("Download erneut versuchen") }
                     TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateInfo.REPOSITORY))) }) { Text("Projekt auf GitHub") }
                 }
-                SettingsLink("Einführung ansehen", null, onIntro)
-                SettingsLink("Demofahrt ansehen", "Beispieldaten, ohne echte Fahrt", onDemo)
-                SettingsLink("App teilen", null) {
-                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, "Mitfahrt · Busstatus für Mönchengladbach\n${UpdateInfo.REPOSITORY}/releases/latest")
-                }, "App teilen"))
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.HelpOutline,
+                    title = "Einführung ansehen",
+                    hint = null,
+                    onClick = onIntro
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.PlayCircleOutline,
+                    title = "Demofahrt ansehen",
+                    hint = "Beispieldaten, ohne echte Fahrt",
+                    onClick = onDemo
+                )
+                SettingsDivider()
+                SettingsLink(
+                    icon = Icons.Outlined.Share,
+                    title = "App teilen",
+                    hint = null
+                ) {
+                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, "Mitfahrt · Busstatus für Mönchengladbach\n${UpdateInfo.REPOSITORY}/releases/latest")
+                    }, "App teilen"))
                 }
             }
         }
-        item { PersonalModuleLinks(onOpenModule) }
         item {
-            Text("Daten vom VRR. Standort wird für Haltestellenabfragen und – nur wenn du „Mein Standort“ wählst – für die Verbindungssuche an den VRR übermittelt, aber nicht gespeichert. Kein Konto, keine Werbung, keine Analyse-Tracker.",
-                color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
-            Spacer(Modifier.height(8.dp))
-            Text("Letzte Fahrt, selbst erfasste Ankünfte und Berichte werden auf deinem Gerät gespeichert.", color = Soft, fontSize = 12.sp, lineHeight = 19.sp)
-            Spacer(Modifier.height(16.dp))
-            Text("Mitfahrt ${BuildConfig.VERSION_NAME} · Inoffizielle App", color = Soft, fontSize = 12.sp)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Daten vom VRR, NEW und OpenStreetMap (Photon). Standort wird nur für Haltestellenabfragen und bei „Mein Standort“ verwendet, nicht gespeichert. Kein Konto, keine Werbung, keine Tracker.",
+                    color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Letzte Fahrt, selbst erfasste Ankünfte und Berichte bleiben auf deinem Gerät.", color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("Mitfahrt ${BuildConfig.VERSION_NAME} · Inoffizielle App", color = Soft, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
         }
     }
 }
 
-/** A titled run of rows on the page background: no card, a hairline between rows. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AlternateBusCard(
+    suggestion: AlternateBusSuggestion,
+    onSwitch: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LineSign(suggestion.departure.line)
+                Column(Modifier.weight(1f)) {
+                    Text("In Linie ${suggestion.departure.line} unterwegs?", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Richtung ${shortName(suggestion.departure.destination)} · GPS-Erkennung der App",
+                        color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
+                }
+            }
+            val targetNote = if (suggestion.preservesExitTarget && suggestion.exitTargetName != null)
+                "Dein Ausstieg ${shortName(suggestion.exitTargetName)} bleibt erhalten."
+            else "Anderer Streckenverlauf als deine bisherige Fahrt."
+            Text(targetNote, color = if (suggestion.preservesExitTarget) Soft else Amber, fontSize = 12.sp, lineHeight = 17.sp)
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = onSwitch, shape = ControlShape, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Zu Linie ${suggestion.departure.line} wechseln")
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Hier bleiben")
+                }
+            }
+        }
+    }
+}
+
+/** Grouped card of settings rows with leading icons and subtle inset hairlines. */
 @Composable
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp).semantics { heading() })
-        content()
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Soft,
+            letterSpacing = 0.3.sp,
+            modifier = Modifier.padding(horizontal = 6.dp).semantics { heading() }
+        )
+        AppCard(Modifier.fillMaxWidth(), shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), content = content)
+        }
     }
 }
 
 @Composable
-private fun SettingsSwitch(title: String, hint: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-        .toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange).padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, fontSize = 16.sp)
+private fun SettingsDivider() {
+    HorizontalDivider(color = Hairline, modifier = Modifier.padding(start = 66.dp, end = 18.dp))
+}
+
+@Composable
+private fun SettingsIconBadge(icon: ImageVector, active: Boolean = false) {
+    Box(
+        Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Well),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, null, tint = if (active) Lime else Paper, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun SettingsBadge(text: String, highlight: Boolean = false) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (highlight) Lime else Well
+    ) {
+        Text(
+            text,
+            color = if (highlight) MaterialTheme.colorScheme.onPrimary else Soft,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsSwitch(icon: ImageVector, title: String, hint: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 58.dp)
+            .toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SettingsIconBadge(icon, active = checked)
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             if (hint != null) Text(hint, color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
         }
         Switch(checked = checked, onCheckedChange = null)
@@ -1115,28 +1436,41 @@ private fun SettingsSwitch(title: String, hint: String?, checked: Boolean, onCha
 }
 
 @Composable
-private fun SettingsLink(title: String, hint: String?, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, fontSize = 16.sp)
+private fun SettingsLink(icon: ImageVector, title: String, hint: String?, badge: String? = null, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SettingsIconBadge(icon)
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             if (hint != null) Text(hint, color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
         }
+        if (badge != null) SettingsBadge(badge)
         Icon(Icons.Outlined.ChevronRight, null, tint = Soft)
     }
 }
 
 /** Rare, longer content stays folded until it is needed. */
 @Composable
-private fun SettingsExpander(title: String, open: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsExpander(icon: ImageVector, title: String, badge: String? = null, highlightBadge: Boolean = false, open: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     var expanded by rememberSaveable(title) { mutableStateOf(open) }
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (expanded) "Einklappen" else "Ausklappen") { expanded = !expanded }
-        .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(end = 12.dp))
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = if (expanded) "Einklappen" else "Ausklappen") { expanded = !expanded }
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SettingsIconBadge(icon, active = expanded || highlightBadge)
+        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+        if (badge != null) SettingsBadge(badge, highlight = highlightBadge)
         Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = Soft)
     }
-    if (expanded) Column(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    if (expanded) Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 14.dp, top = 2.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
 }
 
 @Composable
@@ -1145,7 +1479,7 @@ internal fun ReportsPage(state: ReportsState, journeys: List<de.luca.mitfahrt.re
     onDeleteRide: (Ride) -> Unit, onSave: (String) -> Unit, onOpenModule: (String) -> Unit) {
     var confirmDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp)) {
-        item { Header("Berichte", "", Icons.Outlined.Description) }
+        item { Header("Fahrten", "", Icons.Outlined.Description) }
         if (journeys.isEmpty() && state.entries.isEmpty()) item {
             EmptyState("Noch keine Berichte", "Wenn du eine Verbindung begleitest, entsteht hier ihr Bericht.")
         }
@@ -1160,7 +1494,7 @@ internal fun ReportsPage(state: ReportsState, journeys: List<de.luca.mitfahrt.re
                     Text("Letzte Fahrt: Linie ${lastRide.departure.line}", fontWeight = FontWeight.SemiBold)
                     Text("${shortName(lastRide.departure.destination)} · ${reportDate(lastRide.departure.planned)}", color = Soft, fontSize = 13.sp)
                 }
-                TextButton(onClick = { onCreate(lastRide) }) { Text("Bericht") }
+                TextButton(onClick = { onCreate(lastRide) }) { Text("Fahrtbericht") }
                 IconButton(onClick = { onDeleteRide(lastRide) }, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.Outlined.DeleteOutline, "Gespeicherte letzte Fahrt löschen", tint = Soft)
                 }
@@ -1303,7 +1637,9 @@ private fun ActiveRideBar(ride: Ride, tracking: TrackingState, now: Instant, com
     val live = if (tracking.running && !tracking.lastRefreshFailed) ride.liveBoardingTime(now) else null
     val status = when {
         ride.departure.cancelled -> "Fällt aus"
-        !ride.boarded -> live?.at?.takeIf { it.isAfter(now) }?.let { "${if (live.isArrival) "kommt" else "fährt"} in ${countdownUntil(it, now)}" }
+        !ride.boarded -> live?.at?.takeIf { it.isAfter(now) }?.let { at ->
+            val minutes = minutesLabel(at, now)
+            "${if (live.isArrival) "kommt" else "fährt"} ${if (minutes == "jetzt") minutes else "in $minutes"}" }
             ?: "Fahrplan ${clockTime(ride.stops.getOrNull(ride.boardingIndex)?.planned ?: ride.departure.planned)}"
         else -> "bis ${shortName(ride.displayTarget().name)}" +
             (ride.displayTarget().estimated?.takeIf { !ride.isStale(now) }?.let { " · ${minutesUntil(it, now)} Min" } ?: "")

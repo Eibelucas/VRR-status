@@ -8,6 +8,7 @@ import de.luca.mitfahrt.shared.WatchCompanion
 
 class WatchRequestService : WearableListenerService() {
     override fun onMessageReceived(event: MessageEvent) {
+        if (de.luca.mitfahrt.updates.WatchUpdateBridge.handle(event.path, event.data, event.sourceNodeId)) return
         if (event.path == WatchProtocol.REQUEST) (application as MitfahrtApplication).watch.requestPublish()
         if (event.path == WatchCompanion.COMMAND) (application as MitfahrtApplication).watch.command(event.data, event.sourceNodeId)
     }

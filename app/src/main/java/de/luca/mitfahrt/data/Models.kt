@@ -118,6 +118,15 @@ fun countdownUntil(at: Instant, now: Instant): String {
     return "%d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
 }
 
+/**
+ * Whole minutes as on a stop display: "jetzt" below one minute, otherwise "6 Min". Rounded down,
+ * so the app never promises more time than there is.
+ */
+fun minutesLabel(at: Instant, now: Instant): String {
+    val minutes = (at.epochSecond - now.epochSecond).coerceAtLeast(0) / 60
+    return if (minutes < 1) "jetzt" else "$minutes Min"
+}
+
 enum class WifiSignal { NONE, NEARBY, CONNECTED, UNAVAILABLE }
 
 fun isNewHotspot(ssid: String): Boolean = ssid.trim().trim('"').matches(Regex("NEW[- _]Hotspot", RegexOption.IGNORE_CASE))

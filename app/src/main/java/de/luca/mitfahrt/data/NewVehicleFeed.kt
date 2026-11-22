@@ -47,7 +47,11 @@ data class NewVehicle(
     val journeyStartSeconds: Int? = null,
     val routeStops: List<NewVehicleStop> = emptyList(),
     val routeObservedAt: Instant? = null,
-    val directionReliable: Boolean = true
+    val directionReliable: Boolean = true,
+    /** Fresh, non-opaque geomatching.LIDNAME label (e.g. MG clean destination), kept separate from proven headsign. */
+    val routeLabel: String? = null,
+    /** 1-based stop sequence index reported by the vehicle (raw.currentstationidx / raw.stationidx). */
+    val currentStopIndex: Int? = null
 ) {
     fun isFresh(now: Instant): Boolean =
         observedAt >= now.minusSeconds(90) && observedAt <= now.plusSeconds(15)
@@ -88,10 +92,13 @@ object NewVehicleParser {
             }.singleOrNull()
         }
         val geometryFresh = routeObserved?.let { it >= now.minusSeconds(90) && it <= now.plusSeconds(15) } == true
-        val destination = destination(text(raw, "terminus"), text(geo, "LIDNAME").takeIf { geometryFresh })
+        val rawLidName = text(geo, "LIDNAME").takeIf { geometryFresh }
+        val destination = destination(text(raw, "terminus"), rawLidName)
+        val cleanRouteLabel = cleanRouteLabel(rawLidName)
         val currentId = stopId(raw, "currentstationid") ?: stopId(raw, "stationid")
         val currentName = if (stopId(raw, "currentstationid") != null) text(raw, "currentstationname")
             else text(raw, "stationname")
+        val currentIdx = integer(raw, "currentstationidx", 1..300) ?: integer(raw, "stationidx", 1..300)
         val vehicle = NewVehicle(
             id = id,
             line = line,
@@ -101,7 +108,7 @@ object NewVehicleParser {
             currentStopId = currentId,
             currentStopName = currentName,
             nextStopId = stopId(geo, "NEXT_ORT_NR").takeIf { geometryFresh },
-            nextStopName = text(geo, "NEXT_ORT_REF_ORT_NAME").takeIf { geometryFresh },
+            nextStopName = text(geo, "NEXT_ORT_REF_ORT_NAME")?.takeUnless { it == "0" }.takeIf { geometryFresh },
             delaySeconds = (integer(geo, "PLAN_ABWEICHNG", -86_400..86_400)
                 ?: integer(geo, "PLAN_ABWEICHNG_MIN", -1_440..1_440)?.times(60)).takeIf { geometryFresh },
             tripId = text(raw, "trip"),
@@ -109,7 +116,9 @@ object NewVehicleParser {
             journeyStartSeconds = integer(geo, "FRT_START", 0..259_200).takeIf { geometryFresh },
             routeStops = if (geometryFresh) routeStops(geo.optJSONArray("FAHRTWEG")) else emptyList(),
             routeObservedAt = routeObserved,
-            directionReliable = destination.reliable
+            directionReliable = destination.reliable,
+            routeLabel = cleanRouteLabel,
+            currentStopIndex = currentIdx
         )
         return vehicle.takeIf { it.isFresh(now) }
     }
@@ -127,6 +136,12 @@ object NewVehicleParser {
     private fun opaqueDestination(value: String): Boolean = value.isBlank() ||
         ledControlPrefix.containsMatchIn(value) || Regex("\\s{2,}").containsMatchIn(value) ||
         value.any(Char::isISOControl) || value.length > 80 || advert.containsMatchIn(value)
+
+    private fun cleanRouteLabel(geometry: String?): String? {
+        val raw = geometry?.trim()?.takeIf { it.isNotEmpty() && it != "0" } ?: return null
+        val tail = if (raw.contains('>') && raw.substringBeforeLast('>').isNotBlank()) raw.substringAfterLast('>').trim() else raw
+        return tail.takeIf { it.isNotBlank() && !opaqueDestination(it) }?.let(::displayDestination)
+    }
 
     private fun destination(raw: String?, geometry: String?): Destination {
         // Packed LED displays and advertisements are labels, never a decoded route direction.

@@ -9,13 +9,13 @@ import java.util.Locale
 /** A line or destination identifies possible vehicles, never a particular departure. */
 object NewVehicleMatcher {
     private val berlin = ZoneId.of("Europe/Berlin")
-    private const val STOP_DISTANCE_METRES = 75.0
+    private const val STOP_DISTANCE_METRES = 150.0
 
     fun candidates(ride: Ride, vehicles: List<NewVehicle>, now: Instant): List<NewVehicle> {
         val boarding = ride.stops.getOrNull(ride.boardingIndex)?.point
         return vehicles.asSequence().filter { matchesCandidate(ride, it, now) }
             .distinctBy { it.id }
-            .sortedWith(compareByDescending<NewVehicle> { sameDirection(ride, it) }
+            .sortedWith(compareByDescending<NewVehicle> { sameDirection(ride, it) || routeLabelDirection(ride, it) > 0 }
                 .thenBy { boarding?.distanceTo(it.point) ?: Double.MAX_VALUE }.thenBy { it.id })
             .toList()
     }
@@ -38,6 +38,34 @@ object NewVehicleMatcher {
             .map(::terminalName).any { it.isNotEmpty() && it == actual }
     }
 
+    /**
+     * Direction signal from fresh geomatching.LIDNAME (used by MG buses whose raw LED terminus is packed).
+     * Returns +1 if it agrees with the ride's destination, -1 if it clearly matches the opposite terminal, 0 otherwise.
+     */
+    fun routeLabelDirection(ride: Ride, vehicle: NewVehicle): Int {
+        val label = vehicle.routeLabel?.let(::terminalName)?.takeIf { it.isNotEmpty() } ?: return 0
+        val targets = listOf(ride.departure.destination, ride.stops.lastOrNull()?.name.orEmpty())
+            .map(::terminalName).filter { it.isNotEmpty() }
+        val origin = ride.stops.firstOrNull()?.name?.let(::terminalName)?.takeIf { it.isNotEmpty() }
+        val matchesDest = targets.any { terminalsAgree(it, label) }
+        val matchesOrigin = origin != null && terminalsAgree(origin, label)
+        return when {
+            matchesDest && !matchesOrigin -> 1
+            matchesOrigin && !matchesDest -> -1
+            else -> 0
+        }
+    }
+
+    /** Matches NEW raw.stationid (e.g. "0023078") against VRR stop IDs ("20023078", "de:05116:23078:1:1"). */
+    fun matchesStopId(efaStopId: String, vehicleStopId: String?): Boolean {
+        val rawDigits = vehicleStopId?.filter(Char::isDigit)?.trimStart('0').orEmpty()
+        if (rawDigits.length < 4) return false
+        val key = stopKey(efaStopId)
+        val efaTail = key.substringAfterLast(':').filter(Char::isDigit).trimStart('0')
+        if (efaTail.length < 4) return false
+        return efaTail == rawDigits || efaTail.endsWith(rawDigits) || rawDigits.endsWith(efaTail)
+    }
+
     /** Only one current vehicle with an independently matching scheduled path is accepted. */
     fun confirmed(ride: Ride, vehicles: List<NewVehicle>, now: Instant): NewVehicle? {
         if (!fresh(ride.fetchedAt, now, 120)) return null
@@ -55,7 +83,7 @@ object NewVehicleMatcher {
         if (!fresh(routeAt, now, 90)) return false
         val path = vehicle.routeStops
         if (path.size < 3 || ride.stops.size < 3) return false
-        val startSeconds = vehicle.journeyStartSeconds?.takeIf { it in 0 until 86_400 } ?: return false
+        val startSeconds = vehicle.journeyStartSeconds?.takeIf { it in 0 until 259_200 }?.let { it % 86_400 } ?: return false
         val first = ride.stops.first()
         val firstTime = first.departure ?: first.arrival ?: return false
         // A recent position does not make a path from yesterday (or last month) current.
@@ -110,10 +138,20 @@ object NewVehicleMatcher {
     private fun validPoint(point: GeoPoint): Boolean = point.lat.isFinite() && point.lon.isFinite() &&
         point.lat in -90.0..90.0 && point.lon in -180.0..180.0 && (point.lat != 0.0 || point.lon != 0.0)
 
+    private fun terminalsAgree(a: String, b: String): Boolean {
+        if (a == b) return true
+        // Never fold two distinct main stations (e.g. MG Hbf vs Rheydt Hbf).
+        if ((a == "hbf" || b == "hbf") && a != b) return false
+        val shorter = if (a.length <= b.length) a else b
+        val longer = if (a.length <= b.length) b else a
+        return shorter.length >= 6 && (longer.endsWith(" $shorter") || longer.startsWith("$shorter "))
+    }
+
     private fun terminalName(value: String): String {
         val text = Normalizer.normalize(value, Normalizer.Form.NFKD).replace(Regex("\\p{M}+"), "")
             .lowercase(Locale.ROOT).replace("ß", "ss")
             .replace(Regex("^(monchengladbach|monchengl\\.?|mg)[,\\s]+"), "")
+            .replace(Regex("\\s+(u\\.?|uber)\\s+.*$"), "")
             .replace(Regex("\\bhauptbahnhof\\b"), "hbf")
             .replace(Regex("\\bbusbahnhof\\b|\\bbusbf\\b\\.?"), "busbf")
             .replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim().replace(Regex("\\s+"), " ")

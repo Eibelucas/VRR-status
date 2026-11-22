@@ -1,7 +1,5 @@
 package de.luca.mitfahrt.ui
 
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,7 +18,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
 import de.luca.mitfahrt.data.AutoMatchBasis
 import de.luca.mitfahrt.data.AutoMatchStatus
 import de.luca.mitfahrt.data.GeoPoint
@@ -28,12 +25,16 @@ import de.luca.mitfahrt.data.GpsProgressState
 import de.luca.mitfahrt.data.GpsStopProgress
 import de.luca.mitfahrt.data.LiveBusState
 import de.luca.mitfahrt.data.RouteShape
+import de.luca.mitfahrt.data.boardingTime
+import de.luca.mitfahrt.data.clockTime
+import de.luca.mitfahrt.data.displayTarget
 import de.luca.mitfahrt.data.exitTargetIndex
-import de.luca.mitfahrt.data.AppSettingsStore
+import de.luca.mitfahrt.data.liveBoardingTime
+import de.luca.mitfahrt.data.nextStopToTarget
+import de.luca.mitfahrt.data.progressToTarget
 import de.luca.mitfahrt.data.NewVehicle
 import de.luca.mitfahrt.data.Ride
 import de.luca.mitfahrt.data.Stop
-import de.luca.mitfahrt.data.clockTime
 import de.luca.mitfahrt.data.shortName
 import java.time.Duration
 import java.time.Instant
@@ -48,8 +49,7 @@ import kotlin.math.roundToInt
 fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVehicle) -> Unit,
     onClear: () -> Unit, onRefresh: () -> Unit, shape: RouteShape? = null, progress: GpsProgressState? = null,
     phone: GeoPoint? = null, onReject: (String) -> Unit = {}) {
-    val context = LocalContext.current
-    val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
+    val settings by rememberAppSettingsStore().state.collectAsState()
     if (ride.demo || ride.departure.cancelled || state.journeyKey != ride.departure.key ||
         !settings.bool(if (ride.boarded) "map_onboard" else "map_waiting", true)) return
     var chooseVehicle by rememberSaveable(ride.departure.key) { mutableStateOf(false) }
@@ -64,7 +64,7 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
     val targetIndex = ride.exitTargetIndex() ?: ride.stops.lastIndex
     val travelled = when {
         !ride.boarded -> null
-        state.routeOffset != null && (state.confirmed || auto.basis == AutoMatchBasis.CO_MOVEMENT) -> state.routeOffset
+        state.routeOffset != null && (state.confirmed || auto.basis in setOf(AutoMatchBasis.CO_MOVEMENT, AutoMatchBasis.TELEMETRY, AutoMatchBasis.SCHEDULE)) -> state.routeOffset
         progress?.exact == true && GpsStopProgress.confident(progress, now) -> progress.offset
         else -> null
     }
@@ -83,23 +83,33 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
         }
         if (current != null) {
             Text(when {
-                state.confirmed -> "Dein Bus laut NEW-Fahrplanweg"
+                state.confirmed || (detected && auto.basis == AutoMatchBasis.SCHEDULE) -> "Dein Bus laut NEW-Fahrplanweg"
+                detected && auto.basis == AutoMatchBasis.TELEMETRY -> "Dein Bus laut NEW-Haltestelle und Live-Zeit"
                 detected && auto.basis == AutoMatchBasis.CO_MOVEMENT -> "Dein Bus: bewegt sich mit deinem Handy"
                 detected -> "Vermutlich dein Bus: Linie, Richtung und Anfahrt passen"
                 else -> "Von dir gewählt"
             }, color = Soft, fontSize = 14.sp, lineHeight = 19.sp)
-            if (current.destination.isNotBlank()) Text("${if (current.directionReliable) "Richtung" else "Anzeige am Bus"} ${shortName(current.destination)}",
+            if (current.destination.isNotBlank()) Text("${if (current.directionReliable || !current.routeLabel.isNullOrBlank()) "Richtung" else "Anzeige am Bus"} ${shortName(current.routeLabel ?: current.destination)}",
                 color = Soft, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
                 current.observedAt, now, route = mapRoute,
                 routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
                 otherVehicles = candidates, selectedVehicleId = current.id,
                 onSelectVehicle = onSelect, onFullscreen = { fullscreen = true }, heading = state.heading)
-            if (fullscreen) FullscreenMap("Linie ${ride.departure.line} · ${shortName(ride.departure.destination)}", { fullscreen = false }) { height ->
+            if (fullscreen) LiveHubFullscreen(
+                ride = ride,
+                now = now,
+                subtitle = "Fahrzeug ${current.id} · NEW ${vehicleAge(current.observedAt, now)}",
+                loading = state.loading,
+                onRefresh = onRefresh,
+                onClose = { fullscreen = false }
+            ) { bottomClearance ->
                 WaitingBusMap(current.point, boarding, "Linie ${current.line} · Fahrzeug ${current.id}",
                     current.observedAt, now, route = mapRoute,
                     routeStops = ride.stops.map { Stop(it.id, it.name, it.point) },
-                    otherVehicles = candidates, selectedVehicleId = current.id, onSelectVehicle = onSelect, mapHeight = height, heading = state.heading)
+                    otherVehicles = candidates, selectedVehicleId = current.id, onSelectVehicle = onSelect,
+                    edgeToEdge = true, recenterTopPadding = 84.dp, attributionBottomPadding = bottomClearance,
+                    heading = state.heading)
             }
             if (state.loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
@@ -110,9 +120,17 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                 Text("Keine Busposition von NEW. Die Karte zeigt deine eigene Position.", color = Soft, fontSize = 14.sp, lineHeight = 19.sp)
                 WaitingBusMap(ownPoint, boarding, "Per GPS erkannt", ownAt, now, route = mapRoute.copy(phone = null),
                     routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true, onFullscreen = { fullscreen = true })
-                if (fullscreen) FullscreenMap("Linie ${ride.departure.line} · ${shortName(ride.departure.destination)}", { fullscreen = false }) { height ->
+                if (fullscreen) LiveHubFullscreen(
+                    ride = ride,
+                    now = now,
+                    subtitle = "GPS deines Handys · ${vehicleAge(ownAt, now)}",
+                    loading = state.loading,
+                    onRefresh = onRefresh,
+                    onClose = { fullscreen = false }
+                ) { bottomClearance ->
                     WaitingBusMap(ownPoint, boarding, "Per GPS erkannt", ownAt, now, route = mapRoute.copy(phone = null),
-                        routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true, mapHeight = height)
+                        routeStops = ride.stops.map { Stop(it.id, it.name, it.point) }, gpsSource = true,
+                        edgeToEdge = true, recenterTopPadding = 84.dp, attributionBottomPadding = bottomClearance)
                 }
             } else AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -152,8 +170,8 @@ fun LiveBusCard(ride: Ride, state: LiveBusState, now: Instant, onSelect: (NewVeh
                     Text(it.joinToString(", "), color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(shape = ControlShape, onClick = { onSelect(suggested) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Ja") }
-                    OutlinedButton(shape = ControlShape, onClick = { onReject(suggested.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Nein") }
+                    Button(shape = ControlShape, onClick = { onSelect(suggested) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Das ist mein Bus") }
+                    OutlinedButton(shape = ControlShape, onClick = { onReject(suggested.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Anderer Bus") }
                 }
             }
         }
@@ -210,12 +228,16 @@ private fun VehicleChoiceRow(vehicle: NewVehicle, boarding: Stop?, now: Instant,
         Text("Linie ${vehicle.line} · Fahrzeug ${vehicle.id}", fontWeight = FontWeight.SemiBold)
     }, supportingContent = {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(if (vehicle.destination.isBlank()) "Richtung nicht gemeldet" else "${if (vehicle.directionReliable) "Richtung" else "Anzeige am Bus, Richtung unsicher:"} ${shortName(vehicle.destination)}",
+            val destLabel = vehicle.routeLabel ?: vehicle.destination
+            Text(if (destLabel.isBlank()) "Richtung nicht gemeldet" else "${if (vehicle.directionReliable || !vehicle.routeLabel.isNullOrBlank()) "Richtung" else "Anzeige am Bus:"} ${shortName(destLabel)}",
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             val distance = boarding?.point?.distanceTo(vehicle.point)?.takeIf { it.isFinite() }
             val age = Duration.between(vehicle.observedAt, now).seconds
-            Text(listOfNotNull(distance?.let { "ca. ${vehicleDistance(it)} Luftlinie zum Einstieg" },
-                "NEW · ${vehicleAge(vehicle.observedAt, now)}").joinToString(" · "), fontSize = 12.sp,
+            Text(listOfNotNull(
+                vehicle.currentStopName?.takeIf { it.isNotBlank() }?.let { "Halt ${shortName(it)}" },
+                distance?.let { "ca. ${vehicleDistance(it)} zum Einstieg" },
+                "NEW · ${vehicleAge(vehicle.observedAt, now)}"
+            ).joinToString(" · "), fontSize = 12.sp,
                 color = if (age >= 60) Amber else Soft)
             status?.let { Text(it.label, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                 color = if (it == AssignmentStatus.WRONG_DIRECTION || it == AssignmentStatus.REJECTED) Amber else Paper) }
@@ -234,24 +256,119 @@ private fun vehicleAge(observedAt: Instant, now: Instant): String {
 private fun vehicleDistance(metres: Double): String = if (metres < 1000) "${metres.roundToInt()} m"
     else String.format(Locale.GERMANY, "%.1f km", metres / 1000)
 
-/** The map of the running ride on the whole screen; back or the arrow returns to the ride. */
+/**
+ * The map of the running ride on the whole screen. Two solid bars sit over the map: line and source on top,
+ * next stop, wait and arrival below. They carry a hairline instead of a shadow so the map stays calm.
+ */
 @Composable
-private fun FullscreenMap(title: String, onClose: () -> Unit, map: @Composable (androidx.compose.ui.unit.Dp) -> Unit) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+private fun LiveHubFullscreen(
+    ride: Ride,
+    now: Instant,
+    subtitle: String,
+    loading: Boolean,
+    onRefresh: () -> Unit,
+    onClose: () -> Unit,
+    map: @Composable (bottomClearance: androidx.compose.ui.unit.Dp) -> Unit
+) {
+    val targetIdx = ride.exitTargetIndex() ?: ride.stops.lastIndex
+    val nextStop = ride.nextStopToTarget(now)
+    val nextName = nextStop?.name?.let(::shortName) ?: shortName(ride.displayTarget().name)
+    val nextAt = if (ride.boarded) nextStop?.effective(ride.offsetSeconds) else ride.liveBoardingTime(now)?.at ?: ride.boardingTime().at
+    val nextMin = nextAt?.let { kotlin.math.ceil((it.epochSecond - now.epochSecond) / 60.0).toInt().coerceAtLeast(0) }
+    val arrivalClock = ride.displayTarget().effective(ride.offsetSeconds)?.let(::clockTime)
+    val remainingStops = (targetIdx - ride.nextIndex(now).coerceIn(ride.boardingIndex, targetIdx + 1) + 1).coerceAtLeast(0)
+    val progress = ride.progressToTarget(now).coerceIn(0f, 1f)
+    val delayMinutes = (ride.offsetSeconds / 60).toInt()
+    val barBorder = androidx.compose.foundation.BorderStroke(1.dp, Soft.copy(alpha = 0.35f))
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
         Surface(Modifier.fillMaxSize(), color = Ink) {
-            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
-                val available = maxHeight
-                Column(Modifier.fillMaxSize()) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
-                            Icon(androidx.compose.material.icons.Icons.AutoMirrored.Outlined.ArrowBack, "Vollbild schließen")
+            Box(Modifier.fillMaxSize()) {
+                // Bottom bar height at 150 % font size plus its outer padding; the map adds the navigation bar itself.
+                map(120.dp)
+
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    shape = Shape,
+                    color = Panel,
+                    border = barBorder
+                ) {
+                    Column {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Vollbild schließen", tint = Paper)
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Linie ${ride.departure.line} · ${shortName(ride.displayTarget().name)}",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 16.sp,
+                                    color = Paper,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(subtitle, color = Soft, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Outlined.Refresh, "Busposition aktualisieren", tint = Paper)
+                            }
                         }
-                        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (loading) AppLinearProgressIndicator(Modifier.fillMaxWidth())
                     }
-                    // Header, card padding, label rows and legend take about 200 dp; the map gets the rest.
-                    Box(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                        map((available - 200.dp).coerceAtLeast(96.dp))
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    shape = Shape,
+                    color = Panel,
+                    border = barBorder
+                ) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            if (ride.boarded) "Nächster Halt · $nextName" else "Abfahrt · $nextName",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = Paper,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val meta = buildList {
+                            nextMin?.let { add(if (it <= 0) "jetzt" else "in $it Min") }
+                            arrivalClock?.let { add("Ankunft $it") }
+                            if (ride.boarded && remainingStops > 0) add(if (remainingStops == 1) "1 Halt" else "$remainingStops Halte")
+                        }.joinToString(" · ")
+                        if (meta.isNotEmpty() || delayMinutes != 0) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(meta, color = Paper, fontSize = 14.sp, modifier = Modifier.weight(1f, fill = false))
+                            // Times stay neutral; only a deviation from the timetable is coloured, always with text.
+                            if (delayMinutes != 0) Text(
+                                (if (meta.isEmpty()) "" else " · ") + (if (delayMinutes > 0) "+$delayMinutes Min" else "$delayMinutes Min"),
+                                color = Amber, fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(5.dp),
+                            // Lime is the theme accent; BrandBerry turns dark in dark mode and falls below 3:1 on Panel.
+                            color = Lime,
+                            trackColor = Soft.copy(alpha = 0.25f)
+                        )
                     }
                 }
             }

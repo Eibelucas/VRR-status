@@ -39,6 +39,9 @@ class RideService : Service(), LocationListener {
     private val phoneTrack = PhoneTrack()
     private var shapeJob: Job? = null
     private var shapeCheck: Pair<String, Long>? = null
+    private var alternateBusState = AlternateBusTrackerState()
+    private var alternateLookup: Job? = null
+    private var lastAlternateLookup: Pair<String, Long>? = null
     private var sessionStart = 0L
     private var sensorsRegistered = false
     private var locationSubscribed = false
@@ -86,11 +89,38 @@ class RideService : Service(), LocationListener {
             if (store.state.value.running && store.state.value.ride != null) liveWake.trySend(Unit)
             return START_NOT_STICKY
         }
+        if (intent?.action == TOGGLE_NOTIFICATION_MAP_MODE) {
+            notifications.toggleMapMode()
+            val current = store.state.value
+            if (current.running && current.ride != null) notifications.post(current)
+            return START_NOT_STICKY
+        }
         if (intent?.action == UNBOARD || intent?.action == STILL_ON_BOARD) {
             val ride = store.state.value.ride
             if (ride != null && !ride.demo) {
                 if (intent.action == UNBOARD) store.setRide(ride.unboard(), preserveStatus = true)
                 noteCorrection()
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action == DISMISS_ALTERNATE) {
+            val suggestion = store.state.value.alternateBus
+            if (suggestion != null) {
+                alternateBusState = alternateBusState.copy(
+                    candidateVehicleId = null,
+                    confirmations = 0,
+                    dismissedVehicleIds = alternateBusState.dismissedVehicleIds + suggestion.vehicle.id
+                )
+                store.update { it.copy(alternateBus = null) }
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action == SWITCH_ALTERNATE) {
+            val current = store.state.value
+            val previous = current.ride
+            val suggestion = current.alternateBus
+            if (previous != null && suggestion != null && suggestion.journeyKey == previous.departure.key) {
+                scope.launch { switchToAlternate(previous, suggestion.departure, autoSwitched = false) }
             }
             return START_NOT_STICKY
         }
@@ -166,6 +196,7 @@ class RideService : Service(), LocationListener {
                             store.clear(); stopSelf(); break
                         }
                         if (evaluateBoarding()) { stopSelf(); break }
+                        evaluateAlternateBus()
                     } else if (store.state.value.monitoring && store.state.value.wifi in setOf(WifiSignal.CONNECTED, WifiSignal.NEARBY)) {
                         findCandidates()
                     }
@@ -537,6 +568,116 @@ class RideService : Service(), LocationListener {
         return false
     }
 
+    private suspend fun evaluateAlternateBus() {
+        val state = store.state.value
+        val ride = state.ride ?: return
+        val settings = customization.current()
+        val mode = settings.string("auto_switch_bus", "ask")
+        if (mode == "off" || ride.demo || !hasLocation()) {
+            if (state.alternateBus != null) store.update { it.copy(alternateBus = null) }
+            return
+        }
+        val now = Instant.now()
+        val (fleet, tracks) = app.liveBusTracker.fleetSnapshot(now)
+        if (fleet.isEmpty()) return
+        val live = state.liveBus
+        val currentVehicle = live.vehicle?.takeIf { live.journeyKey == ride.departure.key && it.isFresh(now) &&
+            (live.confirmed || live.selectedVehicleId == it.id || live.auto.holdsVehicle) }
+        val currentTrack = currentVehicle?.let { tracks[it.id].orEmpty() }.orEmpty()
+        val result = AlternateBusDetector.step(
+            previous = alternateBusState,
+            ride = ride,
+            currentVehicle = currentVehicle,
+            currentTrack = currentTrack,
+            fleet = fleet,
+            fleetTracks = tracks,
+            phoneFixes = phoneTrack.recent(now, AlternateBusDetector.WINDOW_SECONDS),
+            now = now
+        )
+        alternateBusState = result.state
+        val confirmed = result.confirmed ?: return
+        if (state.alternateBus?.vehicle?.id == confirmed.vehicle.id) return
+        val elapsed = SystemClock.elapsedRealtime()
+        if (alternateLookup?.isActive == true) return
+        if (lastAlternateLookup?.let { it.first == confirmed.vehicle.id && elapsed - it.second < 30_000L } == true) return
+        lastAlternateLookup = confirmed.vehicle.id to elapsed
+
+        val rideKey = ride.departure.key
+        alternateLookup = scope.launch {
+            try {
+                val boardingStop = Stop(ride.departure.stopId, ride.departure.stopName, ride.stops.getOrNull(ride.boardingIndex)?.point)
+                var departures = runCatching { app.vrr.departures(boardingStop, newOnly = true) }
+                    .getOrElse { error -> if (error is CancellationException) throw error else emptyList() }
+                var matched = AlternateBusDetector.matchDeparture(confirmed.vehicle, departures, rideKey, Instant.now())
+                if (matched == null) {
+                    val loc = store.state.value.location
+                    if (loc != null) {
+                        val nearby = runCatching { app.vrr.nearby(loc).take(2) }
+                            .getOrElse { error -> if (error is CancellationException) throw error else emptyList() }
+                        departures = nearby.flatMap { stop ->
+                            runCatching { app.vrr.departures(stop, newOnly = true) }
+                                .getOrElse { error -> if (error is CancellationException) throw error else emptyList() }
+                        }
+                        matched = AlternateBusDetector.matchDeparture(confirmed.vehicle, departures, rideKey, Instant.now())
+                    }
+                }
+                val departure = matched ?: return@launch
+                val currentRide = store.state.value.ride ?: return@launch
+                if (currentRide.departure.key != rideKey) return@launch
+                val previewRide = app.vrr.ride(departure)
+                val switched = AlternateBusDetector.applySwitchedRide(currentRide, previewRide, Instant.now())
+                if (customization.current().string("auto_switch_bus", "ask") == "auto") {
+                    applySwitchedRideState(switched, autoSwitched = true)
+                } else {
+                    val preservedTarget = switched.exitTargetStop()
+                    store.update { current ->
+                        if (current.ride?.departure?.key != rideKey) current
+                        else current.copy(alternateBus = AlternateBusSuggestion(
+                            journeyKey = rideKey,
+                            vehicle = confirmed.vehicle,
+                            departure = departure,
+                            preservesExitTarget = preservedTarget != null,
+                            exitTargetName = preservedTarget?.name,
+                            detectedAt = Instant.now()
+                        ))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Network hiccup: keep current tracking untouched.
+            }
+        }
+    }
+
+    private suspend fun switchToAlternate(previous: Ride, departure: Departure, autoSwitched: Boolean) {
+        try {
+            val loaded = app.vrr.ride(departure)
+            val current = store.state.value.ride ?: return
+            if (current.departure.key != previous.departure.key) return
+            val switched = AlternateBusDetector.applySwitchedRide(current, loaded, Instant.now())
+            applySwitchedRideState(switched, autoSwitched)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            store.update { it.copy(message = "Wechsel zu Linie ${departure.line} fehlgeschlagen. Bitte erneut versuchen.") }
+        }
+    }
+
+    private fun applySwitchedRideState(switched: Ride, autoSwitched: Boolean) {
+        alternateBusState = AlternateBusTrackerState(journeyKey = switched.departure.key)
+        lastCompletionCheck = null
+        lastRideRefresh = SystemClock.elapsedRealtime()
+        store.setRide(switched)
+        store.update { it.copy(
+            alternateBus = null,
+            message = if (autoSwitched) "Automatisch zu Linie ${switched.departure.line} gewechselt (GPS-Erkennung der App)."
+            else "Gewechselt zu Linie ${switched.departure.line}."
+        ) }
+        switched.takeUnless { it.demo }?.let(app.archive::record)
+        liveWake.trySend(Unit)
+    }
+
     @SuppressLint("MissingPermission")
     @Suppress("DEPRECATION")
     private fun scanWifi() {
@@ -631,6 +772,7 @@ class RideService : Service(), LocationListener {
         if (sensorsRegistered) runCatching { unregisterReceiver(receiver) }
         runCatching { locations.removeUpdates(this) }
         store.update { it.copy(running = false, monitoring = false) }
+        notifications.cancelMap()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -640,10 +782,13 @@ class RideService : Service(), LocationListener {
         const val START_RIDE = "de.luca.mitfahrt.START_RIDE"
         const val STOP = "de.luca.mitfahrt.STOP"
         const val REFRESH_LIVE = "de.luca.mitfahrt.REFRESH_LIVE"
+        const val TOGGLE_NOTIFICATION_MAP_MODE = "de.luca.mitfahrt.TOGGLE_NOTIFICATION_MAP_MODE"
         const val BOARD = "de.luca.mitfahrt.BOARD"
         const val MARK_ARRIVAL = "de.luca.mitfahrt.MARK_ARRIVAL"
         const val UNBOARD = "de.luca.mitfahrt.UNBOARD"
         const val STILL_ON_BOARD = "de.luca.mitfahrt.STILL_ON_BOARD"
+        const val SWITCH_ALTERNATE = "de.luca.mitfahrt.SWITCH_ALTERNATE"
+        const val DISMISS_ALTERNATE = "de.luca.mitfahrt.DISMISS_ALTERNATE"
         fun refreshLive(context: Context) {
             val state = (context.applicationContext as MitfahrtApplication).store.state.value
             if (state.running && state.ride != null) context.startService(Intent(context, RideService::class.java).setAction(REFRESH_LIVE))

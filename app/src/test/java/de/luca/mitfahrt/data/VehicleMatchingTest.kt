@@ -309,4 +309,60 @@ class VehicleMatchingTest {
         assertNotEquals(AutoMatchStatus.ASSIGNED, result.auto.status)
         assertEquals(next.departure.key, result.journeyKey)
     }
+
+    // ---- Direct API matching without phone GPS -----------------------------------------------
+
+    @Test fun `riding bus with NEW stationid and LIDNAME is identified directly without phone GPS`() = runBlocking {
+        val feed = Feed()
+        val shape = RouteFixtures.shape()
+        val ride = RouteFixtures.ride(boarded = true, delaySeconds = 0, fetchedAt = depart)
+        // At depart + 120 s the bus is right at stop index 2 ("de:05116:102:1:1", offset 1000 m, planned depart + 120 s).
+        val now = depart.plusSeconds(120)
+        feed.now = now
+        val mgBus = NewVehicle(
+            id = "1503",
+            line = "006",
+            destination = "ZIEL PACKED LED",
+            point = along(1000.0),
+            observedAt = now,
+            currentStopId = "0000102",
+            currentStopName = "Halt 2",
+            directionReliable = false,
+            routeLabel = "Ziel"
+        )
+        val oppositeBus = NewVehicle(
+            id = "1509",
+            line = "006",
+            destination = "HALT 0 PACKED LED",
+            point = along(950.0),
+            observedAt = now,
+            currentStopId = "0000102",
+            currentStopName = "Halt 2",
+            directionReliable = false,
+            routeLabel = "Halt 0"
+        )
+        feed.vehicles = listOf(mgBus, oppositeBus)
+        // Zero phone GPS fixes supplied.
+        val state = feed.tracker.refresh(ride.copy(fetchedAt = now), LiveBusState(), phone = emptyList(), options = auto, shape = shape)
+        assertEquals(AutoMatchStatus.ASSIGNED, state.auto.status)
+        assertEquals(AutoMatchBasis.TELEMETRY, state.auto.basis)
+        assertEquals("1503", state.vehicle?.id)
+    }
+
+    @Test fun `matchesStopId links NEW padded stationid to VRR stopId formats`() {
+        assertTrue(NewVehicleMatcher.matchesStopId("20023078", "0023078"))
+        assertTrue(NewVehicleMatcher.matchesStopId("de:05116:23078:1:1", "0023078"))
+        assertFalse(NewVehicleMatcher.matchesStopId("20023078", "0023999"))
+        assertFalse(NewVehicleMatcher.matchesStopId("20023078", "0001"))
+    }
+
+    @Test fun `unconfirmed vehicle moving opposite to route is not snapped to route bearing`() {
+        val line = RouteFixtures.shape().line
+        val snap = line.project(along(500.0))!!
+        val history = listOf(VehicleObservation(along(600.0), T0))
+        val current = VehicleObservation(along(500.0), T0.plusSeconds(20))
+        val heading = VehicleHeading.of(snap, confirmedTrip = false, history = history, current = current)!!
+        // Moving west (270 deg) while route goes east (90 deg): keep actual movement bearing, do not flip to 90 deg.
+        assertEquals(270.0, heading, 3.0)
+    }
 }

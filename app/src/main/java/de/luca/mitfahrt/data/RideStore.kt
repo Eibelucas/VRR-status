@@ -26,7 +26,9 @@ data class TrackingState(
     /** Stop announcements paused for now by the user. */
     val announcementsPaused: Boolean = false,
     /** The battery saver currently stretches refreshes and GPS. */
-    val powerSaving: Boolean = false
+    val powerSaving: Boolean = false,
+    /** Detected alternate bus the user appears to have boarded instead of the tracked ride. */
+    val alternateBus: AlternateBusSuggestion? = null
 )
 
 class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}) {
@@ -65,7 +67,8 @@ class RideStore(context: Context, private val onRideUpdated: (Ride) -> Unit = {}
                 else LiveBusState(journeyKey = ride?.departure?.key),
             routeShape = it.routeShape?.takeIf { shape -> shape.journeyKey == ride?.departure?.key },
             gpsProgress = it.gpsProgress?.takeIf { progress -> progress.journeyKey == ride?.departure?.key },
-            boarding = it.boarding?.takeIf { boarding -> boarding.journeyKey == ride?.departure?.key }) }
+            boarding = it.boarding?.takeIf { boarding -> boarding.journeyKey == ride?.departure?.key },
+            alternateBus = it.alternateBus?.takeIf { suggestion -> suggestion.journeyKey == ride?.departure?.key }) }
         val savedRide = ride?.takeUnless { it.demo }
         val encoded = savedRide?.let(RideCodec::encode)
         val rememberedRide = savedRide?.takeUnless { it.departure.key in forgottenJourneys || !settings.current().bool("history_enabled", true) }

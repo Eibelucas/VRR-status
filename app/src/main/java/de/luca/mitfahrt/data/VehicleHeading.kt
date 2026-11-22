@@ -20,7 +20,7 @@ object VehicleHeading {
 
     fun of(snap: Projection?, confirmedTrip: Boolean, history: List<VehicleObservation>, current: VehicleObservation): Double? {
         val moved = movement(history, current)
-        if (snap != null && (confirmedTrip || moved != null)) return snap.bearing
+        if (snap != null && (confirmedTrip || (moved != null && Geo.angle(moved, snap.bearing) <= 60.0))) return snap.bearing
         return moved
     }
 

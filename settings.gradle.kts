@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "Mitfahrt"
-include(":app", ":wear", ":shared")
+include(":app", ":wear", ":shared", ":watchface")

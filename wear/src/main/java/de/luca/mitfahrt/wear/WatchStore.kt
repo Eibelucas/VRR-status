@@ -3,14 +3,19 @@ package de.luca.mitfahrt.wear
 import android.app.Application
 import android.content.Context
 import android.util.Base64
+import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.WearableListenerService
 import de.luca.mitfahrt.shared.WatchProtocol
 import de.luca.mitfahrt.shared.HapticTestProtocol
 import de.luca.mitfahrt.shared.WatchCompanion
+import de.luca.mitfahrt.shared.WatchFaceMapProtocol
+import de.luca.mitfahrt.shared.WatchFaceMapSnapshot
 import de.luca.mitfahrt.shared.WatchLibrary
+import de.luca.mitfahrt.shared.WatchUpdateProtocol
 import com.google.android.gms.wearable.Wearable
+import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,10 +25,15 @@ class WatchApplication : Application() { val store by lazy { WatchStore(this) } 
 class WatchStore(context: Context) {
     private val tileContext = context.applicationContext
     private val prefs = context.getSharedPreferences("watch_ride", Context.MODE_PRIVATE)
+    private val watchFaceMapFile = File(tileContext.filesDir, "watchface-map.bin")
     private val mutable = MutableStateFlow(runCatching {
         prefs.getString("snapshot", null)?.let { WatchProtocol.decode(Base64.decode(it, Base64.NO_WRAP)) }
     }.getOrNull())
     val ride = mutable.asStateFlow()
+    private val watchFaceMapState = MutableStateFlow(runCatching {
+        if (watchFaceMapFile.isFile) WatchFaceMapProtocol.decode(watchFaceMapFile.readBytes()) else null
+    }.getOrNull())
+    val watchFaceMap = watchFaceMapState.asStateFlow()
     private val libraryState = MutableStateFlow(runCatching {
         prefs.getString("library", null)?.let { WatchCompanion.decode(Base64.decode(it, Base64.NO_WRAP)) }
     }.getOrNull() ?: WatchLibrary(Instant.EPOCH))
@@ -44,6 +54,22 @@ class WatchStore(context: Context) {
         RideComplicationUpdates.request(tileContext)
     }
 
+    @Synchronized fun receiveWatchFaceMap(bytes: ByteArray?) {
+        val raw = bytes ?: return
+        val snapshot = runCatching { WatchFaceMapProtocol.decode(raw) }.getOrNull() ?: return
+        if (watchFaceMapState.value?.sentAt?.isAfter(snapshot.sentAt) == true) return
+        runCatching {
+            val tmp = File(tileContext.filesDir, "watchface-map.bin.tmp")
+            tmp.writeBytes(raw)
+            if (!tmp.renameTo(watchFaceMapFile)) {
+                watchFaceMapFile.writeBytes(raw)
+                tmp.delete()
+            }
+        }
+        watchFaceMapState.value = snapshot
+        RideComplicationUpdates.request(tileContext)
+    }
+
     @Synchronized fun receive(bytes: ByteArray?) {
         val snapshot = runCatching { bytes?.let(WatchProtocol::decode) }.getOrNull() ?: return
         if (mutable.value?.sentAt?.isAfter(snapshot.sentAt) == true) return
@@ -58,7 +84,15 @@ class WatchStore(context: Context) {
 }
 
 class WatchDataService : WearableListenerService() {
+    override fun onChannelOpened(channel: ChannelClient.Channel) {
+        if (channel.path == WatchUpdateProtocol.WATCH_APK_CHANNEL_PATH) WatchUpdateReceiver.receive(this, channel)
+    }
+
     override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
+        if (event.path == WatchUpdateProtocol.WATCH_INFO_REQUEST_PATH) {
+            WatchVersionReporter.report(this, event.sourceNodeId)
+            return
+        }
         if (event.path == WatchCompanion.RESULT) {
             (application as WatchApplication).store.apply {
                 commandBusy.value = false
@@ -85,5 +119,7 @@ class WatchDataService : WearableListenerService() {
             (application as WatchApplication).store.receive(event.dataItem.data)
         else if (event.type == DataEvent.TYPE_CHANGED && event.dataItem.uri.path == WatchCompanion.LIBRARY)
             (application as WatchApplication).store.receiveLibrary(event.dataItem.data)
+        else if (event.type == DataEvent.TYPE_CHANGED && event.dataItem.uri.path == WatchFaceMapProtocol.PATH)
+            (application as WatchApplication).store.receiveWatchFaceMap(event.dataItem.data)
     }
 }

@@ -31,7 +31,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import de.luca.mitfahrt.MitfahrtApplication
-import de.luca.mitfahrt.data.AppSettingsStore
 import de.luca.mitfahrt.data.NewVehicle
 import de.luca.mitfahrt.data.Stop
 import kotlinx.coroutines.CancellationException
@@ -45,7 +44,7 @@ import java.time.Instant
 fun BusMapOverview(onBack: () -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as MitfahrtApplication
-    val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
+    val settings by rememberAppSettingsStore().state.collectAsState()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var vehicles by remember { mutableStateOf<List<NewVehicle>>(emptyList()) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -131,13 +130,49 @@ fun BusMapOverview(onBack: () -> Unit) {
                     if (loading && vehicles.isEmpty()) item { AppLinearProgressIndicator(Modifier.fillMaxWidth()) }
                     if (error != null) item { Text(error!!, color = Amber, style = MaterialTheme.typography.bodySmall) }
                     if (selected != null) item {
+                        var mapFullscreen by rememberSaveable { mutableStateOf(false) }
+                        val routeStops = selected.routeStops.takeIf {
+                            follow && selected.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
+                        }.orEmpty().mapIndexed { index, stop -> Stop("new-path-$index", stop.name.ifBlank { "Halt" }, stop.point) }
                         WaitingBusMap(selected.point, null, "Linie ${selected.line} · Fahrzeug ${selected.id}", selected.observedAt, now,
                             otherVehicles = current, selectedVehicleId = selected.id, overview = !follow,
                             // NEW publishes only stop points for the path; they are shown as stops, not joined into a line.
-                            routeStops = selected.routeStops.takeIf {
-                                follow && selected.routeObservedAt?.let { now.epochSecond - it.epochSecond in -15..90 } == true
-                            }.orEmpty().mapIndexed { index, stop -> Stop("new-path-$index", stop.name.ifBlank { "Halt" }, stop.point) },
-                            onSelectVehicle = { selectedId = it.id }, heading = headings[selected.id], headings = headings)
+                            routeStops = routeStops,
+                            onSelectVehicle = { selectedId = it.id }, onFullscreen = { mapFullscreen = true },
+                            heading = headings[selected.id], headings = headings)
+                        if (mapFullscreen) Dialog(
+                            onDismissRequest = { mapFullscreen = false },
+                            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+                        ) {
+                            Surface(Modifier.fillMaxSize(), color = Ink) {
+                                Box(Modifier.fillMaxSize()) {
+                                    WaitingBusMap(selected.point, null, "Linie ${selected.line} · Fahrzeug ${selected.id}", selected.observedAt, now,
+                                        otherVehicles = current, selectedVehicleId = selected.id, overview = !follow,
+                                        routeStops = routeStops, onSelectVehicle = { selectedId = it.id },
+                                        edgeToEdge = true, recenterTopPadding = 84.dp, attributionBottomPadding = 8.dp,
+                                        heading = headings[selected.id], headings = headings)
+                                    Surface(
+                                        modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
+                                        shape = Shape, color = Panel,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Soft.copy(alpha = 0.35f))
+                                    ) {
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(onClick = { mapFullscreen = false }, modifier = Modifier.size(48.dp)) {
+                                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Vollbild schließen", tint = Paper)
+                                            }
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Linie ${selected.line} · Fahrzeug ${selected.id}", fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Paper, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(if (current.size == 1) "1 Bus laut NEW" else "${current.size} Busse laut NEW",
+                                                    color = Soft, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                            IconButton(onClick = { request++ }, enabled = !loading, modifier = Modifier.size(48.dp)) {
+                                                Icon(Icons.Outlined.Refresh, "Positionen aktualisieren", tint = Paper)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     item {
                         Text("Busse auf der Straße", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)

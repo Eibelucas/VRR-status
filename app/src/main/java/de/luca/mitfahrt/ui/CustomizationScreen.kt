@@ -114,11 +114,16 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
                         if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "Suche löschen") }
                     })
             }
-            item { PersonalModuleLinks(onOpenModule, query) }
+            if (query.isNotBlank()) item { PersonalModuleLinks(onOpenModule, query) }
             item {
                 AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Profil", style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(Modifier.size(34.dp).background(Well, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.PersonOutline, null, tint = Lime, modifier = Modifier.size(19.dp))
+                            }
+                            Text("Profile & Zeitpläne", style = MaterialTheme.typography.titleMedium)
+                        }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(selected = settings.manualProfileId == "base", onClick = { store.selectProfile("base") }, label = { Text("Standard") })
                             FilterChip(selected = settings.manualProfileId == "auto", onClick = { store.selectProfile("auto") }, label = { Text("Nach Zeit") })
@@ -173,16 +178,22 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
                     AppCard(shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
                         Column {
                             Row(Modifier.fillMaxWidth().clickable { expanded = if (expanded == group) null else group }
-                                .padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                                .padding(horizontal = 16.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Box(Modifier.size(36.dp).background(Well, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                                    Icon(groupIcon(group), null, tint = if (open) Lime else Paper, modifier = Modifier.size(20.dp))
+                                }
                                 Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                                Text("${definitions.size}", color = Soft, style = MaterialTheme.typography.labelMedium)
-                                Spacer(Modifier.width(8.dp))
+                                Surface(shape = RoundedCornerShape(8.dp), color = Well) {
+                                    Text("${definitions.size}", color = Soft, style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                                }
                                 Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (open) "Zuklappen" else "Öffnen", tint = Soft)
                             }
                             if (open) {
                                 if (group in listOf("appearance", "nowbar")) CustomizationPreview(settings, group)
                                 definitions.forEach { definition ->
-                                    HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = Soft.copy(alpha = 0.15f))
+                                    HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = Hairline)
                                     SettingControl(definition, settings, store) { editing = it }
                                 }
                                 TextButton(onClick = { resetGroup = group }, modifier = Modifier.align(Alignment.End).padding(end = 8.dp, bottom = 8.dp)) {
@@ -236,6 +247,23 @@ fun CustomizationScreen(store: AppSettingsStore, onBack: () -> Unit, onNotice: (
         }, enabled = !busy) { Text("Übernehmen") } }, dismissButton = { TextButton(onClick = { importDraft = null }, enabled = !busy) { Text("Abbrechen") } }) }
 }
 
+private fun groupIcon(group: String) = when (group) {
+    "appearance" -> Icons.Outlined.Palette
+    "start" -> Icons.Outlined.Home
+    "routes" -> Icons.Outlined.AltRoute
+    "stops" -> Icons.Outlined.DepartureBoard
+    "trips" -> Icons.Outlined.DirectionsTransit
+    "map" -> Icons.Outlined.Map
+    "ride" -> Icons.Outlined.DirectionsBus
+    "alerts" -> Icons.Outlined.NotificationsActive
+    "nowbar" -> Icons.Outlined.Smartphone
+    "watch" -> Icons.Outlined.Watch
+    "reports" -> Icons.Outlined.Description
+    "privacy" -> Icons.Outlined.Shield
+    "battery" -> Icons.Outlined.BatteryChargingFull
+    else -> Icons.Outlined.Tune
+}
+
 private fun normalizeSettingsSearch(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
     .replace(Regex("\\p{M}+"), "").lowercase(Locale.GERMAN).replace("ß", "ss")
 
@@ -273,19 +301,21 @@ private fun settingSummary(definition: SettingDefinition, settings: AppSettings)
 
 @Composable
 private fun CustomizationPreview(settings: AppSettings, group: String) {
-    val accent = runCatching { Color(android.graphics.Color.parseColor(settings.string("accent_hex", "#B40055"))) }.getOrDefault(BrandBerry)
     Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
         Text("Vorschau", color = Soft, style = MaterialTheme.typography.labelSmall)
-        Surface(shape = RoundedCornerShape(18.dp), color = if (group == "nowbar") Paper.copy(alpha = settings.int("widget_opacity", 100) / 100f * 0.08f) else Ink,
+        Surface(shape = RoundedCornerShape(12.dp), color = if (group == "nowbar") Paper.copy(alpha = settings.int("widget_opacity", 100) / 100f * 0.08f) else Well,
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(10.dp), color = if (settings.string("accent") == "custom") accent else Lime) {
-                    Text("007", color = if (settings.string("accent") == "custom") Color.White else MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), fontWeight = FontWeight.Bold)
-                }
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                LineSign("017", large = true)
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) { Text("Hauptbahnhof", style = MaterialTheme.typography.titleSmall); Text("Beispielhaltestelle", color = Soft, style = MaterialTheme.typography.bodySmall) }
-                Text("3 Min", fontWeight = FontWeight.SemiBold)
+                Column(Modifier.weight(1f)) {
+                    Text("Hauptbahnhof", style = MaterialTheme.typography.titleSmall)
+                    Text("Steig 2 · +2 Min", color = Amber, style = MaterialTheme.typography.bodySmall)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("3 Min", style = BoardTime)
+                    Text("Live", color = Lime, style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
@@ -293,7 +323,7 @@ private fun CustomizationPreview(settings: AppSettings, group: String) {
 
 private fun listChoices(key: String): List<SettingChoice> = when (key) {
     "home_cards" -> listOf("planned" to "Eigene Routen", "school" to "Schulwege", "suggestions" to "Automatische Vorschläge", "last" to "Letzte Fahrt", "map" to "Karte")
-    "nav_order" -> listOf("home" to "Start", "nearby" to "In der Nähe", "reports" to "Berichte", "settings" to "Einstellungen")
+    "nav_order" -> listOf("home" to "Start", "nearby" to "Abfahrten", "reports" to "Fahrten")
     "trip_modes" -> listOf("train" to "Bahn", "light_rail" to "U-/Stadtbahn & Tram", "bus" to "Bus", "on_demand" to "Rufbus & AST", "other" to "Sonstige")
     "notification_actions" -> listOf("board" to "Bin im Bus", "arrival" to "Ankunft merken", "map" to "Karte öffnen", "stop" to "Fahrt beenden")
     "watch_actions" -> listOf("board" to "Bin im Bus", "arrival" to "Ankunft merken", "target" to "Ziel wählen", "stop" to "Fahrt beenden")
@@ -343,9 +373,9 @@ private fun SettingEditor(definition: SettingDefinition, settings: AppSettings, 
                             Text(choice.label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                             if (index >= 0 && definition.key !in listOf("alert_leads", "report_fields", "trip_modes")) {
                                 IconButton(onClick = { val updated = selected.toMutableList(); java.util.Collections.swap(updated, index, index - 1); text = updated.joinToString(",") },
-                                    enabled = index > 0, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.KeyboardArrowUp, "${choice.label} nach oben") }
+                                    enabled = index > 0, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.KeyboardArrowUp, "${choice.label} nach oben") }
                                 IconButton(onClick = { val updated = selected.toMutableList(); java.util.Collections.swap(updated, index, index + 1); text = updated.joinToString(",") },
-                                    enabled = index < selected.lastIndex, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.KeyboardArrowDown, "${choice.label} nach unten") }
+                                    enabled = index < selected.lastIndex, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.KeyboardArrowDown, "${choice.label} nach unten") }
                             }
                         }
                     }
@@ -407,12 +437,38 @@ private fun SettingEditor(definition: SettingDefinition, settings: AppSettings, 
                         })
                     }
                 }
-                OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
-                    singleLine = definition.key != "report_note", label = { Text(if (definition.kind == SettingKind.NUMBER) "Wert" else definition.title) },
-                    keyboardOptions = KeyboardOptions(keyboardType = if (definition.kind == SettingKind.NUMBER) KeyboardType.Number else KeyboardType.Text),
-                    isError = definition.clean(text) == null, supportingText = {
-                        Text(if (definition.kind == SettingKind.NUMBER) "${definition.range.first}–${definition.range.last}${if (definition.hint.isNotBlank()) " · ${definition.hint}" else ""}" else definition.hint)
-                    })
+                val numericRange = definition.range.takeIf { definition.kind == SettingKind.NUMBER && it.last > it.first && it.last - it.first <= 2000 }
+                if (numericRange != null) {
+                    val current = text.toIntOrNull()?.coerceIn(numericRange.first, numericRange.last) ?: numericRange.first
+                    val step = when {
+                        numericRange.last - numericRange.first >= 500 -> 50
+                        numericRange.last - numericRange.first >= 50 -> 5
+                        else -> 1
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("$current", style = MaterialTheme.typography.headlineSmall, color = Lime, modifier = Modifier.weight(1f))
+                            Text("${numericRange.first}–${numericRange.last}", style = MaterialTheme.typography.labelMedium, color = Soft)
+                        }
+                        Slider(
+                            value = current.toFloat(),
+                            onValueChange = { raw ->
+                                val snapped = ((raw - numericRange.first) / step).let { kotlin.math.round(it).toInt() * step + numericRange.first }
+                                    .coerceIn(numericRange.first, numericRange.last)
+                                text = snapped.toString()
+                            },
+                            valueRange = numericRange.first.toFloat()..numericRange.last.toFloat()
+                        )
+                        if (definition.hint.isNotBlank()) Text(definition.hint, color = Soft, style = MaterialTheme.typography.bodySmall)
+                    }
+                } else {
+                    OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
+                        singleLine = definition.key != "report_note", label = { Text(if (definition.kind == SettingKind.NUMBER) "Wert" else definition.title) },
+                        keyboardOptions = KeyboardOptions(keyboardType = if (definition.kind == SettingKind.NUMBER) KeyboardType.Number else KeyboardType.Text),
+                        isError = definition.clean(text) == null, supportingText = {
+                            Text(if (definition.kind == SettingKind.NUMBER) "${definition.range.first}–${definition.range.last}${if (definition.hint.isNotBlank()) " · ${definition.hint}" else ""}" else definition.hint)
+                        })
+                }
             }
         }
     }, confirmButton = { TextButton(onClick = { onSave(text) }, enabled = definition.clean(text) != null) { Text("Übernehmen") } },

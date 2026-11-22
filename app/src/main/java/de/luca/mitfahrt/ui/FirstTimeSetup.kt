@@ -28,7 +28,7 @@ fun FirstTimeSetup(locationAllowed: Boolean, notificationsAllowed: Boolean,
         Surface(Modifier.fillMaxSize(), color = Ink) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().padding(28.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("MITFAHRT", fontSize = 12.sp, letterSpacing = 2.sp, color = Lime, modifier = Modifier.weight(1f))
+                    Text("Mitfahrt", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = Lime, modifier = Modifier.weight(1f))
                     Text("${step + 1} / 3", color = Soft, fontSize = 13.sp)
                 }
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {

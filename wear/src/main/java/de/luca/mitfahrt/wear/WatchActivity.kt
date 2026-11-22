@@ -1,9 +1,11 @@
 package de.luca.mitfahrt.wear
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -11,6 +13,7 @@ import com.google.android.gms.wearable.*
 import de.luca.mitfahrt.shared.WatchProtocol
 import de.luca.mitfahrt.shared.WatchCompanion
 import de.luca.mitfahrt.shared.WatchCommand
+import de.luca.mitfahrt.shared.WatchFaceMapProtocol
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 
@@ -19,17 +22,52 @@ class WatchActivity : ComponentActivity(), DataClient.OnDataChangedListener {
     private val client by lazy { Wearable.getDataClient(this) }
     private var refreshJob: Job? = null
     private var commandSequence = 0L
+    private val requestedView = mutableStateOf<String?>(null)
+    private val requestedViewToken = mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { WatchScreen(store, onRefresh = ::refresh, onCommand = ::command) }
+        applyIntentView(intent)
+        setContent {
+            WatchScreen(
+                store = store,
+                onRefresh = ::refresh,
+                onCommand = ::command,
+                requestedView = requestedView.value,
+                requestedViewToken = requestedViewToken.value
+            )
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 client.addListener(this@WatchActivity)
+                WatchUpdateReceiver.foreground = true
+                WatchUpdateReceiver.launchPending(this@WatchActivity)
+                launch(Dispatchers.IO) { WatchVersionReporter.report(this@WatchActivity) }
                 refresh()
-                try { awaitCancellation() } finally { client.removeListener(this@WatchActivity) }
+                try { awaitCancellation() } finally {
+                    WatchUpdateReceiver.foreground = false
+                    client.removeListener(this@WatchActivity)
+                }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntentView(intent)
+    }
+
+    private fun applyIntentView(intent: Intent?) {
+        val target = intent?.getStringExtra(EXTRA_VIEW)?.takeIf { it.isNotBlank() } ?: return
+        requestedView.value = target
+        requestedViewToken.value += 1
+    }
+
+    companion object {
+        const val EXTRA_VIEW = "mitfahrt_watch_view"
+        const val VIEW_MAP = "map"
+        const val VIEW_ACTIVE = "active"
     }
 
     override fun onDataChanged(events: DataEventBuffer) {
@@ -37,6 +75,8 @@ class WatchActivity : ComponentActivity(), DataClient.OnDataChangedListener {
             store.receive(event.dataItem.data)
         else if (event.type == DataEvent.TYPE_CHANGED && event.dataItem.uri.path == WatchCompanion.LIBRARY)
             store.receiveLibrary(event.dataItem.data)
+        else if (event.type == DataEvent.TYPE_CHANGED && event.dataItem.uri.path == WatchFaceMapProtocol.PATH)
+            store.receiveWatchFaceMap(event.dataItem.data)
     }
 
     private fun command(command: WatchCommand) {
@@ -67,6 +107,8 @@ class WatchActivity : ComponentActivity(), DataClient.OnDataChangedListener {
                 try { for (item in buffer) store.receive(item.data) } finally { buffer.release() }
                 val library = client.getDataItems(Uri.parse("wear://*${WatchCompanion.LIBRARY}"), DataClient.FILTER_LITERAL).await()
                 try { for (item in library) store.receiveLibrary(item.data) } finally { library.release() }
+                val mapItems = client.getDataItems(Uri.parse("wear://*${WatchFaceMapProtocol.PATH}"), DataClient.FILTER_LITERAL).await()
+                try { for (item in mapItems) store.receiveWatchFaceMap(item.data) } finally { mapItems.release() }
                 val nodes = Wearable.getNodeClient(this@WatchActivity).connectedNodes.await()
                 if (nodes.isEmpty()) store.syncMessage.value = "Handy nicht verbunden."
                 for (node in nodes) Wearable.getMessageClient(this@WatchActivity)

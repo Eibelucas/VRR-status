@@ -1,6 +1,8 @@
 package de.luca.mitfahrt.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import de.luca.mitfahrt.BuildConfig
@@ -15,12 +17,38 @@ class VrrClient {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<GeoPoint>>?): Boolean = size > 8
     }
 
-    suspend fun search(query: String): List<Stop> {
-        val name = query.replace(Regex("^Mönchengladbach[, ]*", RegexOption.IGNORE_CASE), "").trim()
-        return EfaParser.stops(request("XML_STOPFINDER_REQUEST", mapOf(
-            "locationServerActive" to "1", "type_sf" to "stop", "place_sf" to "Mönchengladbach", "name_sf" to name,
-            "anyObjFilter_sf" to "2", "reducedAnyPostcodeObjFilter_sf" to "64"
-        )))
+    suspend fun search(query: String, bias: GeoPoint? = null): List<Stop> {
+        val cleaned = query.trim()
+        if (cleaned.isBlank()) return emptyList()
+        val mgName = cleaned.replace(Regex("^Mönchengladbach[, ]*", RegexOption.IGNORE_CASE), "").trim()
+        val anchor = bias?.takeIf(Geo::valid) ?: PlaceGeocoder.DEFAULT_BIAS
+        val (localStops, regionalStops) = coroutineScope {
+            val mgJob = async {
+                runCatching {
+                    EfaParser.stops(requestRaw("XML_STOPFINDER_REQUEST", mapOf(
+                        "locationServerActive" to "1", "type_sf" to "stop", "place_sf" to "Mönchengladbach", "name_sf" to mgName,
+                        "anyObjFilter_sf" to "2", "reducedAnyPostcodeObjFilter_sf" to "64"
+                    )))
+                }.getOrDefault(emptyList())
+            }
+            val wideJob = async {
+                runCatching {
+                    EfaParser.stops(requestRaw("XML_STOPFINDER_REQUEST", mapOf(
+                        "locationServerActive" to "1", "type_sf" to "stop", "name_sf" to cleaned,
+                        "anyObjFilter_sf" to "2", "anyMaxSizeHitList" to "20"
+                    )))
+                }.getOrDefault(emptyList())
+            }
+            mgJob.await() to wideJob.await()
+        }
+        return (localStops + regionalStops)
+            .distinctBy { stopKey(it.id) }
+            .sortedBy { stop ->
+                val distKm = stop.point?.takeIf(Geo::valid)?.let { anchor.distanceTo(it) / 1000.0 } ?: 50.0
+                val mgBonus = if (stop.name.contains("Mönchengl", true) || stop.name.startsWith("MG ", true)) -15.0 else 0.0
+                distKm + mgBonus
+            }
+            .take(20)
     }
 
     suspend fun resolveStop(stop: Stop): Stop {
@@ -88,7 +116,9 @@ class VrrClient {
      */
     suspend fun tripPath(departure: Departure): List<GeoPoint>? {
         synchronized(tripCoords) { tripCoords[departure.key] }?.let { return it }
-        return EfaShapeParser.coords(request("XML_STOPSEQCOORD_REQUEST", tripParameters(departure)), departure)
+        val coords = EfaShapeParser.coords(request("XML_STOPSEQCOORD_REQUEST", tripParameters(departure)), departure)
+        if (coords != null) synchronized(tripCoords) { tripCoords[departure.key] = coords }
+        return coords
     }
 
     /** Platforms of a station with VRR's public platform coordinates, from its departure board. */
@@ -128,16 +158,31 @@ class VrrClient {
         return TripParser.journeys(root, java.time.Instant.now())
     }
 
-    /** Stops, addresses, streets, places and POIs as far as VRR resolves them. */
-    suspend fun places(text: String): List<TripPlace> {
+    /**
+     * Google-Maps-style place search: queries VRR StopFinder (stops, stations, addresses) and
+     * OpenStreetMap Photon (businesses, shops, restaurants, exact house numbers) in parallel.
+     */
+    suspend fun places(text: String, bias: GeoPoint? = null): List<TripPlace> {
         if (text.isBlank()) return emptyList()
-        return TripParser.places(requestRaw("XML_STOPFINDER_REQUEST", TripRequest.placeSearch(text)))
+        return coroutineScope {
+            val vrrJob = async {
+                runCatching { TripParser.places(requestRaw("XML_STOPFINDER_REQUEST", TripRequest.placeSearch(text))) }
+            }
+            val geoJob = async {
+                runCatching { PlaceGeocoder.search(text, bias) }.getOrDefault(emptyList())
+            }
+            val vrrResult = vrrJob.await()
+            val geocoded = geoJob.await()
+            if (vrrResult.isFailure && geocoded.isEmpty()) throw vrrResult.exceptionOrNull()!!
+            PlaceGeocoder.merge(text, vrrResult.getOrDefault(emptyList()), geocoded, bias)
+        }
     }
 
-    suspend fun plannerStops(text: String): List<Stop> = places(text)
-        .filter { it.kind == PlaceKind.STOP && it.id.isNotBlank() }
-        .map { Stop(it.id, it.name, it.point) }
-        .distinctBy { stopKey(it.id) }
+    suspend fun plannerStops(text: String): List<Stop> =
+        TripParser.places(requestRaw("XML_STOPFINDER_REQUEST", TripRequest.placeSearch(text)))
+            .filter { it.kind == PlaceKind.STOP && it.id.isNotBlank() }
+            .map { Stop(it.id, it.name, it.point) }
+            .distinctBy { stopKey(it.id) }
 
     private fun tripParameters(departure: Departure): Map<String, String> {
         val date = departure.planned.atZone(ZoneId.of("Europe/Berlin"))

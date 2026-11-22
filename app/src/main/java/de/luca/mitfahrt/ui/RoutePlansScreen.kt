@@ -68,18 +68,20 @@ fun RoutePlansScreen(
     onMove: ((String, Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val currentSettings = LocalAppSettings.current
     val canPin = remember(context) { de.luca.mitfahrt.widgets.RouteShortcuts.supported(context) }
-    fun newDraft(): RouteDraft {
-        val settings = AppSettingsStore(context).current()
-        return RouteDraft(walkingMinutes = settings.int("routes_default_walk_minutes", 5), bufferMinutes = settings.int("routes_default_buffer_minutes", 2))
-    }
+    fun newDraft(): RouteDraft = RouteDraft(
+        walkingMinutes = currentSettings.int("routes_default_walk_minutes", 5),
+        bufferMinutes = currentSettings.int("routes_default_buffer_minutes", 2)
+    )
     var draftJson by rememberSaveable { mutableStateOf(initialPlan?.let { RouteDraft.from(it).encode() } ?: if (startNew) newDraft().encode() else null) }
+    var tempTargetPlanId by rememberSaveable { mutableStateOf<String?>(null) }
     val localSnackbar = remember { SnackbarHostState() }
     val snackbar = snackbarHostState ?: localSnackbar
-    BackHandler(enabled = draftJson == null, onBack = onBack)
+    BackHandler(enabled = draftJson == null && tempTargetPlanId == null, onBack = onBack)
     val scope = rememberCoroutineScope()
     Scaffold(containerColor = Ink, snackbarHost = { SnackbarHost(snackbar) }, topBar = {
-        TopAppBar(title = { Text("Deine Strecken") }, navigationIcon = {
+        TopAppBar(title = { Text("Routen") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
         }, actions = {
             IconButton(onClick = { draftJson = newDraft().encode() }, enabled = state.routes.size < RoutePlans.MAX_ROUTES) {
@@ -118,7 +120,8 @@ fun RoutePlansScreen(
                     if (!onSave(plan.copy(enabled = enabled))) scope.launch { snackbar.showSnackbar("Änderung konnte nicht gespeichert werden.") }
                 }, onReverse = {
                     draftJson = RouteDraft.from(plan).copy(id = UUID.randomUUID().toString(),
-                        name = "${plan.name} zurück".take(RoutePlans.MAX_NAME_LENGTH), origin = plan.destination, destination = plan.origin).encode()
+                        name = "${plan.name} zurück".take(RoutePlans.MAX_NAME_LENGTH), origin = plan.destination, destination = plan.origin,
+                        temporaryDestination = null).encode()
                 }, onRemove = { onRemove(plan) }, onOpen = onOpen?.let { open -> { open(plan) } },
                     onMove = onMove?.let { move -> { delta -> move(plan.id, delta) } },
                     onPin = if (canPin) { {
@@ -130,6 +133,11 @@ fun RoutePlansScreen(
                         val date = LocalDate.now(ZoneId.of("Europe/Berlin")).toString()
                         val hidden = date in plan.excludedDates
                         if (!onSave(plan.copy(excludedDates = if (hidden) plan.excludedDates - date else plan.excludedDates + date)))
+                            scope.launch { snackbar.showSnackbar("Änderung konnte nicht gespeichert werden.") }
+                    },
+                    onTemporaryDestination = { tempTargetPlanId = plan.id },
+                    onClearTemporaryDestination = {
+                        if (!onSave(plan.copy(temporaryDestination = null)))
                             scope.launch { snackbar.showSnackbar("Änderung konnte nicht gespeichert werden.") }
                     })
             }
@@ -149,12 +157,35 @@ fun RoutePlansScreen(
             onChange = { draftJson = it.encode() }, onDismiss = { draftJson = null }, onSave = onSave, searchStops = searchStops,
             resolveStop = resolveStop, otherRoutes = state.routes.filterNot { it.id == draft.id })
     }
+    tempTargetPlanId?.let { id ->
+        val targetPlan = state.routes.firstOrNull { it.id == id }
+        if (targetPlan == null) {
+            tempTargetPlanId = null
+        } else {
+            TemporaryDestinationDialog(
+                plan = targetPlan,
+                savedStops = savedStops,
+                nearby = nearby,
+                searchStops = searchStops,
+                resolveStop = resolveStop,
+                onDismiss = { tempTargetPlanId = null },
+                onSave = { temp ->
+                    if (onSave(targetPlan.copy(temporaryDestination = temp))) tempTargetPlanId = null
+                    else scope.launch { snackbar.showSnackbar("Zeitweises Ziel konnte nicht gespeichert werden.") }
+                }
+            )
+        }
+    }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, onEnabled: (Boolean) -> Unit,
-    onReverse: () -> Unit, onRemove: () -> Unit, onOpen: (() -> Unit)?, onMove: ((Int) -> Unit)?, onPin: (() -> Unit)?, onHideToday: () -> Unit) {
+    onReverse: () -> Unit, onRemove: () -> Unit, onOpen: (() -> Unit)?, onMove: ((Int) -> Unit)?, onPin: (() -> Unit)?, onHideToday: () -> Unit,
+    onTemporaryDestination: () -> Unit, onClearTemporaryDestination: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    val today = remember { LocalDate.now(ZoneId.of("Europe/Berlin")) }
+    val activeTemp = plan.activeTemporaryDestination(today)
     AppCard(onClick = onOpen ?: onEdit, shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -170,6 +201,12 @@ private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, 
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Bearbeiten") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) },
                             onClick = { menu = false; onEdit() })
+                        DropdownMenuItem(text = { Text(if (activeTemp != null) "Zeitweises Ziel ändern" else "Zeitweises Ziel festlegen") },
+                            leadingIcon = { Icon(Icons.Outlined.EditLocationAlt, null) },
+                            onClick = { menu = false; onTemporaryDestination() })
+                        if (activeTemp != null) DropdownMenuItem(text = { Text("Wieder normales Ziel") },
+                            leadingIcon = { Icon(Icons.Outlined.Restore, null) },
+                            onClick = { menu = false; onClearTemporaryDestination() })
                         DropdownMenuItem(text = { Text("Rückweg anlegen") }, leadingIcon = { Icon(Icons.Outlined.SwapVert, null) },
                             onClick = { menu = false; onReverse() }, enabled = canAdd)
                         if (onPin != null) DropdownMenuItem(text = { Text("Zum Startbildschirm") },
@@ -180,7 +217,7 @@ private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, 
                             DropdownMenuItem(text = { Text("Nach unten") }, leadingIcon = { Icon(Icons.Outlined.ArrowDownward, null) },
                                 onClick = { menu = false; onMove(1) })
                         }
-                        DropdownMenuItem(text = { Text(if (LocalDate.now(ZoneId.of("Europe/Berlin")).toString() in plan.excludedDates)
+                        DropdownMenuItem(text = { Text(if (today.toString() in plan.excludedDates)
                             "Heute wieder anzeigen" else "Heute ausblenden") }, leadingIcon = { Icon(Icons.Outlined.Today, null) },
                             onClick = { menu = false; onHideToday() })
                         DropdownMenuItem(text = { Text("Löschen") }, leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null) },
@@ -189,7 +226,13 @@ private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, 
                 }
             }
             RouteStopLine(plan.origin, false)
-            RouteStopLine(plan.destination, true)
+            RouteStopLine(plan.effectiveDestination(today), true)
+            if (activeTemp != null) {
+                val labelPart = activeTemp.label.takeIf { it.isNotEmpty() }?.let { "$it · " }.orEmpty()
+                val until = if (activeTemp.startDate == activeTemp.endDate) "heute" else "bis ${TempDateFormat.format(activeTemp.endDate)}"
+                Text("${labelPart}Zeitweises Ziel $until · sonst ${shortName(plan.destination.name)}",
+                    color = Amber, fontSize = 12.sp, lineHeight = 17.sp)
+            }
             HorizontalDivider(color = Soft.copy(alpha = .16f))
             Text(plan.effectiveWindows().joinToString("\n") { it.label() },
                 color = Soft, fontSize = 13.sp, lineHeight = 19.sp)
@@ -197,8 +240,14 @@ private fun RoutePlanCard(plan: RoutePlan, canAdd: Boolean, onEdit: () -> Unit, 
                 if (plan.manualOnly) "Nur manuell" else if (plan.nearbyOnly) "Nur in Startnähe" else "Auch außerhalb der Startnähe",
                 if (plan.schoolOnly) "Schulroute" else null).filterNotNull().joinToString(" · "),
                 color = Soft, fontSize = 12.sp, lineHeight = 18.sp)
-            if (onOpen != null) TextButton(onClick = onOpen, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("Fahrten anzeigen")
+            // FlowRow so both actions stack instead of clipping at large font sizes.
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onOpen != null) TextButton(onClick = onOpen, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Fahrten anzeigen")
+                }
+                TextButton(onClick = onTemporaryDestination, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(if (activeTemp != null) "Zeitweises Ziel ändern" else "Zeitweises Ziel festlegen")
+                }
             }
         }
     }
@@ -669,6 +718,112 @@ private fun ExtraRouteWindow(window: RouteWindow, onChange: (RouteWindow) -> Uni
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun TemporaryDestinationDialog(
+    plan: RoutePlan,
+    savedStops: SavedStopsState,
+    nearby: List<Stop>,
+    searchStops: suspend (String) -> List<Stop>,
+    resolveStop: suspend (Stop) -> Stop,
+    onDismiss: () -> Unit,
+    onSave: (TemporaryDestination?) -> Unit
+) {
+    val today = remember { LocalDate.now(ZoneId.of("Europe/Berlin")) }
+    val existing = plan.activeTemporaryDestination(today)
+    var stop by remember(plan.id) { mutableStateOf(existing?.stop) }
+    var preset by rememberSaveable(plan.id) {
+        mutableStateOf(
+            when {
+                existing == null -> "week"
+                existing.startDate == existing.endDate -> "today"
+                existing.endDate.isAfter(today.plusDays(7)) -> "two_weeks"
+                else -> "week"
+            }
+        )
+    }
+    var label by rememberSaveable(plan.id) { mutableStateOf(existing?.label.orEmpty()) }
+    var pickingStop by rememberSaveable(plan.id) { mutableStateOf(false) }
+
+    val selectedRange = remember(preset, today) {
+        when (preset) {
+            "today" -> today to today
+            "two_weeks" -> today to today.plusDays(13)
+            else -> today to TemporaryDestinationPresets.thisWeek(plan.destination, today).endDate
+        }
+    }
+    val validation = when {
+        stop == null -> "Wähle eine Haltestelle als zeitweises Ziel."
+        stopKey(stop!!.id) == stopKey(plan.origin.id) -> "Das zeitweise Ziel muss sich vom Start unterscheiden."
+        stopKey(stop!!.id) == stopKey(plan.destination.id) -> "Das entspricht bereits deinem normalen Ziel."
+        else -> null
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Zeitweises Ziel") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Für „${plan.name}“ steigst du eine Zeit lang woanders aus. Danach gilt wieder ${shortName(plan.destination.name)}.",
+                    color = Soft, fontSize = 13.sp, lineHeight = 18.sp)
+                RouteStopField("Zeitweises Ziel", stop, onClick = { pickingStop = true })
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = preset == "today", onClick = { preset = "today" }, label = { Text("Nur heute") })
+                    FilterChip(selected = preset == "week", onClick = { preset = "week" }, label = { Text("Diese Woche") })
+                    FilterChip(selected = preset == "two_weeks", onClick = { preset = "two_weeks" }, label = { Text("2 Wochen") })
+                }
+                Text(if (selectedRange.first == selectedRange.second) "Gilt nur heute, ${TempDateFormat.format(selectedRange.first)}"
+                    else "Gilt vom ${TempDateFormat.format(selectedRange.first)} bis ${TempDateFormat.format(selectedRange.second)}",
+                    color = Soft, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it.take(40) },
+                    label = { Text("Hinweis (optional)") },
+                    placeholder = { Text("z. B. Praktikum") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                validation?.let { Text(it, color = Soft, fontSize = 13.sp) }
+                // Outside the button row so three actions never squeeze side by side at large font sizes.
+                if (existing != null) TextButton(onClick = { onSave(null) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Wieder normales Ziel")
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = validation == null,
+                onClick = {
+                    val chosen = stop ?: return@Button
+                    onSave(TemporaryDestination(chosen, selectedRange.first, selectedRange.second, label.trim()))
+                },
+                shape = ControlShape,
+                modifier = Modifier.heightIn(min = 48.dp)
+            ) { Text("Speichern") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Abbrechen") }
+        }
+    )
+
+    if (pickingStop) {
+        RouteStopPicker(
+            title = "Zeitweises Ziel wählen",
+            field = "temp-destination-${plan.id}",
+            selected = stop,
+            savedStops = savedStops,
+            nearby = nearby,
+            searchStops = searchStops,
+            resolveStop = resolveStop,
+            onDismiss = { pickingStop = false },
+            onSelect = { chosen ->
+                stop = chosen
+                pickingStop = false
+            }
+        )
+    }
+}
+
 /** Save primitive JSON rather than placing non-Parcelable Stop objects in the instance state. */
 private data class RouteDraft(
     val id: String = UUID.randomUUID().toString(), val name: String = "", val origin: Stop? = null, val destination: Stop? = null,
@@ -677,7 +832,8 @@ private data class RouteDraft(
     val enabled: Boolean = true, val nearbyOnly: Boolean = true,
     val additionalWindows: List<RouteWindow> = emptyList(), val color: String = "new", val icon: String = "bus",
     val walkingMinutes: Int = 5, val bufferMinutes: Int = 2, val schoolOnly: Boolean = false, val manualOnly: Boolean = false,
-    val excludedDates: String = "", val alternateRouteId: String? = null, val order: Int = 0
+    val excludedDates: String = "", val alternateRouteId: String? = null, val order: Int = 0,
+    val temporaryDestination: TemporaryDestination? = null
 ) {
     private fun lines(): Set<String> = line.split(Regex("[,;/\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     private fun dates(): Set<String> = excludedDates.split(Regex("[,;\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -700,7 +856,8 @@ private data class RouteDraft(
         windows = if (additionalWindows.isEmpty()) emptyList() else listOf(RouteWindow(days, startMinute, if (allDay) startMinute else endMinute)) + additionalWindows,
         allowedLines = lines().takeIf { it.size > 1 }.orEmpty(), color = color, icon = icon,
         walkingMinutes = walkingMinutes, bufferMinutes = bufferMinutes, schoolOnly = schoolOnly, manualOnly = manualOnly,
-        excludedDates = dates(), alternateRouteId = alternateRouteId, order = order)
+        excludedDates = dates(), alternateRouteId = alternateRouteId, order = order,
+        temporaryDestination = temporaryDestination)
     fun encode(): String = JSONObject().apply {
         put("id", id); put("name", name); put("origin", origin?.toDraftJson()); put("destination", destination?.toDraftJson())
         put("match", match.name); put("line", line); put("days", JSONArray(days.sorted()))
@@ -711,6 +868,14 @@ private data class RouteDraft(
         put("color", color); put("icon", icon); put("walkingMinutes", walkingMinutes); put("bufferMinutes", bufferMinutes)
         put("schoolOnly", schoolOnly); put("manualOnly", manualOnly); put("excludedDates", excludedDates)
         put("alternateRouteId", alternateRouteId); put("order", order)
+        temporaryDestination?.let { temp ->
+            put("temporaryDestination", JSONObject().apply {
+                put("stop", temp.stop.toDraftJson())
+                put("startDate", temp.startDate.toString())
+                put("endDate", temp.endDate.toString())
+                put("label", temp.label)
+            })
+        }
     }.toString()
     companion object {
         fun from(plan: RoutePlan): RouteDraft {
@@ -719,11 +884,22 @@ private data class RouteDraft(
                 plan.match, plan.lineLabel(), first.days, first.startMinute, first.endMinute,
                 first.startMinute == first.endMinute, plan.enabled, plan.nearbyOnly,
                 plan.effectiveWindows().drop(1), plan.color, plan.icon, plan.walkingMinutes, plan.bufferMinutes, plan.schoolOnly,
-                plan.manualOnly, plan.excludedDates.sorted().joinToString(", "), plan.alternateRouteId, plan.order)
+                plan.manualOnly, plan.excludedDates.sorted().joinToString(", "), plan.alternateRouteId, plan.order,
+                plan.temporaryDestination)
         }
         fun decode(value: String): RouteDraft = runCatching {
             val obj = JSONObject(value)
             val days = obj.getJSONArray("days").let { a -> (0 until a.length()).map { a.getInt(it) }.filter { it in 1..7 }.toSet() }
+            val temp = obj.optJSONObject("temporaryDestination")?.let { t ->
+                runCatching {
+                    TemporaryDestination(
+                        stop = t.getJSONObject("stop").toDraftStop(),
+                        startDate = LocalDate.parse(t.getString("startDate")),
+                        endDate = LocalDate.parse(t.getString("endDate")),
+                        label = t.optString("label")
+                    )
+                }.getOrNull()
+            }
             RouteDraft(obj.getString("id"), obj.optString("name"), obj.optJSONObject("origin")?.toDraftStop(),
                 obj.optJSONObject("destination")?.toDraftStop(), RouteMatch.valueOf(obj.getString("match")), obj.optString("line"),
                 days, obj.getInt("start").coerceIn(0, 1439), obj.getInt("end").coerceIn(0, 1439),
@@ -734,7 +910,8 @@ private data class RouteDraft(
                     RouteWindow(selected, window.getInt("start"), window.getInt("end"))
                 } }.orEmpty(), obj.optString("color", "new"), obj.optString("icon", "bus"),
                 obj.optInt("walkingMinutes", 5), obj.optInt("bufferMinutes", 2), obj.optBoolean("schoolOnly"), obj.optBoolean("manualOnly"),
-                obj.optString("excludedDates"), obj.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, obj.optInt("order", 0))
+                obj.optString("excludedDates"), obj.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, obj.optInt("order", 0),
+                temp)
         }.getOrElse { RouteDraft() }
     }
 }

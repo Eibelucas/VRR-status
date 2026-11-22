@@ -47,10 +47,11 @@ class PlannedJourneyLoader(
             // Only this parent coroutine mutates the caches, including under Default dispatchers.
             boardResults.forEach { (key, read) -> read.cached?.let { boards[key] = it } }
 
+            val today = now.atZone(java.time.ZoneId.of("Europe/Berlin")).toLocalDate()
             val candidates = uniquePlans.associate { plan ->
                 val departures = boardResults[stopKey(plan.origin.id)]?.cached?.value.orEmpty()
                 val valid = RoutePlans.candidates(plan, listOf(plan.origin), departures, currentNow())
-                plan.id to candidatesToCheck(plan, valid)
+                plan.id to candidatesToCheck(plan, valid, today)
             }
             val lookups = candidates.values.flatten().distinctBy(::tripKey)
             val tripResults = coroutineScope {
@@ -81,10 +82,11 @@ class PlannedJourneyLoader(
                     val ride = tripResults[tripKey(departure)]?.cached?.value
                     ride == null || !validSource(ride, departure, currentNow())
                 }) failed++
+                val effectiveDest = plan.effectiveDestination(today)
                 val verified = checked.filter { departure ->
                     val ride = tripResults[tripKey(departure)]?.cached?.value ?: return@filter false
                     validSource(ride, departure, currentNow()) && !ride.departure.cancelled &&
-                        SchoolTrips.targetIndex(ride, plan.destination.id) != null
+                        SchoolTrips.targetIndex(ride, effectiveDest.id) != null
                 }
                 // A long network lookup must not publish a meanwhile stale or departed monitor entry.
                 plan.id to RoutePlans.candidates(plan, listOf(plan.origin), verified, currentNow()).take(3)
@@ -94,11 +96,12 @@ class PlannedJourneyLoader(
         }
     }
 
-    private fun candidatesToCheck(plan: RoutePlan, candidates: List<Departure>): List<Departure> {
+    private fun candidatesToCheck(plan: RoutePlan, candidates: List<Departure>, today: java.time.LocalDate): List<Departure> {
         // At major stations, examine several lines rather than eight buses of one wrong line.
         // A destination headsign is only a search priority; the stop sequence remains mandatory.
+        val destName = plan.effectiveDestination(today).name
         val prioritized = candidates.sortedByDescending { departure ->
-            SavedStops.matches(Stop("headsign", departure.destination), plan.destination.name)
+            SavedStops.matches(Stop("headsign", departure.destination), destName)
         }
         val distinctDirections = prioritized.distinctBy { it.lineId to it.destination.trim().lowercase(java.util.Locale.ROOT) }
         return (distinctDirections + prioritized).distinctBy(::tripKey).take(8)

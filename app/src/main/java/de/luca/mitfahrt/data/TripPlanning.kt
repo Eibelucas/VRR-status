@@ -18,15 +18,25 @@ enum class PlaceKind { MY_LOCATION, STOP, ADDRESS, STREET, POI, LOCALITY, OTHER 
 
 data class TripPlace(
     val kind: PlaceKind,
-    /** EFA location id (stop id, street/poi id …); empty for the own position. */
+    /** EFA location id (stop id, street/poi id …); empty for the own position or geocoded coordinates. */
     val id: String,
     val name: String,
     val locality: String = "",
-    val point: GeoPoint? = null
+    val point: GeoPoint? = null,
+    val category: String = ""
 ) {
     val isMyLocation: Boolean get() = kind == PlaceKind.MY_LOCATION
     /** Stable identity for suggestions and history; never contains the own coordinates. */
-    val key: String get() = if (isMyLocation) "me" else "${kind.name}:${id.ifBlank { name.lowercase(Locale.ROOT) }}"
+    val key: String get() = if (isMyLocation) "me" else {
+        val fallback = if (id.isNotBlank()) id else buildString {
+            append(name.lowercase(Locale.ROOT))
+            if (locality.isNotBlank()) append('|').append(locality.lowercase(Locale.ROOT))
+            point?.takeIf(Geo::valid)?.let {
+                append('@').append(String.format(Locale.ROOT, "%.4f,%.4f", it.lat, it.lon))
+            }
+        }
+        "${kind.name}:$fallback"
+    }
 
     companion object {
         val MY_LOCATION = TripPlace(PlaceKind.MY_LOCATION, "", "Mein Standort")
@@ -252,7 +262,7 @@ object TripRequest {
         }
         place.id.isNotBlank() -> mapOf("type_$prefix" to "any", "name_$prefix" to place.id)
         place.point != null && Geo.valid(place.point) -> mapOf("type_$prefix" to "coord",
-            "name_$prefix" to "%.6f:%.6f:WGS84[dd.ddddd]:%s".format(Locale.ROOT, place.point.lon, place.point.lat, place.name))
+            "name_$prefix" to "%.6f:%.6f:WGS84[dd.ddddd]:%s".format(Locale.ROOT, place.point.lon, place.point.lat, place.name.replace(':', ' ').replace(Regex("\\s+"), " ").trim()))
         else -> null
     }
 

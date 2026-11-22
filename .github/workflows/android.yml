@@ -130,11 +130,12 @@ jobs:
           MITFAHRT_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD || 'android' }}
           MITFAHRT_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'androiddebugkey' }}
           MITFAHRT_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'android' }}
-        run: ./gradlew --no-daemon :app:assembleRelease :wear:assembleRelease
+        run: ./gradlew --no-daemon :app:assembleRelease :wear:assembleRelease :watchface:assembleRelease
       - name: Create update manifest
         run: |
           python3 scripts/create_update_manifest.py --apk app/build/outputs/apk/release/app-release.apk --tag "$GITHUB_REF_NAME" --output dist
           python3 scripts/create_update_manifest.py --wear --apk wear/build/outputs/apk/release/wear-release.apk --tag "$GITHUB_REF_NAME" --output dist
+          cp watchface/build/outputs/apk/release/watchface-release.apk "dist/Mitfahrt-WatchFace-${GITHUB_REF_NAME#v}.apk"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

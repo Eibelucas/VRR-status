@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="watch_face_name">Mitfahrt Live</string>
+
+    <string name="config_accent_name">Akzentfarbe</string>
+    <string name="accent_berry">NEW-Beere</string>
+    <string name="accent_pure">Kreide</string>
+
+    <string name="slot_map_name">Live-Buskarte</string>
+    <string name="slot_transit_name">Nächster Halt und Ankunft</string>
+    <string name="slot_media_name">Musik oder Zusatzanzeige</string>
+</resources>

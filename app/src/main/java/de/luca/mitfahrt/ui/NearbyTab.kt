@@ -39,7 +39,7 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
     val shownLine = line?.takeIf { it in lines }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("In deiner Nähe", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).semantics { heading() })
+            Text("Haltestellen in der Nähe", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).semantics { heading() })
             if (home.status == NearbyStatus.READY) IconButton(onClick = onRefresh, enabled = !home.loading, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.Refresh, "Haltestellen und Abfahrten aktualisieren", tint = Lime)
             }
@@ -72,23 +72,19 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
         }
         // Wraps instead of scrolling sideways, so no filter is cut off at the edge.
         @OptIn(ExperimentalLayoutApi::class)
+        // Two compact choices instead of a wall of chips: the current value is always visible, the options sit one tap away.
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val radius = settings.int("nearby_radius", 500)
-            listOf(300, 500, 1000, 2000).forEach { value ->
-                FilterChip(selected = radius == value, onClick = { onSetting("nearby_radius", value.toString()) },
-                    label = { Text(if (value < 1000) "$value m" else "${value / 1000} km") }, modifier = Modifier.heightIn(min = 48.dp))
+            fun radiusLabel(value: Int) = if (value < 1000) "$value m" else "${value / 1000} km"
+            MenuChip("Umkreis", radiusLabel(radius), listOf(300, 500, 1000, 2000).map { radiusLabel(it) to it.toString() }) {
+                onSetting("nearby_radius", it)
             }
+            if (lines.size > 1) MenuChip("Linie", shownLine ?: "alle",
+                listOf("Alle Linien" to "") + lines.map { "Linie $it" to it }) { line = it.ifEmpty { null } }
             val map = settings.string("nearby_view", "list") == "map"
             FilterChip(selected = map, onClick = { onSetting("nearby_view", if (map) "list" else "map") },
                 label = { Text("Karte") }, leadingIcon = { Icon(Icons.Outlined.Map, null, Modifier.size(16.dp)) },
                 modifier = Modifier.heightIn(min = 48.dp))
-        }
-        if (lines.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = shownLine == null, onClick = { line = null }, label = { Text("Alle Linien") }, modifier = Modifier.heightIn(min = 48.dp))
-            lines.forEach { value ->
-                FilterChip(selected = shownLine == value, onClick = { line = if (shownLine == value) null else value },
-                    label = { Text(value) }, modifier = Modifier.heightIn(min = 48.dp))
-            }
         }
         val observed = home.departures.mapNotNull { it.observedAt }.maxOrNull()
         Text(listOfNotNull("NEW-Abfahrten laut VRR", (observed ?: home.updatedAt)?.let { "Stand ${clockTime(it)}" },
@@ -103,12 +99,15 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
                 onPin = { pin -> stops.firstOrNull { it.id == pin.id }?.let(onStop) })
             Text("Haltestelle antippen für alle Abfahrten. Dein Standort wird nur auf dem Gerät gezeigt.", color = Soft, fontSize = 11.sp)
         }
+        // One board per stop: the stop is the header, its departures are the rows beneath it.
         stops.forEach { stop -> key(stop.id) {
-            NearbyStopRow(stop, savedStops.isFavorite(stop), onClick = { onStop(stop) }, onFavorite = { onFavorite(stop) })
-            home.departures.filter { stopKey(it.stopId) == stopKey(stop.id) && (shownLine == null || it.line == shownLine) }
-                .take(settings.int("departure_count", 5).coerceIn(1, 15)).forEach { departure -> key(departure.key) {
-                    DepartureRow(departure, now, choosingKey == departure.key, !choosing) { onDeparture(departure) }
-                } }
+            val rows = home.departures.filter { stopKey(it.stopId) == stopKey(stop.id) && (shownLine == null || it.line == shownLine) }
+                .take(settings.int("departure_count", 5).coerceIn(1, 15))
+            DepartureBoard(rows, header = {
+                NearbyStopRow(stop, savedStops.isFavorite(stop), onClick = { onStop(stop) }, onFavorite = { onFavorite(stop) })
+            }) { departure -> key(departure.key) {
+                DepartureRow(departure, now, choosingKey == departure.key, !choosing, onBoard = true) { onDeparture(departure) }
+            } }
         } }
         if (stops.isEmpty() && !home.loading && home.error == null) Text(
             if (shownLine != null) "Linie $shownLine fährt gerade keine nahe Haltestelle an." else "Keine Haltestelle im eingestellten Umkreis.",
@@ -119,17 +118,17 @@ internal fun NearbyOverview(home: HomeState, now: Instant, settings: AppSettings
 @Composable
 private fun NearbyStopRow(stop: Stop, favorite: Boolean, onClick: () -> Unit, onFavorite: () -> Unit) {
     val walk = JourneyOptions.walking(stop, TripSettings.walkingSpeed(LocalAppSettings.current))
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Panel), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).heightIn(min = 56.dp).clickable(role = Role.Button, onClickLabel = "Abfahrten anzeigen", onClick = onClick)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).heightIn(min = 56.dp).clickable(role = Role.Button, onClickLabel = "Alle Abfahrten anzeigen", onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.LocationOn, null, tint = Soft, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(shortName(stop.name), fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(shortName(stop.name), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.semantics { heading() })
                 listOfNotNull(stop.distance?.let { "$it m" }, walk?.label).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
-                    Text(it, fontSize = 12.sp, color = Soft)
+                    Text(it, fontSize = 13.sp, color = Soft)
                 }
             }
+            Icon(Icons.Outlined.ChevronRight, null, tint = Soft)
         }
         IconToggleButton(checked = favorite, onCheckedChange = { onFavorite() }, modifier = Modifier.size(48.dp)) {
             Icon(if (favorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,

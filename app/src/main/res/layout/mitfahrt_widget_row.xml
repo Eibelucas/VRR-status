@@ -5,7 +5,7 @@
     android:layout_height="wrap_content"
     android:background="@drawable/mitfahrt_widget_button"
     android:gravity="center_vertical"
-    android:minHeight="38dp"
+    android:minHeight="48dp"
     android:orientation="horizontal"
     android:paddingTop="3dp"
     android:paddingBottom="3dp">
@@ -90,6 +90,6 @@
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:textColor="@color/mitfahrt_widget_muted"
-            android:textSize="10sp" />
+            android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

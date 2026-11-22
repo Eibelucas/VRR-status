@@ -9,7 +9,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.SystemClock
-import android.view.MotionEvent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,7 +40,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.luca.mitfahrt.BuildConfig
 import de.luca.mitfahrt.R
 import de.luca.mitfahrt.data.AppSettings
-import de.luca.mitfahrt.data.AppSettingsStore
 import de.luca.mitfahrt.data.GeoPoint
 import de.luca.mitfahrt.data.NewVehicle
 import de.luca.mitfahrt.data.RouteShape
@@ -93,15 +91,19 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
     gpsSource: Boolean = false,
     /** Opens the same map on the whole screen; null inside the full-screen view itself. */
     onFullscreen: (() -> Unit)? = null,
-    /** Fixed map height for the full-screen view; null keeps the card sizes. */
-    mapHeight: androidx.compose.ui.unit.Dp? = null,
+    /** Full-screen view: the map fills the window without the card around it. */
+    edgeToEdge: Boolean = false,
+    /** Space above the recenter button, below the status bar in [edgeToEdge] mode, so a top bar never covers it. */
+    recenterTopPadding: androidx.compose.ui.unit.Dp = 10.dp,
+    /** Space below the OSM attribution, above the navigation bar in [edgeToEdge] mode, so a bottom bar never covers it. */
+    attributionBottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
     /** Direction of the main marker; null keeps it neutral. */
     heading: Double? = null,
     /** Directions of other vehicles by id, only where known. */
     headings: Map<String, Double> = emptyMap()) {
     if (!busPoint.mapValid() || now.epochSecond - positionAt.epochSecond !in -15..90) return
     val context = LocalContext.current
-    val settings by remember(context) { AppSettingsStore(context) }.state.collectAsState()
+    val settings by rememberAppSettingsStore().state.collectAsState()
     val dark = when (settings.string("map_theme", "system")) {
         "dark" -> true
         "light" -> false
@@ -128,6 +130,49 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
         sync()
         onDispose { lifecycle.removeObserver(observer); current?.setActive(false) }
     }
+    val mapCanvas: @Composable (Modifier) -> Unit = { canvasModifier ->
+        Box(canvasModifier) {
+            AndroidView(modifier = Modifier.fillMaxSize().onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInWindow()
+                val rootBounds = coordinates.findRootCoordinates().boundsInWindow()
+                viewportVisible = coordinates.isAttached && bounds.width > 0 && bounds.height > 0 &&
+                    rootBounds.width > 0 && rootBounds.height > 0 && bounds.overlaps(rootBounds)
+            }, factory = { viewContext ->
+                WaitingMapController(viewContext).also {
+                    it.onMoved = { value -> moved = value }
+                    controller = it
+                    it.update(busPoint, boarding, vehicleLabel, settings, dark, mapRoute, stops,
+                        visibleVehicles, onSelectVehicle, overview, heading, headings)
+                }.map
+            }, update = { view ->
+                controller?.takeIf { it.map === view }?.update(busPoint, boarding, vehicleLabel, settings, dark,
+                    mapRoute, stops, visibleVehicles, onSelectVehicle, overview, heading, headings)
+            }, onReset = null, onRelease = { view ->
+                view.owner?.close()
+                if (controller?.map === view) controller = null
+            })
+            // Shown only after the map was moved by hand: one tap returns to the live position.
+            if (moved) Button(onClick = { controller?.recenter() }, shape = ControlShape,
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.align(Alignment.TopEnd).then(if (edgeToEdge) Modifier.statusBarsPadding() else Modifier)
+                    .padding(top = recenterTopPadding, end = 12.dp).heightIn(min = 48.dp)) {
+                Icon(Icons.Outlined.CenterFocusStrong, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                Text(if (gpsSource) "Position folgen" else "Bus folgen")
+            }
+            Surface(Modifier.align(Alignment.BottomEnd).then(if (edgeToEdge) Modifier.navigationBarsPadding() else Modifier)
+                .padding(bottom = attributionBottomPadding), color = Color.White.copy(alpha = .96f),
+                shape = RoundedCornerShape(topStart = 8.dp)) {
+                TextButton(onClick = { open("https://www.openstreetmap.org/copyright") },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Text("© OpenStreetMap contributors", color = Color(0xFF263445), fontSize = 12.sp)
+                }
+            }
+        }
+    }
+    if (edgeToEdge) {
+        mapCanvas(modifier.fillMaxSize())
+        return
+    }
     AppCard(modifier.fillMaxWidth(), shape = Shape, colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -138,48 +183,24 @@ fun WaitingBusMap(busPoint: GeoPoint, boarding: Stop?, vehicleLabel: String, pos
                     Text(if (gpsSource) positionLabel(positionAt, now).replace("NEW", "GPS deines Handys") else positionLabel(positionAt, now),
                         color = Soft, fontSize = 13.sp)
                 }
-                if (onFullscreen != null) IconButton(onClick = onFullscreen, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.Fullscreen, "Karte im Vollbild öffnen", tint = Paper)
+                if (onFullscreen != null) OutlinedButton(
+                    onClick = onFullscreen,
+                    shape = ControlShape,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Icon(Icons.Outlined.Fullscreen, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Vollbild", fontSize = 14.sp)
                 }
             }
-            Box(Modifier.fillMaxWidth().height(mapHeight ?: if (overview || settings.string("map_size", "normal") == "large") 400.dp else 260.dp)
-                .clip(RoundedCornerShape(16.dp))) {
-                AndroidView(modifier = Modifier.fillMaxSize().onGloballyPositioned { coordinates ->
-                    val bounds = coordinates.boundsInWindow()
-                    val rootBounds = coordinates.findRootCoordinates().boundsInWindow()
-                    viewportVisible = coordinates.isAttached && bounds.width > 0 && bounds.height > 0 &&
-                        rootBounds.width > 0 && rootBounds.height > 0 && bounds.overlaps(rootBounds)
-                }, factory = { viewContext ->
-                    WaitingMapController(viewContext).also {
-                        it.onMoved = { value -> moved = value }
-                        controller = it
-                        it.update(busPoint, boarding, vehicleLabel, settings, dark, mapRoute, stops,
-                            visibleVehicles, onSelectVehicle, overview, heading, headings)
-                    }.map
-                }, update = { view ->
-                    controller?.takeIf { it.map === view }?.update(busPoint, boarding, vehicleLabel, settings, dark,
-                        mapRoute, stops, visibleVehicles, onSelectVehicle, overview, heading, headings)
-                }, onReset = null, onRelease = { view ->
-                    view.owner?.close()
-                    if (controller?.map === view) controller = null
-                })
-                // Shown only after the map was moved by hand: one tap returns to the live position.
-                if (moved) Button(onClick = { controller?.recenter() }, shape = ControlShape,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).heightIn(min = 48.dp)) {
-                    Icon(Icons.Outlined.CenterFocusStrong, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                    Text(if (gpsSource) "Position folgen" else "Bus folgen")
-                }
-                Surface(Modifier.align(Alignment.BottomEnd), color = Color.White.copy(alpha = .96f),
-                    shape = RoundedCornerShape(topStart = 8.dp)) {
-                    TextButton(onClick = { open("https://www.openstreetmap.org/copyright") },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                        Text("© OpenStreetMap contributors", color = Color(0xFF263445), fontSize = 10.sp)
-                    }
-                }
-            }
+            mapCanvas(
+                Modifier.fillMaxWidth()
+                    .height(if (overview || settings.string("map_size", "normal") == "large") 460.dp else 330.dp)
+                    .clip(ControlShape)
+            )
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.DirectionsBus, null, tint = BrandBerry, modifier = Modifier.size(17.dp))
+                Icon(Icons.Outlined.DirectionsBus, null, tint = Lime, modifier = Modifier.size(17.dp))
                 Text(if (gpsSource) " Deine Position" else " Bus", color = Soft, fontSize = 12.sp)
                 if (boarding?.point?.mapValid() == true && settings.bool("map_stops", true)) {
                     Spacer(Modifier.width(12.dp))
@@ -297,15 +318,9 @@ private class WaitingMapController(private val context: Context) {
             addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
                 if (right > left && bottom > top) fitIfSized()
             }
-            setOnTouchListener { view, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
-                    manualSince = SystemClock.elapsedRealtime()
-                    view.parent?.requestDisallowInterceptTouchEvent(true)
-                }
-                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL)
-                    view.parent?.requestDisallowInterceptTouchEvent(false)
-                false
-            }
+            setOnTouchListener(OneHandedMapZoomTouchHandler(this) {
+                manualSince = SystemClock.elapsedRealtime()
+            })
         }
         map.owner = this
         route = Polyline(map).apply {

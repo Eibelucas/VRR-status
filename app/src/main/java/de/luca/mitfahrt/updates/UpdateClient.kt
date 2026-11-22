@@ -8,6 +8,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import de.luca.mitfahrt.BuildConfig
 import de.luca.mitfahrt.data.AppSettingsStore
+import de.luca.mitfahrt.shared.WatchUpdateProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -22,11 +23,25 @@ import java.security.MessageDigest
 
 class NoPublishedUpdate : IOException()
 
+private const val WATCH_APK_PREFIX = "Mitfahrt-Wear-"
+private const val WATCH_PARTIAL_PREFIX = "watch-download"
+
 class UpdateClient(private val context: Context) : java.io.Closeable {
     private val settings = AppSettingsStore(context)
     override fun close() { settings.close() }
     suspend fun check(): UpdateInfo = withContext(Dispatchers.IO) {
-        val connection = connection(UpdateInfo.MANIFEST_URL)
+        UpdateInfo.parse(manifest(UpdateInfo.MANIFEST_URL), context.packageName).also {
+            require(it.minSdk <= Build.VERSION.SDK_INT) { "Diese Version benötigt eine neuere Android-Version." }
+        }
+    }
+
+    /** The watch's Android version is checked by the caller once the watch reported it. */
+    suspend fun checkWatch(): UpdateInfo = withContext(Dispatchers.IO) {
+        UpdateInfo.parseWatch(manifest(UpdateInfo.WATCH_MANIFEST_URL), context.packageName)
+    }
+
+    private suspend fun manifest(url: String): JSONObject {
+        val connection = connection(url)
         try {
             if (connection.responseCode == 404) throw NoPublishedUpdate()
             check(connection.responseCode == 200) { "GitHub ist gerade nicht erreichbar. Bitte später erneut versuchen." }
@@ -42,10 +57,50 @@ class UpdateClient(private val context: Context) : java.io.Closeable {
                 }
                 output.toByteArray()
             }
-            UpdateInfo.parse(JSONObject(bytes.toString(Charsets.UTF_8)), context.packageName).also {
-                require(it.minSdk <= Build.VERSION.SDK_INT) { "Diese Version benötigt eine neuere Android-Version." }
-            }
+            return JSONObject(bytes.toString(Charsets.UTF_8))
         } finally { connection.disconnect() }
+    }
+
+    /**
+     * Downloads the watch APK next to phone updates and checks size, SHA-256, package and the signing key of the
+     * installed phone app before anything is sent to the watch or shared.
+     */
+    suspend fun downloadWatch(update: UpdateInfo, installedWatchVersionCode: Long?, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
+        requireDownloadNetwork()
+        val folder = File(context.cacheDir, "updates")
+        check(folder.isDirectory || folder.mkdirs()) { "Download konnte nicht gespeichert werden." }
+        val file = File(folder, update.assetName)
+        if (file.isFile && file.length() == update.size && file.sha256() == update.sha256) {
+            verifyWatchApk(file, update, installedWatchVersionCode)
+            onProgress(1f)
+            return@withContext file
+        }
+        val partial = File(folder, "$WATCH_PARTIAL_PREFIX.part.apk")
+        val connection = connection(update.downloadUrl)
+        try {
+            check(connection.responseCode == 200) { "Die Uhr-APK konnte nicht heruntergeladen werden." }
+            val digest = MessageDigest.getInstance("SHA-256")
+            var count = 0L
+            connection.inputStream.use { input -> partial.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    requireDownloadNetwork()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    count += read
+                    require(count <= update.size && count <= WatchUpdateProtocol.MAX_APK_BYTES) { "Die Uhr-APK hat eine unerwartete Größe." }
+                    output.write(buffer, 0, read); digest.update(buffer, 0, read)
+                    onProgress((count.toFloat() / update.size).coerceIn(0f, 1f))
+                }
+            } }
+            require(count == update.size && digest.digest().toHex() == update.sha256) { "Der Download ist beschädigt. Bitte erneut herunterladen." }
+            verifyWatchApk(partial, update, installedWatchVersionCode)
+            file.delete()
+            check(partial.renameTo(file)) { "Die Uhr-APK konnte nicht gespeichert werden." }
+            folder.listFiles().orEmpty().filter { it != file && it.name.startsWith(WATCH_APK_PREFIX) }.forEach { it.delete() }
+            file
+        } finally { connection.disconnect(); partial.delete() }
     }
 
     suspend fun download(update: UpdateInfo, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
@@ -76,7 +131,8 @@ class UpdateClient(private val context: Context) : java.io.Closeable {
             verifyApk(partial, update)
             file.delete()
             check(partial.renameTo(file)) { "Die APK konnte nicht gespeichert werden." }
-            folder.listFiles().orEmpty().filter { it != file }.forEach { it.delete() }
+            folder.listFiles().orEmpty().filter { it != file && !it.name.startsWith(WATCH_APK_PREFIX) &&
+                !it.name.startsWith(WATCH_PARTIAL_PREFIX) }.forEach { it.delete() }
             file
         } finally { connection.disconnect(); partial.delete() }
     }
@@ -124,6 +180,31 @@ class UpdateClient(private val context: Context) : java.io.Closeable {
                 MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).toHex()
             }.toSet())
         verifyUpdateIdentity(identity(installed), identity(downloaded), update)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyWatchApk(file: File, update: UpdateInfo, installedWatchVersionCode: Long?) {
+        val pm = context.packageManager
+        val installed = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        val downloaded = pm.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            ?: error(if (Build.VERSION.SDK_INT < update.minSdk) "Dieses Handy kann die Uhr-APK nicht prüfen, dafür ist Android ${androidRelease(update.minSdk)} nötig."
+                else "Die heruntergeladene Datei ist keine gültige Android-App.")
+        fun identity(info: PackageInfo) = ApkIdentity(info.packageName, info.longVersionCode,
+            info.signingInfo?.apkContentsSigners.orEmpty().map {
+                MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).toHex()
+            }.toSet())
+        verifyWatchApkIdentity(identity(installed), identity(downloaded), update, installedWatchVersionCode)
+    }
+
+    private fun androidRelease(sdk: Int) = when (sdk) { 30 -> "11"; 31, 32 -> "12"; 33 -> "13"; 34 -> "14"; 35 -> "15"; else -> "API $sdk" }
+
+    private fun File.sha256(): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) { val read = input.read(buffer); if (read < 0) break; digest.update(buffer, 0, read) }
+        }
+        return digest.digest().toHex()
     }
 
     private fun connection(url: String): HttpURLConnection = (URI(url).toURL().openConnection() as HttpURLConnection).apply {

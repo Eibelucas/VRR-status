@@ -60,7 +60,17 @@ class RideComplicationService : ComplicationDataSourceService() {
 
 object RideComplicationUpdates {
     fun request(context: Context) {
-        runCatching { ComplicationDataSourceUpdateRequester.create(context,
-            ComponentName(context, RideComplicationService::class.java)).requestUpdateAll() }
+        listOf(
+            RideComplicationService::class.java,
+            RideMapComplicationService::class.java,
+            RideDetailComplicationService::class.java
+        ).forEach { service ->
+            runCatching {
+                ComplicationDataSourceUpdateRequester.create(
+                    context,
+                    ComponentName(context, service)
+                ).requestUpdateAll()
+            }
+        }
     }
 }

@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
-import android.view.MotionEvent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,7 +77,7 @@ fun PlainMap(lines: List<MapLine>, pins: List<MapPin>, description: String, modi
         Surface(Modifier.align(Alignment.BottomEnd), color = Color.White.copy(alpha = .96f), shape = RoundedCornerShape(topStart = 8.dp)) {
             TextButton(onClick = { runCatching { uriHandler.openUri("https://www.openstreetmap.org/copyright") } },
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                Text("© OpenStreetMap contributors", color = Color(0xFF263445), fontSize = 10.sp)
+                Text("© OpenStreetMap contributors", color = Color(0xFF263445), fontSize = 12.sp)
             }
         }
         if (!online) Surface(Modifier.align(Alignment.TopStart).padding(8.dp), color = Color.White.copy(alpha = .96f), shape = RoundedCornerShape(8.dp)) {
@@ -94,6 +93,7 @@ private class PlainMapController(private val context: Context) {
     private var identity: Any? = null
     private var needsFit = true
     private var points: List<GeoPoint> = emptyList()
+    private var pinHandler: ((MapPin) -> Unit)? = null
     private val overlays = mutableListOf<org.osmdroid.views.overlay.Overlay>()
     val map: MapView
 
@@ -118,18 +118,13 @@ private class PlainMapController(private val context: Context) {
             setTilesScaledToDpi(true)
             setVerticalMapRepetitionEnabled(false); setHorizontalMapRepetitionEnabled(false)
             addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ -> if (right > left && bottom > top) fit() }
-            setOnTouchListener { view, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE)
-                    view.parent?.requestDisallowInterceptTouchEvent(true)
-                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL)
-                    view.parent?.requestDisallowInterceptTouchEvent(false)
-                false
-            }
+            setOnTouchListener(OneHandedMapZoomTouchHandler(this))
         }
     }
 
     fun update(lines: List<MapLine>, pins: List<MapPin>, dark: Boolean, onPin: ((MapPin) -> Unit)?) {
         if (closed) return
+        pinHandler = onPin
         map.overlayManager.tilesOverlay?.setColorFilter(if (dark) TilesOverlay.INVERT_COLORS else null)
         val key = listOf(lines, pins)
         if (key == identity) return
@@ -150,7 +145,7 @@ private class PlainMapController(private val context: Context) {
                 position = OsmPoint(pin.point.lat, pin.point.lon); title = pin.title
                 icon = pinIcon(pin.kind); setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 infoWindow = null
-                setOnMarkerClickListener { _, _ -> onPin?.invoke(pin); true }
+                setOnMarkerClickListener { _, _ -> pinHandler?.invoke(pin); true }
                 map.overlays.add(this); overlays.add(this)
             }
         }

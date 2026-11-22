@@ -55,6 +55,16 @@ data class RouteWindow(
         startMinute in 0..1439 && endMinute in 0..1439
 }
 
+/** Time-bounded alternative destination for a saved route (e.g. a temporary workplace or internship). */
+data class TemporaryDestination(
+    val stop: Stop,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val label: String = ""
+) {
+    fun activeOn(date: LocalDate): Boolean = !date.isBefore(startDate) && !date.isAfter(endDate)
+}
+
 data class RoutePlan(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
@@ -76,10 +86,15 @@ data class RoutePlan(
     val manualOnly: Boolean = false,
     val excludedDates: Set<String> = emptySet(),
     val alternateRouteId: String? = null,
-    val order: Int = 0
+    val order: Int = 0,
+    val temporaryDestination: TemporaryDestination? = null
 ) {
     fun effectiveWindows(): List<RouteWindow> = windows.ifEmpty { listOf(window) }
     fun lineLabel(): String = (allowedLines.ifEmpty { setOf(line) }).filter { it.isNotBlank() }.joinToString(", ")
+    fun activeTemporaryDestination(date: LocalDate = LocalDate.now(ZoneId.of("Europe/Berlin"))): TemporaryDestination? =
+        temporaryDestination?.takeIf { it.activeOn(date) }
+    fun effectiveDestination(date: LocalDate = LocalDate.now(ZoneId.of("Europe/Berlin"))): Stop =
+        activeTemporaryDestination(date)?.stop ?: destination
 }
 
 data class RoutePlansState(val automaticLearning: Boolean = true, val routes: List<RoutePlan> = emptyList())
@@ -90,6 +105,8 @@ object RoutePlans {
     const val MAX_LINE_LENGTH = 30
     const val MAX_WINDOWS = 12
     const val MAX_LINES = 12
+    const val MAX_TEMP_LABEL_LENGTH = 40
+    const val MAX_TEMP_SPAN_DAYS = 180L
     val COLORS = listOf("new", "blue", "violet", "orange", "pink", "teal", "red", "yellow")
     val ICONS = listOf("bus", "school", "home", "work", "sport", "star")
     fun validColor(value: String): Boolean = value in COLORS || value.matches(Regex("#[0-9a-fA-F]{6}"))
@@ -143,10 +160,22 @@ object RoutePlans {
             plan.walkingMinutes !in 0..60 || plan.bufferMinutes !in 0..30 || plan.order !in -1000..1000 ||
             plan.excludedDates.size > 365 || plan.excludedDates.any { runCatching { LocalDate.parse(it).toString() != it }.getOrDefault(true) } ||
             alternate == id || (alternate != null && alternate.length > 128)) return null
+        val temp = plan.temporaryDestination?.let { cleanTemporary(it, origin.id, destination.id) }
         return plan.copy(id = id, name = name, origin = origin, destination = destination, line = line,
             window = plan.window.copy(days = plan.window.days.toSortedSet()),
             windows = plan.windows.distinct().map { it.copy(days = it.days.toSortedSet()) },
-            allowedLines = lines, excludedDates = plan.excludedDates.toSortedSet(), alternateRouteId = alternate)
+            allowedLines = lines, excludedDates = plan.excludedDates.toSortedSet(), alternateRouteId = alternate,
+            temporaryDestination = temp)
+    }
+
+    private fun cleanTemporary(temp: TemporaryDestination, originId: String, destinationId: String): TemporaryDestination? {
+        val stop = station(temp.stop) ?: return null
+        if (stop.id == originId || stop.id == destinationId) return null
+        if (temp.startDate.year !in 2000..2200 || temp.endDate.year !in 2000..2200) return null
+        if (temp.endDate.isBefore(temp.startDate)) return null
+        if (java.time.temporal.ChronoUnit.DAYS.between(temp.startDate, temp.endDate) > MAX_TEMP_SPAN_DAYS) return null
+        val label = temp.label.replace(Regex("\\s+"), " ").trim().take(MAX_TEMP_LABEL_LENGTH)
+        return TemporaryDestination(stop, temp.startDate, temp.endDate, label)
     }
 
     fun encode(state: RoutePlansState): String = JSONObject().apply {
@@ -164,6 +193,14 @@ object RoutePlans {
                 put("schoolOnly", plan.schoolOnly); put("manualOnly", plan.manualOnly)
                 put("excludedDates", JSONArray(plan.excludedDates.sorted())); put("alternateRouteId", plan.alternateRouteId)
                 put("order", plan.order)
+                plan.temporaryDestination?.let { temp ->
+                    put("temporaryDestination", JSONObject().apply {
+                        put("stop", stopJson(temp.stop))
+                        put("startDate", temp.startDate.toString())
+                        put("endDate", temp.endDate.toString())
+                        if (temp.label.isNotEmpty()) put("label", temp.label)
+                    })
+                }
                 put("window", JSONObject().apply {
                     put("days", JSONArray(plan.window.days.sorted()))
                     put("startMinute", plan.window.startMinute); put("endMinute", plan.window.endMinute)
@@ -193,12 +230,23 @@ object RoutePlans {
                     require(value.isFinite() && value == number.toInt().toDouble())
                     return number.toInt()
                 }
-                fun stop(key: String): Stop {
-                    val obj = item.getJSONObject(key)
+                fun stopFrom(obj: JSONObject): Stop {
                     val point = if (obj.has("lat") && obj.has("lon"))
                         GeoPoint(obj.optDouble("lat", Double.NaN), obj.optDouble("lon", Double.NaN)) else null
                     return Stop(obj.getString("id"), obj.getString("name"), point)
                 }
+                fun stop(key: String): Stop = stopFrom(item.getJSONObject(key))
+                val tempDest = if (item.has("temporaryDestination") && !item.isNull("temporaryDestination")) {
+                    runCatching {
+                        val obj = item.getJSONObject("temporaryDestination")
+                        TemporaryDestination(
+                            stopFrom(obj.getJSONObject("stop")),
+                            LocalDate.parse(obj.getString("startDate")),
+                            LocalDate.parse(obj.getString("endDate")),
+                            obj.optString("label", "")
+                        )
+                    }.getOrNull()
+                } else null
                 val window = if (item.has("window")) item.getJSONObject("window") else null
                 val days = window?.takeIf { it.has("days") }?.getJSONArray("days")?.let { array ->
                     (0 until array.length()).map { index ->
@@ -230,7 +278,8 @@ object RoutePlans {
                     windows(), strings("allowedLines"), item.optString("color", "new"), item.optString("icon", "bus"),
                     integer(item, "walkingMinutes", 5), integer(item, "bufferMinutes", 2),
                     item.optBoolean("schoolOnly", false), item.optBoolean("manualOnly", false), strings("excludedDates"),
-                    item.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, integer(item, "order", 0)))
+                    item.optString("alternateRouteId").takeIf { it.isNotBlank() && it != "null" }, integer(item, "order", 0),
+                    tempDest))
             }.getOrNull()
         }.distinctBy { it.id }.take(MAX_ROUTES)
         RoutePlansState(json.optBoolean("automaticLearning", true), routes)

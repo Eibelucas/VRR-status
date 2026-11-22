@@ -129,18 +129,65 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     private var plannedGeneration = 0L
     private var lastPlannedPlans: List<RoutePlan> = emptyList()
     private var lastPlannedRefresh = 0L
-    fun setAutomaticLearning(enabled: Boolean) { app.routePlans.setAutomaticLearning(enabled) }
+    private val dynamicDismissals = DynamicRouteDismissalStore(app)
+    private val dynamicSuggestionsState = MutableStateFlow<List<DynamicDestinationSuggestion>>(emptyList())
+    val dynamicRouteSuggestions = dynamicSuggestionsState.asStateFlow()
+
+    fun refreshDynamicSuggestions(now: Instant = Instant.now()) {
+        val state = app.routePlans.current()
+        dynamicSuggestionsState.value = if (!state.automaticLearning) emptyList()
+            else DynamicRouteLearner.suggestions(state.routes, app.archive.state.value.entries, now, dynamicDismissals.all())
+    }
+
+    fun applyTemporaryDestination(routeId: String, temp: TemporaryDestination): Boolean {
+        val plan = app.routePlans.current().routes.firstOrNull { it.id == routeId } ?: return false
+        val saved = app.routePlans.save(plan.copy(temporaryDestination = temp))
+        if (saved) {
+            refreshDynamicSuggestions()
+            if (mutable.value.plannedRoute?.id == plan.id) selectRoutePlan(plan.copy(temporaryDestination = temp), recordVisit = false)
+            refreshPlanDepartures(force = true)
+        }
+        return saved
+    }
+
+    fun clearTemporaryDestination(routeId: String): Boolean {
+        val plan = app.routePlans.current().routes.firstOrNull { it.id == routeId } ?: return false
+        val updated = plan.copy(temporaryDestination = null)
+        val saved = app.routePlans.save(updated)
+        if (saved) {
+            refreshDynamicSuggestions()
+            if (mutable.value.plannedRoute?.id == plan.id) selectRoutePlan(updated, recordVisit = false)
+            refreshPlanDepartures(force = true)
+        }
+        return saved
+    }
+
+    fun dismissDestinationSuggestion(routeId: String, stopId: String) {
+        dynamicDismissals.dismiss(routeId, stopId)
+        refreshDynamicSuggestions()
+    }
+
+    fun setAutomaticLearning(enabled: Boolean) {
+        app.routePlans.setAutomaticLearning(enabled)
+        refreshDynamicSuggestions()
+    }
     fun saveRoutePlan(plan: RoutePlan): Boolean {
         val saved = app.routePlans.save(plan)
-        if (saved && mutable.value.plannedRoute?.id == plan.id) selectRoutePlan(plan, recordVisit = false)
+        if (saved) {
+            refreshDynamicSuggestions()
+            if (mutable.value.plannedRoute?.id == plan.id) selectRoutePlan(plan, recordVisit = false)
+        }
         return saved
     }
     fun removeRoutePlan(plan: RoutePlan): RoutePlan? {
         val removed = app.routePlans.remove(plan.id)
-        if (removed != null && mutable.value.plannedRoute?.id == plan.id) backToStops()
+        if (removed != null) {
+            refreshDynamicSuggestions()
+            if (mutable.value.plannedRoute?.id == plan.id) backToStops()
+        }
         return removed
     }
-    fun restoreRoutePlan(plan: RoutePlan): Boolean = app.routePlans.restore(plan)
+    fun restoreRoutePlan(plan: RoutePlan): Boolean = app.routePlans.restore(plan).also { if (it) refreshDynamicSuggestions() }
     fun moveRoutePlan(id: String, delta: Int) = app.routePlans.move(id, delta)
     suspend fun findRouteStops(query: String): List<Stop> = app.vrr.search(query)
     suspend fun resolveRouteStop(stop: Stop): Stop = app.vrr.resolveStop(stop)
@@ -267,7 +314,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
             launch { schoolTrips.drop(1).collect { if (nearbyQueries) refreshHomeDepartures() } }
             launch { dayOverrides.drop(1).collect { if (nearbyQueries) refreshPlanDepartures(force = true) } }
             launch { schoolCalendar.drop(1).collect { if (nearbyQueries) refreshPlanDepartures(force = true) } }
-            launch { routePlans.drop(1).collect { if (nearbyQueries) { refreshHomeDepartures(); refreshPlanDepartures(force = true) } } }
+            launch { routePlans.drop(1).collect { refreshDynamicSuggestions(); if (nearbyQueries) { refreshHomeDepartures(); refreshPlanDepartures(force = true) } } }
+            launch { app.archive.state.collect { refreshDynamicSuggestions() } }
+            refreshDynamicSuggestions()
             refreshPlanDepartures()
             launch {
                 while (isActive) {
@@ -422,9 +471,9 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
                 app.savedStops.observe(selected, visitId)
         }
     }
-    fun chooseRoutePlan(plan: RoutePlan, departure: Departure) { chooseWithTarget(departure, plan.destination.id, 0, preview = false) }
+    fun chooseRoutePlan(plan: RoutePlan, departure: Departure) { chooseWithTarget(departure, plan.effectiveDestination().id, 0, preview = false) }
     /** Preview only: shows the trip, starts nothing and records nothing. */
-    fun previewRoutePlan(plan: RoutePlan, departure: Departure) { chooseWithTarget(departure, plan.destination.id, 0, preview = true) }
+    fun previewRoutePlan(plan: RoutePlan, departure: Departure) { chooseWithTarget(departure, plan.effectiveDestination().id, 0, preview = true) }
 
     fun createReport(ride: Ride, stopIndex: Int) {
         if (reportState.value.busy) return
@@ -731,7 +780,7 @@ class RideViewModel(application: Application) : AndroidViewModel(application) {
     fun chooseSchoolDeparture(trip: SchoolTrip, departure: Departure) { chooseWithTarget(departure, trip.targetId, trip.targetOccurrence, preview = false) }
     fun choose(departure: Departure) {
         val plan = mutable.value.plannedRoute
-        if (plan != null) chooseWithTarget(departure, plan.destination.id, 0)
+        if (plan != null) chooseWithTarget(departure, plan.effectiveDestination().id, 0)
         else chooseWithTarget(departure, mutable.value.schoolTrip?.targetId, mutable.value.schoolTrip?.targetOccurrence ?: 0)
     }
     fun chooseAlternative(departure: Departure) { chooseWithTarget(departure, tracking.value.ride?.exitTargetStop()?.id, tracking.value.ride?.targetOccurrence() ?: 0) }

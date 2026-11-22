@@ -173,7 +173,7 @@ fun JourneyPlannerScreen(planner: TripPlannerViewModel, now: Instant, locationUs
         accompanyBusy = accompanyBusy, routeFor = { name -> planner.routeFrom(detail, name) }, onSaveRoute = onSaveRoute,
         destinationSaved = form.destination?.let { places.isSaved(it) } == true,
         onSaveDestination = form.destination?.takeUnless { it.isMyLocation }?.let { place -> { planner.savePlace(place) } })
-    if (placeSearch.field != null) PlacePicker(placeSearch, places, locationUsable, onQuery = planner::placeQuery,
+    if (placeSearch.field != null) PlacePicker(placeSearch, places, locationUsable, planner.currentPosition, onQuery = planner::placeQuery,
         onPlace = planner::choosePlace, onRecent = planner::chooseRecent, onRemoveRecent = planner::removeRecent,
         onToggleSaved = { place -> if (places.isSaved(place)) planner.unsavePlace(place) else planner.savePlace(place) },
         onClose = planner::closePlaceSearch)
@@ -293,7 +293,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.resultItems(state: Tr
     }
     state.pageError?.let { item { Text(it, color = Amber, fontSize = 13.sp) } }
     item {
-        Text("Zeiten in Farbe sind Live-Prognosen des VRR, sonst Fahrplan. Anschlüsse werden nur mit Live-Daten beider Fahrten bewertet.",
+        Text("Verspätungen sind farbig markiert. Anschlüsse werden nur mit Live-Daten beider Fahrten bewertet.",
             color = Soft, fontSize = 11.sp, lineHeight = 16.sp)
     }
 }
@@ -393,42 +393,64 @@ internal fun LegBadge(leg: TripLeg) {
     }
 }
 
-/** Search for stops, addresses and places; saved destinations and recent searches first. */
+/** Search for stops, businesses, addresses and places; saved destinations and recent searches first. */
 @Composable
-private fun PlacePicker(state: PlaceSearchState, places: TripPlacesState, locationUsable: Boolean,
+private fun PlacePicker(state: PlaceSearchState, places: TripPlacesState, locationUsable: Boolean, ownPosition: GeoPoint?,
     onQuery: (String) -> Unit, onPlace: (TripPlace) -> Unit, onRecent: (RecentTrip) -> Unit, onRemoveRecent: (RecentTrip) -> Unit,
     onToggleSaved: (TripPlace) -> Unit, onClose: () -> Unit) {
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    var kindFilter by remember(state.field) { mutableStateOf(0) } // 0 = Alle, 1 = Haltestellen, 2 = Adressen & Orte
     BackHandler { keyboard?.hide(); onClose() }
     LaunchedEffect(state.field) { runCatching { focus.requestFocus() } }
     val title = when (state.field) { PlaceField.ORIGIN -> "Start"; PlaceField.VIA -> "Zwischenhalt"; else -> "Ziel" }
     val suggestions = TripPlaces.suggestions(places, state.text)
+    val hasStops = state.results.any { it.kind == PlaceKind.STOP }
+    val hasOther = state.results.any { it.kind != PlaceKind.STOP }
+    val filteredResults = when (kindFilter) {
+        1 -> state.results.filter { it.kind == PlaceKind.STOP }
+        2 -> state.results.filter { it.kind != PlaceKind.STOP }
+        else -> state.results
+    }
     Surface(Modifier.fillMaxSize(), color = Ink) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { keyboard?.hide(); onClose() }, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Zurück") }
-                OutlinedTextField(value = state.text, onValueChange = onQuery, singleLine = true, shape = RoundedCornerShape(18.dp),
-                    placeholder = { Text("$title: Haltestelle, Adresse, Ort") }, modifier = Modifier.weight(1f).focusRequester(focus),
+                OutlinedTextField(value = state.text, onValueChange = { kindFilter = 0; onQuery(it) }, singleLine = true, shape = ControlShape,
+                    placeholder = { Text("$title: Haltestelle, Geschäft, Hausnummer …") }, modifier = Modifier.weight(1f).focusRequester(focus),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus(); keyboard?.hide() }),
-                    trailingIcon = { if (state.text.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Outlined.Close, "Eingabe leeren") } })
+                    trailingIcon = { if (state.text.isNotEmpty()) IconButton(onClick = { kindFilter = 0; onQuery("") }) { Icon(Icons.Outlined.Close, "Eingabe leeren") } })
+            }
+            if (hasStops && hasOther) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(0 to "Alle", 1 to "Haltestellen", 2 to "Orte & Adressen").forEach { (id, label) ->
+                        FilterChip(
+                            selected = kindFilter == id,
+                            onClick = { kindFilter = id },
+                            label = { Text(label) }
+                        )
+                    }
+                }
             }
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (state.text.isBlank() && state.field != PlaceField.VIA && locationUsable) item {
-                    PlaceRow(TripPlace.MY_LOCATION, saved = null, onToggleSaved = {}) { onPlace(TripPlace.MY_LOCATION) }
+                    PlaceRow(TripPlace.MY_LOCATION, saved = null, ownPosition = null, onToggleSaved = {}) { onPlace(TripPlace.MY_LOCATION) }
                 }
                 if (suggestions.isNotEmpty()) {
                     item { SectionLabel(if (state.text.isBlank()) "Gespeichert & zuletzt" else "Passend aus deinem Verlauf") }
                     items(suggestions, key = { "s/${it.key}" }) { place ->
-                        PlaceRow(place, places.isSaved(place), { onToggleSaved(place) }) { onPlace(place) }
+                        PlaceRow(place, places.isSaved(place), ownPosition, { onToggleSaved(place) }) { onPlace(place) }
                     }
                 }
                 if (state.text.isBlank() && places.recent.isNotEmpty() && state.field != PlaceField.VIA) {
                     item { SectionLabel("Letzte Suchen") }
                     items(places.recent, key = { "r/${it.key}" }) { trip ->
-                        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(14.dp)), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(ControlShape), verticalAlignment = Alignment.CenterVertically) {
                             Row(Modifier.weight(1f).clickable(onClickLabel = "Suche übernehmen") { onRecent(trip) }.padding(vertical = 10.dp, horizontal = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Outlined.History, null, tint = Soft, modifier = Modifier.size(20.dp))
@@ -443,14 +465,14 @@ private fun PlacePicker(state: PlaceSearchState, places: TripPlacesState, locati
                 }
                 if (state.loading) item { AppLinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp)) }
                 state.error?.let { item { Text(it, color = Amber, fontSize = 13.sp, modifier = Modifier.padding(8.dp)) } }
-                if (state.results.isNotEmpty()) {
-                    item { SectionLabel("VRR-Suche") }
-                    items(state.results, key = { "v/${it.key}" }) { place ->
-                        PlaceRow(place, places.isSaved(place), { onToggleSaved(place) }) { onPlace(place) }
+                if (filteredResults.isNotEmpty()) {
+                    item { SectionLabel("Suchergebnisse") }
+                    items(filteredResults, key = { "v/${it.key}" }) { place ->
+                        PlaceRow(place, places.isSaved(place), ownPosition, { onToggleSaved(place) }) { onPlace(place) }
                     }
                 }
                 if (state.searched && state.results.isEmpty() && !state.loading && state.error == null) item {
-                    Text("Nichts gefunden. Schreibweise oder Ort prüfen.", color = Soft, fontSize = 14.sp, modifier = Modifier.padding(8.dp))
+                    Text("Nichts gefunden. Probiere eine Haltestelle, einen Laden oder eine Hausnummer mit Straße.", color = Soft, fontSize = 14.sp, modifier = Modifier.padding(8.dp))
                 }
             }
         }
@@ -462,13 +484,38 @@ private fun SectionLabel(text: String) {
     Text(text, color = Soft, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp).semantics { heading() })
 }
 
+private fun placeDistanceLabel(ownPosition: GeoPoint?, target: GeoPoint?): String? {
+    val from = ownPosition?.takeIf(Geo::valid) ?: return null
+    val to = target?.takeIf(Geo::valid) ?: return null
+    val meters = from.distanceTo(to)
+    return when {
+        meters < 1000.0 -> "${(meters / 10).toInt() * 10} m"
+        meters < 100_000.0 -> String.format(Locale.GERMANY, "%.1f km", meters / 1000.0)
+        else -> null
+    }
+}
+
 @Composable
-private fun PlaceRow(place: TripPlace, saved: Boolean?, onToggleSaved: () -> Unit, onClick: () -> Unit) {
+private fun PlaceRow(place: TripPlace, saved: Boolean?, ownPosition: GeoPoint?, onToggleSaved: () -> Unit, onClick: () -> Unit) {
     val icon = when (place.kind) {
         PlaceKind.MY_LOCATION -> Icons.Outlined.MyLocation
         PlaceKind.STOP -> Icons.Outlined.DirectionsBus
-        PlaceKind.ADDRESS, PlaceKind.STREET -> Icons.Outlined.Home
-        PlaceKind.POI -> Icons.Outlined.Place
+        PlaceKind.ADDRESS -> Icons.Outlined.Home
+        PlaceKind.STREET -> Icons.Outlined.Signpost
+        PlaceKind.POI -> when (place.category) {
+            "Supermarkt", "Einkaufszentrum", "Drogerie", "Mode", "Elektronik", "Baumarkt", "Möbelhaus", "Geschäft" -> Icons.Outlined.Storefront
+            "Restaurant", "Fast Food", "Bäckerei" -> Icons.Outlined.Restaurant
+            "Café", "Bar" -> Icons.Outlined.LocalCafe
+            "Krankenhaus", "Arztpraxis" -> Icons.Outlined.LocalHospital
+            "Apotheke" -> Icons.Outlined.LocalPharmacy
+            "Schule", "Hochschule", "Kita" -> Icons.Outlined.School
+            "Park", "Sport & Fitness", "Stadion" -> Icons.Outlined.Park
+            "Hotel" -> Icons.Outlined.Hotel
+            "Parkplatz" -> Icons.Outlined.LocalParking
+            "Tankstelle" -> Icons.Outlined.LocalGasStation
+            "Bank" -> Icons.Outlined.AccountBalance
+            else -> Icons.Outlined.Place
+        }
         else -> Icons.Outlined.LocationOn
     }
     val kind = when (place.kind) {
@@ -476,18 +523,32 @@ private fun PlaceRow(place: TripPlace, saved: Boolean?, onToggleSaved: () -> Uni
         PlaceKind.STOP -> "Haltestelle"
         PlaceKind.ADDRESS -> "Adresse"
         PlaceKind.STREET -> "Straße"
-        PlaceKind.POI -> "Ort von Interesse"
+        PlaceKind.POI -> place.category.ifBlank { "Ort" }
         PlaceKind.LOCALITY -> "Ort"
         PlaceKind.OTHER -> "Ort"
     }
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(14.dp)), verticalAlignment = Alignment.CenterVertically) {
+    val distance = if (place.isMyLocation) null else placeDistanceLabel(ownPosition, place.point)
+    val iconBg = if (place.isMyLocation || place.kind == PlaceKind.STOP) Well else Well
+    val iconTint = when {
+        place.isMyLocation -> Lime
+        place.kind == PlaceKind.STOP -> Lime
+        else -> Paper
+    }
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(ControlShape), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 10.dp, horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = if (place.isMyLocation) Lime else Soft, modifier = Modifier.size(20.dp))
+            Box(
+                Modifier.size(36.dp).clip(CircleShape).background(iconBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = iconTint, modifier = Modifier.size(18.dp))
+            }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(placeTitle(place), fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(listOf(kind, place.locality).filter(String::isNotBlank).joinToString(" · "), color = Soft, fontSize = 12.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(kind, place.locality.ifBlank { null }, distance).joinToString(" · "),
+                    color = Soft, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
             }
         }
         if (saved != null) IconToggleButton(checked = saved, onCheckedChange = { onToggleSaved() }, modifier = Modifier.size(48.dp)) {

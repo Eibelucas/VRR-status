@@ -21,6 +21,7 @@ class WatchPublisher(context: Context, private val store: RideStore) {
     private val client = Wearable.getDataClient(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val companion by lazy { WatchCompanionPublisher(contextRef as MitfahrtApplication) }
+    private val watchFaceMap by lazy { WatchFaceMapPublisher(contextRef) { requestPublish(forceMap = true) } }
     private val settings by lazy { AppSettingsStore(contextRef) }
     @Volatile private var connectedAt = Instant.EPOCH
     @Volatile private var connected = false
@@ -32,7 +33,7 @@ class WatchPublisher(context: Context, private val store: RideStore) {
         scope.launch {
             val message = companion.command(command)
             runCatching { Wearable.getMessageClient(contextRef).sendMessage(nodeId, WatchCompanion.RESULT, message.toByteArray()).await() }
-            publish()
+            publish(forceMap = command.action == "map_mode")
         }
     }
 
@@ -48,7 +49,7 @@ class WatchPublisher(context: Context, private val store: RideStore) {
         }
     }
 
-    fun requestPublish() { scope.launch { publish() } }
+    fun requestPublish(forceMap: Boolean = false) { scope.launch { publish(forceMap = forceMap) } }
 
     fun arrivalAlert(id: String, boardingAt: Instant) {
         val bytes = de.luca.mitfahrt.shared.ArrivalAlert.encode(id, Instant.now(), boardingAt)
@@ -75,13 +76,16 @@ class WatchPublisher(context: Context, private val store: RideStore) {
         }
     }
 
-    private suspend fun publish() {
+    private suspend fun publish(forceMap: Boolean = false) {
         try {
             if (Instant.now().epochSecond - connectedAt.epochSecond >= 30) {
                 connected = Wearable.getNodeClient(contextRef).connectedNodes.await().isNotEmpty(); connectedAt = Instant.now()
             }
+            val tracking = store.state.value
             client.putDataItem(PutDataRequest.create(WatchProtocol.PATH)
-                .setData(WatchProtocol.encode(store.state.value.watchSnapshot())).setUrgent()).await()
+                .setData(WatchProtocol.encode(tracking.watchSnapshot())).setUrgent()).await()
+            val gpsEnabled = settings.current().bool("gps_next_stop", true) && settings.current().string("location_mode") != "off"
+            watchFaceMap.publish(tracking, gpsEnabled = gpsEnabled, force = forceMap)
             companion.publish()
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (_: Exception) { /* Optional companion must never interrupt the phone journey. */ }

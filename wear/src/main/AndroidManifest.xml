@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Only for an explicitly requested VRR check while the phone is not reachable. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Opens the system installer for a watch update the phone sent and both devices verified. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application android:name=".WatchApplication" android:allowBackup="false" android:label="Mitfahrt"
         android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="false"
         android:icon="@drawable/ic_launcher" android:theme="@android:style/Theme.DeviceDefault">
@@ -32,10 +34,31 @@
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/ride/v1" />
             </intent-filter>
             <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/watchface-map/v1" />
+            </intent-filter>
+            <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:path="/mitfahrt/arrival-alert/v1" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/watch-info-request/v1" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.CHANNEL_EVENT" />
+                <data android:scheme="wear" android:host="*" android:path="/mitfahrt/watch-apk/v1" />
+            </intent-filter>
         </service>
+        <receiver android:name=".WatchPackageReplacedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.watchupdates" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/watch_update_paths" />
+        </provider>
         <service android:name=".RideComplicationService" android:exported="true"
             android:label="Mitfahrt · Busstatus" android:icon="@drawable/ic_launcher"
             android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
@@ -43,6 +66,24 @@
                 <action android:name="androidx.wear.watchface.complications.datasource.ACTION_COMPLICATION_UPDATE_REQUEST" />
             </intent-filter>
             <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="SHORT_TEXT,LONG_TEXT" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="60" />
+        </service>
+        <service android:name=".RideMapComplicationService" android:exported="true"
+            android:label="Mitfahrt · Live-Buskarte" android:icon="@drawable/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.watchface.complications.datasource.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="LARGE_IMAGE" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="60" />
+        </service>
+        <service android:name=".RideDetailComplicationService" android:exported="true"
+            android:label="Mitfahrt · Halt und Ankunft" android:icon="@drawable/ic_launcher"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.watchface.complications.datasource.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="LONG_TEXT,SHORT_TEXT" />
             <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="60" />
         </service>
         <service android:name=".RideTileService" android:exported="true"
