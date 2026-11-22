@@ -1,3 +1,14 @@
+## Mitfahrt 26.11.2
+
+- **Losgehzeit & Morgen-Check:** Vor dem Einsteigen zeigen App, Now Bar, Uhr und Widget „Los in 4 Min“ / „Jetzt los“ / „Knapp“. Pro Route lässt sich ein Morgen-Check einschalten, der vor dem Zeitfenster still prüft und mit einem Tipp die Fahrt oder die Ausweichroute startet.
+- **Bus verpasst, durchgefahren oder zu voll:** Ein Tipp hält es im Fahrtbericht fest und wechselt direkt auf den nächsten Bus zu deinem Ziel – in der App, auf der Now Bar und auf der Uhr.
+- **Steig zuerst an Knotenpunkten:** An MG Hbf, Rheydt Hbf & Co. steht der Steig vorne, bei einem Steigwechsel vibriert es sofort (auch für den Anschluss).
+- **Funkloch-Schutz:** Sofortiges Neuladen, wenn das Netz zurückkommt, sanftes Zurückfahren bei Fehlern, Offline-Fahrplan im Widget und vorgeladene Kartenkacheln entlang der Strecke.
+- **Anschlusswächter:** Prüft den Anschluss auch bei gesperrtem Handy und bietet nach dem Ausstieg „Weiter mit …“ an.
+- **Ehrliche Prognose:** Hinweis, wenn VRR „pünktlich“ meldet, der Bus selbst aber deutlich später unterwegs ist.
+- **Verspätungsbeleg 2.0:** Kurztext zum Teilen und ein vorsichtiger Hinweis auf die Mobilitätsgarantie NRW ab 20 Min Verspätung oder Ausfall.
+- **Halte-Countdown zum Fühlen:** Vibration 3 und 2 Halte vor dem Ausstieg (nur bei sicheren Daten).
+
 ## Mitfahrt 26.11.1
 
 - **Neues Design & Einstellungen:** Klares, kontrastreiches Layout ohne Lila-Stich, 3 Tabs (Start, Abfahrten, Fahrten) und komplett überarbeitete Einstellungen mit Live-Vorschau, Farb-Swatches, Schriftgrößen-Slider und direktem Vibrationstest.
